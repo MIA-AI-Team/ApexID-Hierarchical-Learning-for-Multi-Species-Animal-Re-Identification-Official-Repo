@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 try:
     from .ResidualBlock import ResidualBlock, ConvBlock
@@ -54,6 +55,7 @@ class ApexID(nn.Module):
         x = torch.flatten(x, 1)
         x = self.neck(x)
         x = self.embedding(x)
+        x = F.normalize(x)  
         return x
 
     def init_weight(self):

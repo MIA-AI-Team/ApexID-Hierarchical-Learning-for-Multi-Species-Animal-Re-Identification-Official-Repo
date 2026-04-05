@@ -39,7 +39,7 @@ class ArcFaceLoss(nn.Module):
 
     def forward(self, embeddings, labels):
         # cos(theta) via normalised dot product
-        cosine = F.linear(F.normalize(embeddings), F.normalize(self.weight))
+        cosine = F.linear(embeddings, F.normalize(self.weight))
         # sin(theta) from cos(theta)
         sine = torch.sqrt(1.0 - torch.clamp(cosine * cosine, 0, 1))
         # cos(theta + m) = cos(theta)cos(m) - sin(theta)sin(m)

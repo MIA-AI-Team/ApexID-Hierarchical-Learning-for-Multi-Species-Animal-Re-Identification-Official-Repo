@@ -55,7 +55,7 @@ class DynArcFaceLoss(nn.Module):
         return margins
 
     def forward(self, embeddings, labels):
-        cosine = F.linear(F.normalize(embeddings), F.normalize(self.weight))
+        cosine = F.linear(embeddings, F.normalize(self.weight))
         sine = torch.sqrt(1.0 - torch.clamp(cosine * cosine, 0, 1))
 
         # per-class dynamic margins  -> shape (out_features,)

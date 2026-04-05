@@ -67,7 +67,7 @@ class SphereFace2Loss(nn.Module):
         return F.linear(F.normalize(embeddings), F.normalize(self.weight))
 
     def forward(self, embeddings, labels):
-        cosine = F.linear(F.normalize(embeddings), F.normalize(self.weight))
+        cosine = F.linear(embeddings, F.normalize(self.weight))
         g_cos = self._g(cosine)
 
         one_hot = torch.zeros_like(cosine)
