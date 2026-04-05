@@ -59,6 +59,13 @@ class SphereFace2Loss(nn.Module):
         """Similarity adjustment g(z) = 2*((z+1)/2)^t - 1, element-wise."""
         return 2.0 * torch.pow((cos_theta + 1.0) / 2.0, self.t) - 1.0
 
+    def predict_logits(self, embeddings):
+        """
+        Classification scores used for metrics when this head computes the loss
+        directly. The argmax matches the nearest class center on the hypersphere.
+        """
+        return F.linear(F.normalize(embeddings), F.normalize(self.weight))
+
     def forward(self, embeddings, labels):
         cosine = F.linear(F.normalize(embeddings), F.normalize(self.weight))
         g_cos = self._g(cosine)

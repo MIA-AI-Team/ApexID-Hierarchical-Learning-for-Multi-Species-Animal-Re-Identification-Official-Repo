@@ -2,9 +2,14 @@ import torch
 import torch.nn as nn
 from tqdm.auto import tqdm
 
-from ..Callback.EarlyStopping import EarlyStopping
-from ..Callback.Checkpoint import save_checkpoint, save_backbone_weights
-from ..Callback.Plotting import TensorBoardLogger
+try:
+    from Callback.EarlyStopping import EarlyStopping
+    from Callback.Checkpoint import save_checkpoint, save_backbone_weights
+    from Callback.Plotting import TensorBoardLogger
+except ImportError:  
+    from ..Callback.EarlyStopping import EarlyStopping
+    from ..Callback.Checkpoint import save_checkpoint, save_backbone_weights
+    from ..Callback.Plotting import TensorBoardLogger
 
 # Available loss functions (use as the `head` argument):
 #   from Loss_functions import ArcFaceLoss, SphereFace2Loss, DynArcFaceLoss
@@ -66,6 +71,30 @@ class Trainer:
         self.checkpoint_dir = checkpoint_dir
         self.tb_logger = TensorBoardLogger(tensorboard_log_dir) if tensorboard_log_dir else None
 
+    def _prediction_logits(self, embeddings):
+        if hasattr(self.head, "predict_logits"):
+            return self.head.predict_logits(embeddings)
+        raise ValueError(
+            "Head returned a scalar loss but does not expose predict_logits(...) "
+            "for accuracy computation."
+        )
+
+    def _compute_loss_and_logits(self, embeddings, labels):
+        head_output = self.head(embeddings, labels)
+
+        if torch.is_tensor(head_output) and head_output.ndim == 0:
+            loss = head_output
+            logits = self._prediction_logits(embeddings)
+            return loss, logits
+
+        if self.loss is None:
+            raise ValueError(
+                "Trainer received class logits from the head but no loss function was provided."
+            )
+
+        loss = self.loss(head_output, labels)
+        return loss, head_output
+
     def train_one_epoch(self, train_loader, epoch, epochs):
         self.backbone.train()
         self.head.train()
@@ -88,8 +117,7 @@ class Trainer:
             self.optimizer.zero_grad()
 
             embeddings = self.backbone(images)
-            logits = self.head(embeddings, labels)  
-            loss = self.loss(logits, labels)
+            loss, logits = self._compute_loss_and_logits(embeddings, labels)
 
             loss.backward()
             self.optimizer.step()
@@ -139,8 +167,7 @@ class Trainer:
                 labels = labels.to(self.device, non_blocking=True)
 
                 embeddings = self.backbone(images)
-                logits = self.head(embeddings, labels)
-                loss = self.loss(logits, labels)
+                loss, logits = self._compute_loss_and_logits(embeddings, labels)
 
                 batch_size = images.size(0)
                 total_loss += loss.item() * batch_size

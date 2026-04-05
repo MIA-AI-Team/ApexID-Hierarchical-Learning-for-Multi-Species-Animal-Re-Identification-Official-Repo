@@ -1,6 +1,10 @@
 import torch
 import torch.nn as nn
-from ResidualBlock import ResidualBlock, ConvBlock
+
+try:
+    from .ResidualBlock import ResidualBlock, ConvBlock
+except ImportError:  
+    from ResidualBlock import ResidualBlock, ConvBlock
 
 torch.manual_seed(42)
 torch.cuda.manual_seed_all(42)

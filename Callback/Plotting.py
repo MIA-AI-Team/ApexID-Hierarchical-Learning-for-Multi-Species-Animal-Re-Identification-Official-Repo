@@ -1,6 +1,10 @@
 import matplotlib.pyplot as plt
 import os
-from torch.utils.tensorboard import SummaryWriter
+
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ModuleNotFoundError:
+    SummaryWriter = None
 
 def plot_and_save_losses(train_losses, val_losses, save_dir='runs/train', filename='loss_graph.png'):
     """
@@ -60,6 +64,11 @@ class TensorBoardLogger:
     """Full TensorBoard logging: scalars, weight histograms, model graph, embeddings, and hparams."""
 
     def __init__(self, log_dir='runs/tensorboard'):
+        if SummaryWriter is None:
+            raise ModuleNotFoundError(
+                "TensorBoard logging requires the 'tensorboard' package. "
+                "Install it or leave tensorboard_log_dir=None."
+            )
         self.writer = SummaryWriter(log_dir=log_dir)
 
     def log_epoch(self, epoch, train_loss, val_loss, train_acc, val_acc, lr=None):

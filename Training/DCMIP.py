@@ -2,7 +2,10 @@ import copy
 import torch
 import torch.nn.functional as F
 
-from ..Loss_functions.DCMIPLoss import DCMIPLoss
+try:
+    from Loss_functions.DCMIPLoss import DCMIPLoss
+except ImportError:  # Supports nested package imports if the repo is packaged later.
+    from ..Loss_functions.DCMIPLoss import DCMIPLoss
 
 
 @torch.no_grad()
