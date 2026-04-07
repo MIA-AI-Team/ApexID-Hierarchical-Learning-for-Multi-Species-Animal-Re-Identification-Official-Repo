@@ -75,7 +75,7 @@ class SphereFace2Loss(nn.Module):
 
         # positive term: target class
         pos_logits = -self.r * (g_cos - self.m) - self.bias
-        pos_loss = (self.lam / self.r) * torch.log(1.0 + torch.exp(pos_logits))
+        pos_loss = (self.lam / self.r) * F.softplus(pos_logits)
         pos_loss = (one_hot * pos_loss).sum(dim=1)
 
         # negative term: all non-target classes
