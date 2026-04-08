@@ -421,8 +421,9 @@ class Trainer:
             return avg_loss, avg_acc, metric_dict, all_embeddings, all_metric_labels
         return avg_loss, avg_acc, metric_dict
 
-    def train(self, train_loader, val_loader, epochs, log_embeddings_every=5):
-        history = {
+    def train(self, train_loader, val_loader, epochs, log_embeddings_every=5,
+              start_epoch=0, resume_history=None):
+        history = resume_history if resume_history is not None else {
             "train_loss": [],
             "train_acc": [],
             "val_loss": [],
@@ -436,6 +437,10 @@ class Trainer:
         }
 
         best_val_loss = float("inf")
+        if resume_history and len(resume_history.get("val_loss", [])) > 0:
+            best_val_loss = min(resume_history["val_loss"])
+            self.early_stopping.best_score = -best_val_loss
+            self.early_stopping.val_loss_min = best_val_loss
 
         if self.tb_logger:
             sample_batch = next(iter(train_loader))
@@ -443,7 +448,7 @@ class Trainer:
             sample_input = sample_input[:1].to(self.device)
             self.tb_logger.log_graph(self.backbone, sample_input)
 
-        epoch_bar = tqdm(range(epochs), desc="Epochs", dynamic_ncols=True)
+        epoch_bar = tqdm(range(start_epoch, epochs), desc="Epochs", dynamic_ncols=True)
 
         for epoch in epoch_bar:
             train_loss, train_acc = self.train_one_epoch(train_loader, epoch, epochs)
