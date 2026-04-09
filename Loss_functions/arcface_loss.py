@@ -22,6 +22,18 @@ class ArcFaceLoss(nn.Module):
     """
 
     def __init__(self, in_features, out_features, s=30.0, m=0.5):
+        """Initialize the ArcFace classification head.
+
+        Args:
+            in_features (int): Embedding dimension of the input features.
+            out_features (int): Number of target classes.
+            s (float, optional): Logit scaling factor applied after the angular
+                margin.
+            m (float, optional): Additive angular margin in radians.
+
+        Returns:
+            None
+        """
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -38,6 +50,15 @@ class ArcFaceLoss(nn.Module):
         self.mm = math.sin(math.pi - m) * m
 
     def forward(self, embeddings, labels):
+        """Compute ArcFace logits for a batch of embeddings and labels.
+
+        Args:
+            embeddings (torch.Tensor): Input embedding tensor.
+            labels (torch.Tensor): Target class indices for each embedding.
+
+        Returns:
+            torch.Tensor: Margin-adjusted classification logits scaled by ``self.s``.
+        """
         # cos(theta) via normalised dot product
         cosine = F.linear(embeddings, F.normalize(self.weight))
         # sin(theta) from cos(theta)

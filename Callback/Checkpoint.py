@@ -3,14 +3,17 @@ import torch
 
 def save_checkpoint(state, is_best, save_dir, last_name='last.pt', best_name='best.pt'):
     """
-    Saves the training state to disk.
-    
+    Save a training checkpoint to disk and optionally mark it as the best state.
+
     Args:
-        state (dict): A dictionary containing 'epoch', 'state_dict', 'optimizer', and potentially others.
+        state (dict): Dictionary containing the serialized training state.
         is_best (bool): If True, also saves this state as the best model.
         save_dir (str): Directory to save the checkpoints.
-        last_name (str): Filename for the latest checkpoint.
-        best_name (str): Filename for the best checkpoint.
+        last_name (str, optional): Filename for the latest checkpoint.
+        best_name (str, optional): Filename for the best checkpoint.
+
+    Returns:
+        None
     """
     os.makedirs(save_dir, exist_ok=True)
     
@@ -25,16 +28,17 @@ def save_checkpoint(state, is_best, save_dir, last_name='last.pt', best_name='be
 
 def load_checkpoint(checkpoint_path, model, optimizer=None, lr_scheduler=None):
     """
-    Loads the training state from disk to resume training.
-    
+    Load a training checkpoint into the provided model and optimizer objects.
+
     Args:
-        checkpoint_path (str): Path to the saved checkpoint (e.g., 'runs/train/last.pt').
+        checkpoint_path (str): Path to the saved checkpoint file.
         model (torch.nn.Module): The model to load weights into.
         optimizer (torch.optim.Optimizer, optional): The optimizer to load state into.
         lr_scheduler (torch.optim.lr_scheduler.LRScheduler, optional): The scheduler to load state into.
-        
+
     Returns:
-        tuple: (model, optimizer, lr_scheduler, start_epoch, best_loss)
+        tuple: Tuple containing the model, optimizer, scheduler, next epoch index,
+        and best validation loss recovered from the checkpoint.
     """
     if not os.path.isfile(checkpoint_path):
         raise FileNotFoundError(f"No checkpoint found at '{checkpoint_path}'")
@@ -63,12 +67,15 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, lr_scheduler=None):
 
 def save_backbone_weights(backbone, save_dir, filename='best_backbone.pt'):
     """
-    Saves only the backbone weights (without the head) for ReID inference.
-    
+    Save only the backbone weights for inference or reuse.
+
     Args:
         backbone (torch.nn.Module): The backbone module to save.
         save_dir (str): Directory to save the weights.
-        filename (str): Filename for the backbone weights.
+        filename (str, optional): Filename for the backbone weights.
+
+    Returns:
+        None
     """
     os.makedirs(save_dir, exist_ok=True)
     path = os.path.join(save_dir, filename)
@@ -76,12 +83,12 @@ def save_backbone_weights(backbone, save_dir, filename='best_backbone.pt'):
 
 def load_backbone_weights(backbone, checkpoint_path):
     """
-    Loads backbone-only weights from disk.
-    
+    Load backbone-only weights from disk into the provided module.
+
     Args:
         backbone (torch.nn.Module): The backbone module to load weights into.
         checkpoint_path (str): Path to the saved backbone weights.
-        
+
     Returns:
         torch.nn.Module: The backbone with loaded weights.
     """

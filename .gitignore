@@ -1,3 +1,4 @@
 .vscode
 data_preprocessing.py
 animalCLEF26/
+__pycache__/

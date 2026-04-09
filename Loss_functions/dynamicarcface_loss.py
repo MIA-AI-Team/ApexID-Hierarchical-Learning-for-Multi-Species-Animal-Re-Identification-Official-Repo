@@ -27,6 +27,19 @@ class DynArcFaceLoss(nn.Module):
     """
 
     def __init__(self, in_features, out_features, s=30.0, k1=1.1, k2=0.8, k3=0.332):
+        """Initialize the dynamic ArcFace classification head.
+
+        Args:
+            in_features (int): Embedding dimension of the input features.
+            out_features (int): Number of target classes.
+            s (float, optional): Logit scaling factor applied after margin updates.
+            k1 (float, optional): Dynamic margin threshold hyperparameter.
+            k2 (float, optional): Dynamic margin scaling hyperparameter.
+            k3 (float, optional): Dynamic margin offset hyperparameter.
+
+        Returns:
+            None
+        """
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -39,7 +52,14 @@ class DynArcFaceLoss(nn.Module):
         nn.init.xavier_uniform_(self.weight)
 
     def _compute_dynamic_margins(self):
-        """Compute per-class dynamic margin from current weight centres."""
+        """Compute the current per-class dynamic angular margins.
+
+        Args:
+            None
+
+        Returns:
+            torch.Tensor: One dynamic margin value for each output class.
+        """
         W_norm = F.normalize(self.weight, dim=1)
         # cosine similarity between all class-centre pairs
         cos_sim = torch.mm(W_norm, W_norm.t())
@@ -55,6 +75,15 @@ class DynArcFaceLoss(nn.Module):
         return margins
 
     def forward(self, embeddings, labels):
+        """Compute dynamic ArcFace logits for a batch of embeddings.
+
+        Args:
+            embeddings (torch.Tensor): Input embedding tensor.
+            labels (torch.Tensor): Target class indices for each embedding.
+
+        Returns:
+            torch.Tensor: Margin-adjusted logits scaled by ``self.s``.
+        """
         cosine = F.linear(embeddings, F.normalize(self.weight))
         sine = torch.sqrt(1.0 - torch.clamp(cosine * cosine, 0, 1))
 

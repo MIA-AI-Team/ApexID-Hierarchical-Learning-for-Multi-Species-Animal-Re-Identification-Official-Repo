@@ -26,6 +26,19 @@ class SphereFace2Loss(nn.Module):
     """
 
     def __init__(self, in_features, out_features, r=40.0, m=0.4, t=3, lam=0.7):
+        """Initialize the SphereFace2 classification head.
+
+        Args:
+            in_features (int): Embedding dimension of the input features.
+            out_features (int): Number of target classes.
+            r (float, optional): Radius or sharpness factor used by the loss.
+            m (float, optional): Additive angular margin.
+            t (int, optional): Power used in the similarity adjustment function.
+            lam (float, optional): Balance between positive and negative terms.
+
+        Returns:
+            None
+        """
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -42,7 +55,14 @@ class SphereFace2Loss(nn.Module):
         self._init_bias()
 
     def _init_bias(self):
-        """Bias initialisation from Appendix G (Eq. 10)."""
+        """Initialize the shared bias term from the paper's closed-form rule.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         a_y = self.r * (self._g_scalar(0.0) - self.m)
         a_i = self.r * (self._g_scalar(0.0) + self.m)
         n = self.out_features
@@ -52,21 +72,49 @@ class SphereFace2Loss(nn.Module):
         self.bias.data.fill_(b0)
 
     def _g_scalar(self, cos_val):
-        """Similarity adjustment g(z) for a Python float."""
+        """Apply the scalar SphereFace2 similarity adjustment.
+
+        Args:
+            cos_val (float): Cosine similarity value.
+
+        Returns:
+            float: Adjusted similarity after applying the SphereFace2 transform.
+        """
         return 2.0 * ((cos_val + 1.0) / 2.0) ** self.t - 1.0
 
     def _g(self, cos_theta):
-        """Similarity adjustment g(z) = 2*((z+1)/2)^t - 1, element-wise."""
+        """Apply the SphereFace2 similarity adjustment element-wise.
+
+        Args:
+            cos_theta (torch.Tensor): Tensor of cosine similarity values.
+
+        Returns:
+            torch.Tensor: Adjusted similarity tensor.
+        """
         return 2.0 * torch.pow((cos_theta + 1.0) / 2.0, self.t) - 1.0
 
     def predict_logits(self, embeddings):
         """
-        Classification scores used for metrics when this head computes the loss
-        directly. The argmax matches the nearest class center on the hypersphere.
+        Compute class scores used for prediction and evaluation metrics.
+
+        Args:
+            embeddings (torch.Tensor): Input embedding tensor.
+
+        Returns:
+            torch.Tensor: Normalized class similarity scores.
         """
         return F.linear(F.normalize(embeddings), F.normalize(self.weight))
 
     def forward(self, embeddings, labels):
+        """Compute the SphereFace2 loss for a batch of embeddings.
+
+        Args:
+            embeddings (torch.Tensor): Input embedding tensor.
+            labels (torch.Tensor): Target class indices for each embedding.
+
+        Returns:
+            torch.Tensor: Scalar loss value averaged across the batch.
+        """
         cosine = F.linear(embeddings, F.normalize(self.weight))
         g_cos = self._g(cosine)
 

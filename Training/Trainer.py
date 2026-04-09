@@ -38,6 +38,37 @@ class Trainer:
         device=None,
         metrics_base_seed=42,
     ):
+        """Initialize the training helper and its optional utilities.
+
+        Args:
+            backbone (torch.nn.Module): Feature extractor that produces embeddings.
+            head (torch.nn.Module): Classification or metric-learning head operating
+                on the embeddings.
+            loss (callable, optional): External loss function used when the head
+                returns logits instead of a scalar loss.
+            optimizer (torch.optim.Optimizer, optional): Optimizer used for model
+                updates. If omitted, Adam is created automatically.
+            scheduler (torch.optim.lr_scheduler._LRScheduler, optional): Learning
+                rate scheduler stepped during training.
+            early_stopping_patience (int, optional): Number of non-improving
+                validation epochs tolerated before stopping.
+            early_stopping_delta (float, optional): Minimum validation-loss
+                improvement required to reset early stopping.
+            early_stopping_path (str, optional): Path used by the early stopping
+                checkpoint saver.
+            checkpoint_dir (str, optional): Directory used to store training
+                checkpoints.
+            tensorboard_log_dir (str, optional): Directory enabling TensorBoard
+                logging when provided.
+            classification_ignore_index (int, optional): Label value ignored during
+                classification metrics and validation classification loss.
+            device (str or torch.device, optional): Device where the model is run.
+            metrics_base_seed (int, optional): Base seed stored for metric-related
+                reproducibility settings.
+
+        Returns:
+            None
+        """
         self.backbone = backbone
         self.head = head
         self.loss = loss
@@ -72,9 +103,25 @@ class Trainer:
         self.tb_logger = TensorBoardLogger(tensorboard_log_dir) if tensorboard_log_dir else None
 
     def _head_name(self):
+        """Return the class name of the active head module.
+
+        Args:
+            None
+
+        Returns:
+            str: Name of the head module class.
+        """
         return type(self.head).__name__
 
     def _format_metric(self, x):
+        """Format a metric value for progress-bar display.
+
+        Args:
+            x (Any): Metric value to format.
+
+        Returns:
+            str: Four-decimal string for finite numbers, otherwise ``"nan"``.
+        """
         if x is None:
             return "nan"
         try:
@@ -87,9 +134,15 @@ class Trainer:
 
     def _unpack_batch(self, batch):
         """
-        Supports:
-          (images, cls_labels)
-          (images, cls_labels, metric_labels)
+        Unpack a training or validation batch into images and labels.
+
+        Args:
+            batch (tuple or list): Batch shaped as ``(images, cls_labels)`` or
+                ``(images, cls_labels, metric_labels)``.
+
+        Returns:
+            tuple: Three-item tuple containing images, classification labels, and
+            metric labels.
         """
         if not isinstance(batch, (list, tuple)):
             raise ValueError(
@@ -111,6 +164,14 @@ class Trainer:
         return images, cls_labels, metric_labels
 
     def _prediction_logits(self, embeddings):
+        """Obtain prediction logits from a head exposing ``predict_logits``.
+
+        Args:
+            embeddings (torch.Tensor): Embedding tensor passed to the head.
+
+        Returns:
+            torch.Tensor: Predicted class logits for the given embeddings.
+        """
         if hasattr(self.head, "predict_logits"):
             return self.head.predict_logits(embeddings)
         raise ValueError(
@@ -119,11 +180,15 @@ class Trainer:
 
     def _compute_loss_and_logits(self, embeddings, labels):
         """
-        ArcFace / DynArcFace:
-            head -> logits, then external loss(logits, labels)
+        Compute the training loss and logits for the configured head type.
 
-        SphereFace2:
-            head -> scalar loss, then predict_logits(embeddings)
+        Args:
+            embeddings (torch.Tensor): Embedding tensor produced by the backbone.
+            labels (torch.Tensor): Class labels corresponding to the embeddings.
+
+        Returns:
+            tuple: Two-item tuple containing the scalar loss tensor and the logits
+            used for predictions.
         """
         head_name = self._head_name()
 
@@ -161,16 +226,16 @@ class Trainer:
 
     def _compute_retrieval_metrics(self, embeddings, metric_labels):
         """
-        Leave-one-out retrieval on the validation set itself.
+        Compute leave-one-out retrieval metrics on the validation embeddings.
 
-        Metrics:
-          - top1
-          - top5
-          - mAP
+        Args:
+            embeddings (torch.Tensor): Embedding tensor collected from validation.
+            metric_labels (torch.Tensor): Identity labels used for retrieval
+                evaluation.
 
-        Notes:
-          - ignores samples whose metric_label == classification_ignore_index
-          - only queries with at least one positive mate are used
+        Returns:
+            dict: Retrieval metric dictionary containing ``top1``, ``top5``, and
+            ``mAP`` scores.
         """
         if embeddings is None or metric_labels is None:
             return {"top1": np.nan, "top5": np.nan, "mAP": np.nan}
@@ -227,16 +292,16 @@ class Trainer:
 
     def _compute_verification_metrics(self, embeddings, metric_labels):
         """
-        Pairwise verification on the validation set itself.
+        Compute pairwise verification metrics on the validation embeddings.
 
-        Metrics:
-          - roc_auc
-          - eer
-          - tar_at_far_1e3
+        Args:
+            embeddings (torch.Tensor): Embedding tensor collected from validation.
+            metric_labels (torch.Tensor): Identity labels used for pairwise
+                verification.
 
-        Notes:
-          - ignores samples whose metric_label == classification_ignore_index
-          - uses upper-triangle pair scores
+        Returns:
+            dict: Verification metric dictionary containing ``roc_auc``, ``eer``,
+            and ``tar_at_far_1e3``.
         """
         if embeddings is None or metric_labels is None:
             return {"roc_auc": np.nan, "eer": np.nan, "tar_at_far_1e3": np.nan}
@@ -288,11 +353,33 @@ class Trainer:
         }
 
     def _compute_open_set_metrics(self, embeddings, metric_labels):
+        """Combine retrieval and verification metrics into one dictionary.
+
+        Args:
+            embeddings (torch.Tensor): Embedding tensor collected from validation.
+            metric_labels (torch.Tensor): Identity labels used for open-set
+                evaluation.
+
+        Returns:
+            dict: Dictionary merging retrieval and verification metrics.
+        """
         retrieval = self._compute_retrieval_metrics(embeddings, metric_labels)
         verification = self._compute_verification_metrics(embeddings, metric_labels)
         return {**retrieval, **verification}
 
     def train_one_epoch(self, train_loader, epoch, epochs):
+        """Run one full training epoch.
+
+        Args:
+            train_loader (torch.utils.data.DataLoader): Loader providing training
+                batches.
+            epoch (int): Zero-based epoch index.
+            epochs (int): Total number of training epochs.
+
+        Returns:
+            tuple: Two-item tuple containing average training loss and average
+            training accuracy for the epoch.
+        """
         self.backbone.train()
         self.head.train()
 
@@ -351,6 +438,20 @@ class Trainer:
         return avg_loss, avg_acc
 
     def validate_one_epoch(self, val_loader, epoch, epochs, collect_embeddings=False):
+        """Run one validation epoch and compute open-set evaluation metrics.
+
+        Args:
+            val_loader (torch.utils.data.DataLoader): Loader providing validation
+                batches.
+            epoch (int): Zero-based epoch index.
+            epochs (int): Total number of training epochs.
+            collect_embeddings (bool, optional): Whether to include validation
+                embeddings and metric labels in the returned tuple.
+
+        Returns:
+            tuple: Validation loss, validation accuracy, metric dictionary, and
+            optionally the collected embeddings and metric labels.
+        """
         self.backbone.eval()
         self.head.eval()
 
@@ -423,6 +524,23 @@ class Trainer:
 
     def train(self, train_loader, val_loader, epochs, log_embeddings_every=5,
               start_epoch=0, resume_history=None):
+        """Train the model for multiple epochs and record history.
+
+        Args:
+            train_loader (torch.utils.data.DataLoader): Loader providing training
+                batches.
+            val_loader (torch.utils.data.DataLoader): Loader providing validation
+                batches.
+            epochs (int): Total number of epochs to run.
+            log_embeddings_every (int, optional): Frequency for logging validation
+                embeddings to TensorBoard.
+            start_epoch (int, optional): Epoch index to start from when resuming.
+            resume_history (dict, optional): Existing history dictionary to extend.
+
+        Returns:
+            dict: History dictionary containing loss, accuracy, and open-set metric
+            series accumulated during training.
+        """
         history = resume_history if resume_history is not None else {
             "train_loss": [],
             "train_acc": [],

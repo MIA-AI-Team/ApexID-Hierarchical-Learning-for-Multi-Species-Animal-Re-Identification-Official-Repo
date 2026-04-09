@@ -16,6 +16,19 @@ class ApexID(nn.Module):
                  in_channels, # might be 4 new one for FFT
                  embedding_dim, 
                  C = 32):
+        """Initialize the ApexID backbone and embedding projection head.
+
+        Args:
+            config_name (int): Backbone depth identifier selecting the residual
+                stage configuration.
+            in_channels (int): Number of channels in the input image tensor.
+            embedding_dim (int): Size of the normalized embedding vector produced by
+                the network.
+            C (int, optional): Cardinality used in grouped residual convolutions.
+
+        Returns:
+            None
+        """
         super().__init__()
         
         configurations = {
@@ -45,6 +58,14 @@ class ApexID(nn.Module):
         self.init_weight()
 
     def forward(self, x):
+        """Encode an input batch into L2-normalized embeddings.
+
+        Args:
+            x (torch.Tensor): Input image batch.
+
+        Returns:
+            torch.Tensor: Normalized embedding tensor for the input batch.
+        """
         x = self.silu(self.conv1(x))
         x = self.maxpool(x)
 
@@ -59,6 +80,14 @@ class ApexID(nn.Module):
         return x
 
     def init_weight(self):
+        """Initialize convolution, linear, and batch normalization layers.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         for layer in self.modules():
             if isinstance(layer, nn.Conv2d):
                 nn.init.kaiming_normal_(layer.weight, mode="fan_out", nonlinearity="relu")
