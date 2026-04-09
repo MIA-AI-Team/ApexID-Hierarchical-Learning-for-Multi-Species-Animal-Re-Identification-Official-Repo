@@ -85,8 +85,8 @@ class LRFinder:
             for param_group in self.optimizer.param_groups:
                 param_group['lr'] = lr
                 
-            history_df = pd.DataFrame(self.history, index=False)
-            history_df.to_csv(self.save_path, index=False)
+        history_df = pd.DataFrame(self.history)
+        history_df.to_csv(self.save_path, index=False)
                 
         return self.history
     
