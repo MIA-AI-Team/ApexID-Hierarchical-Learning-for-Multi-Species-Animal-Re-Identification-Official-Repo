@@ -10,7 +10,7 @@ import numpy as np
 
 class LRFinder:
     def __init__(self, backbone, head, optimizer, train_ds_path, train_transform, train_label_to_idx,
-                 metrics_label_map, batch_size, rootdir, device=None, save_path = "LRFinder_history.csv"):
+                 metrics_label_map, batch_size, rootdir, device=None, save_path = "LRFinder_history.csv", sample_size=0.5):
         self.backbone = backbone
         self.head = head
         self.optimizer = optimizer
@@ -25,6 +25,7 @@ class LRFinder:
         self.open_set_ignore = -100
         self.backbone.to(self.device)
         self.head.to(self.device)
+        self.sample_size = sample_size
         
         self.history = {"log_lr": [], "smoothed_loss": []}
         self.best_loss = float('inf')
@@ -96,7 +97,7 @@ class LRFinder:
         df = pd.read_csv(self.train_ds_path)
         
         unique_ids = df[label_col].unique()
-        num_sampled_ids = max(1, int(len(unique_ids) * 0.10))
+        num_sampled_ids = max(1, int(len(unique_ids) * self.sample_size))
         sampled_ids = random.sample(list(unique_ids), num_sampled_ids)
         
         sampled_df = df[df[label_col].isin(sampled_ids)].reset_index(drop=True)
