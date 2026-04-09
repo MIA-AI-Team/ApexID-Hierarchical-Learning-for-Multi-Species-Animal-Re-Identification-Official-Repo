@@ -111,7 +111,7 @@ class LRFinder:
                             metrics_label_map=self.metrics_label_map,   
                         )
         
-        return DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=4)
+        return DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=4, drop_last=True)
 
     def plot(self, save_plot_path = "/LR_plot.png"):
         """
