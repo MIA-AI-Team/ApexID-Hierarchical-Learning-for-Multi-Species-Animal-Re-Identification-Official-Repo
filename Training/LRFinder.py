@@ -6,6 +6,7 @@ import pandas as pd
 import random
 from torch.utils.data import DataLoader
 from Dataset.Dataset import ApexID_Dataset
+import numpy as np
 
 class LRFinder:
     def __init__(self, backbone, head, optimizer, train_ds_path, train_transform, train_label_to_idx,
@@ -119,20 +120,75 @@ class LRFinder:
         The ideal learning rate is often found just before the point where the loss begins to increase sharply.
         """
         if not self.history["log_lr"]:
-            print("No data to plot. Please call run() first.")
+            print("No data to plot.")
             return
 
+        losses = np.array(self.history["smoothed_loss"])
+        log_lrs = np.array(self.history["log_lr"])
+        gradients = np.gradient(losses)
+        best_idx = np.argmin(gradients)
+        
         plt.figure(figsize=(10, 6))
-        plt.plot(self.history["log_lr"], self.history["smoothed_loss"], lw=2)
+        plt.plot(log_lrs, losses, lw=2, label='Smoothed Loss')
+        
+        plt.scatter(log_lrs[best_idx], losses[best_idx], color='red', s=100, 
+                    label=f'Steepest Slope: 1e{log_lrs[best_idx]:.2f}', zorder=5)
 
         ticks = plt.xticks()[0]
-        labels = [f"1e{int(t)}" for t in ticks]
-        plt.xticks(ticks, labels)
-
+        plt.xticks(ticks, [f"1e{int(t)}" for t in ticks])
         plt.xlabel("Learning Rate (log scale)")
         plt.ylabel("Smoothed Loss")
         plt.title("Learning Rate Finder")
+        plt.legend()
         plt.grid(True, linestyle='--', alpha=0.7)
+        
         if save_plot_path:
             plt.savefig(save_plot_path)
         plt.show()
+    
+    def get_best_lr(self):
+            """
+            Analyzes the LR Finder history to identify key learning rate milestones.
+            
+            This method computes three standard metrics used to select an optimal 
+            learning rate for training:
+            
+            1. Steepest Slope (suggested_lr): The point where the loss is decreasing 
+            most rapidly. This is generally considered the safest and most 
+            effective learning rate for starting training.
+            2. Minimum Loss LR (min_loss_lr): The learning rate that achieved the 
+            absolute lowest loss during the test. Training at this rate is 
+            aggressive and may risk divergence.
+            3. Maximum LR (max_lr_reached): The highest learning rate tested before 
+            the process stopped or diverged.
+            
+            Returns:
+                dict: A dictionary containing:
+                    - 'steepest_lr': (float) LR at the maximum negative gradient.
+                    - 'min_loss_lr': (float) LR where loss was at its global minimum.
+                    - 'max_lr': (float) The highest LR reached in the test.
+                    - 'best_idx': (int) Index of the steepest slope point.
+            """
+            losses = np.array(self.history["smoothed_loss"])
+            log_lrs = np.array(self.history["log_lr"])
+
+            # Find Steepest Slope (Maximum Negative Gradient)
+            # We calculate the rate of change of loss; the most negative is the steepest descent.
+            gradients = np.gradient(losses)
+            steepest_idx = np.argmin(gradients)
+            steepest_lr = 10**log_lrs[steepest_idx]
+
+            # Find Minimum Loss LR
+            # The point just before the model starts to explode/diverge.
+            min_loss_idx = np.argmin(losses)
+            min_loss_lr = 10**log_lrs[min_loss_idx]
+
+            # Find Max LR reached in test
+            max_lr_reached = 10**np.max(log_lrs)
+
+            return {
+                "steepest_lr": steepest_lr,
+                "min_loss_lr": min_loss_lr,
+                "max_lr": max_lr_reached,
+                "best_idx": steepest_idx
+            }
