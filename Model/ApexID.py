@@ -97,9 +97,9 @@ class ApexID(nn.Module):
                 nn.init.kaiming_normal_(layer.weight, mode="fan_out", nonlinearity="relu")
                 if layer.bias is not None:
                     nn.init.zeros_(layer.bias)
-            elif isinstance(layer, nn.BatchNorm2d):
+            elif isinstance(layer, nn.BatchNorm2d): # NOTE: Remove duplicate BatchNorm2d check as it is handled together with BatchNorm1d below.
                 nn.init.ones_(layer.weight)
                 nn.init.zeros_(layer.bias)
-            elif isinstance(layer, (nn.BatchNorm2d, nn.BatchNorm1d)):
+            elif isinstance(layer, (nn.BatchNorm2d, nn.BatchNorm1d)): 
                 nn.init.ones_(layer.weight)
                 nn.init.zeros_(layer.bias)
