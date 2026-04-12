@@ -202,7 +202,7 @@ class Trainer:
             loss = self.loss(logits, labels)
             return loss, logits
 
-        elif head_name == "SphereFace2Loss":
+        elif head_name in {"SphereFace2Loss", "SphereFace2FocalLoss"}:
             loss = self.head(embeddings, labels)
             logits = self._prediction_logits(embeddings)
             return loss, logits
