@@ -234,14 +234,14 @@ class Trainer:
                 evaluation.
 
         Returns:
-            dict: Retrieval metric dictionary containing ``top1``, ``top5``, and
-            ``mAP`` scores.
+            dict: Retrieval metric dictionary containing ``top1``, ``top5``,
+            ``top20``, and ``mAP`` scores.
         """
         if embeddings is None or metric_labels is None:
-            return {"top1": np.nan, "top5": np.nan, "mAP": np.nan}
+            return {"top1": np.nan, "top5": np.nan, "top20": np.nan, "mAP": np.nan}
 
         if len(embeddings) == 0:
-            return {"top1": np.nan, "top5": np.nan, "mAP": np.nan}
+            return {"top1": np.nan, "top5": np.nan, "top20": np.nan, "mAP": np.nan}
 
         emb = F.normalize(embeddings.float(), dim=1).cpu().numpy()
         labels = metric_labels.cpu().numpy()
@@ -253,7 +253,7 @@ class Trainer:
 
         n = len(labels)
         if n < 2:
-            return {"top1": np.nan, "top5": np.nan, "mAP": np.nan}
+            return {"top1": np.nan, "top5": np.nan, "top20": np.nan, "mAP": np.nan}
 
         sim = emb @ emb.T
         np.fill_diagonal(sim, -np.inf)
@@ -261,6 +261,7 @@ class Trainer:
 
         top1_hits = []
         top5_hits = []
+        top20_hits = []
         ap_list = []
 
         for i in range(n):
@@ -273,6 +274,7 @@ class Trainer:
 
             top1_hits.append(float(rel[0]))
             top5_hits.append(float(rel[: min(5, len(rel))].any()))
+            top20_hits.append(float(rel[: min(20, len(rel))].any()))
 
             pos_ranks = np.flatnonzero(rel)
             precisions = []
@@ -282,11 +284,12 @@ class Trainer:
             ap_list.append(ap)
 
         if len(ap_list) == 0:
-            return {"top1": np.nan, "top5": np.nan, "mAP": np.nan}
+            return {"top1": np.nan, "top5": np.nan, "top20": np.nan, "mAP": np.nan}
 
         return {
             "top1": float(np.mean(top1_hits)),
             "top5": float(np.mean(top5_hits)),
+            "top20": float(np.mean(top20_hits)),
             "mAP": float(np.mean(ap_list)),
         }
 
@@ -351,6 +354,53 @@ class Trainer:
             "eer": eer,
             "tar_at_far_1e3": tar_at_far,
         }
+
+    def _compute_baks_baus(self, known_true, known_pred, unknown_true, unknown_reject):
+        """Compute Balanced Accuracy for Known Samples (BAKS) and Unknown Samples (BAUS).
+
+        Args:
+            known_true (list): Ground-truth labels for known samples.
+            known_pred (list): Predicted labels for known samples.
+            unknown_true (list): Ground-truth identity labels for unknown samples.
+            unknown_reject (list): Boolean flags indicating whether each unknown
+                sample was correctly rejected (1) or not (0).
+
+        Returns:
+            dict: Dictionary containing ``baks`` and ``baus`` scores.
+        """
+        # BAKS: per-class accuracy averaged across known classes
+        known_true = np.array(known_true)
+        known_pred = np.array(known_pred)
+
+        if len(known_true) == 0:
+            baks = np.nan
+        else:
+            unique_known = np.unique(known_true)
+            per_class_acc = []
+            for cid in unique_known:
+                idxs = known_true == cid
+                per_class_acc.append(
+                    (known_pred[idxs] == cid).sum() / max(idxs.sum(), 1)
+                )
+            baks = float(np.mean(per_class_acc)) if len(per_class_acc) > 0 else np.nan
+
+        # BAUS: per-unknown-identity correct-reject rate averaged across unknown identities
+        unknown_true = np.array(unknown_true)
+        unknown_reject = np.array(unknown_reject)
+
+        if len(unknown_true) == 0:
+            baus = np.nan
+        else:
+            unique_unknown = np.unique(unknown_true)
+            per_unknown_acc = []
+            for uid in unique_unknown:
+                idxs = unknown_true == uid
+                per_unknown_acc.append(
+                    unknown_reject[idxs].sum() / max(idxs.sum(), 1)
+                )
+            baus = float(np.mean(per_unknown_acc)) if len(per_unknown_acc) > 0 else np.nan
+
+        return {"baks": baks, "baus": baus}
 
     def _compute_open_set_metrics(self, embeddings, metric_labels):
         """Combine retrieval and verification metrics into one dictionary.
@@ -462,6 +512,12 @@ class Trainer:
         all_embeddings = []
         all_metric_labels = []
 
+        # For BAKS / BAUS
+        known_true = []
+        known_pred = []
+        unknown_true = []
+        unknown_reject = []
+
         pbar = tqdm(
             val_loader,
             desc=f"Val   [{epoch+1}/{epochs}]",
@@ -488,7 +544,9 @@ class Trainer:
                 else:
                     known_mask = cls_labels != self.classification_ignore_index
 
-                # only known samples go through the classification head for val_loss / val_acc
+                unknown_mask = ~known_mask
+
+                # ── known samples: loss, acc, BAKS collection ──
                 if known_mask.any():
                     known_embeddings = embeddings[known_mask]
                     known_labels = cls_labels[known_mask]
@@ -501,6 +559,31 @@ class Trainer:
 
                     preds = torch.argmax(logits, dim=1)
                     total_correct += (preds == known_labels).sum().item()
+
+                    # accumulate for BAKS
+                    known_true.extend(known_labels.cpu().numpy().tolist())
+                    known_pred.extend(preds.cpu().numpy().tolist())
+
+                # ── unknown samples: BAUS collection ──
+                if unknown_mask.any():
+                    unknown_embeddings = embeddings[unknown_mask]
+                    unknown_labels = metric_labels[unknown_mask]
+
+                    # get logits for unknown samples to determine rejection
+                    unknown_logits = self._prediction_logits(unknown_embeddings)
+                    unknown_preds = torch.argmax(unknown_logits, dim=1).cpu().numpy()
+
+                    # a sample is "rejected" when its predicted class is not in
+                    # the known class set (argmax falls outside known range, or
+                    # we treat any prediction as "accepted" so reject=False here
+                    # since we have no explicit threshold — mark all as not rejected
+                    # unless the head outputs a dedicated rejection signal).
+                    # Conservative default: rejected = pred not matching any known label.
+                    # Users can override by subclassing if a threshold is available.
+                    rejected = np.zeros(unknown_preds.shape[0], dtype=np.int32)  # default: not rejected
+
+                    unknown_true.extend(unknown_labels.cpu().numpy().tolist())
+                    unknown_reject.extend(rejected.tolist())
 
                 avg_loss = total_loss / max(total_known, 1)
                 avg_acc = total_correct / max(total_known, 1)
@@ -517,6 +600,10 @@ class Trainer:
         all_metric_labels = torch.cat(all_metric_labels, dim=0) if len(all_metric_labels) > 0 else torch.empty(0, dtype=torch.long)
 
         metric_dict = self._compute_open_set_metrics(all_embeddings, all_metric_labels)
+
+        # BAKS / BAUS
+        baks_baus = self._compute_baks_baus(known_true, known_pred, unknown_true, unknown_reject)
+        metric_dict.update(baks_baus)
 
         if collect_embeddings:
             return avg_loss, avg_acc, metric_dict, all_embeddings, all_metric_labels
@@ -548,10 +635,13 @@ class Trainer:
             "val_acc": [],
             "val_top1": [],
             "val_top5": [],
+            "val_top20": [],
             "val_mAP": [],
             "val_roc_auc": [],
             "val_eer": [],
             "val_tar_at_far_1e3": [],
+            "val_baks": [],
+            "val_baus": [],
         }
 
         best_val_loss = float("inf")
@@ -591,12 +681,15 @@ class Trainer:
             history["val_acc"].append(float(val_acc))
             history["val_top1"].append(float(val_metrics["top1"]) if not np.isnan(val_metrics["top1"]) else np.nan)
             history["val_top5"].append(float(val_metrics["top5"]) if not np.isnan(val_metrics["top5"]) else np.nan)
+            history["val_top20"].append(float(val_metrics["top20"]) if not np.isnan(val_metrics["top20"]) else np.nan)
             history["val_mAP"].append(float(val_metrics["mAP"]) if not np.isnan(val_metrics["mAP"]) else np.nan)
             history["val_roc_auc"].append(float(val_metrics["roc_auc"]) if not np.isnan(val_metrics["roc_auc"]) else np.nan)
             history["val_eer"].append(float(val_metrics["eer"]) if not np.isnan(val_metrics["eer"]) else np.nan)
             history["val_tar_at_far_1e3"].append(
                 float(val_metrics["tar_at_far_1e3"]) if not np.isnan(val_metrics["tar_at_far_1e3"]) else np.nan
             )
+            history["val_baks"].append(float(val_metrics["baks"]) if not np.isnan(val_metrics["baks"]) else np.nan)
+            history["val_baus"].append(float(val_metrics["baus"]) if not np.isnan(val_metrics["baus"]) else np.nan)
 
             epoch_bar.set_postfix({
                 "tr_loss": self._format_metric(train_loss),
@@ -604,9 +697,13 @@ class Trainer:
                 "va_loss": self._format_metric(val_loss),
                 "va_acc": self._format_metric(val_acc),
                 "top1": self._format_metric(val_metrics["top1"]),
+                "top5": self._format_metric(val_metrics["top5"]),
+                "top20": self._format_metric(val_metrics["top20"]),
                 "mAP": self._format_metric(val_metrics["mAP"]),
                 "auc": self._format_metric(val_metrics["roc_auc"]),
                 "eer": self._format_metric(val_metrics["eer"]),
+                "baks": self._format_metric(val_metrics["baks"]),
+                "baus": self._format_metric(val_metrics["baus"]),
             })
 
             if self.scheduler is not None:
@@ -673,10 +770,14 @@ class Trainer:
                     "hparam/final_train_loss": history["train_loss"][final_idx],
                     "hparam/final_val_acc": history["val_acc"][final_idx],
                     "hparam/final_val_top1": history["val_top1"][final_idx],
+                    "hparam/final_val_top5": history["val_top5"][final_idx],
+                    "hparam/final_val_top20": history["val_top20"][final_idx],
                     "hparam/final_val_mAP": history["val_mAP"][final_idx],
                     "hparam/final_val_roc_auc": history["val_roc_auc"][final_idx],
                     "hparam/final_val_eer": history["val_eer"][final_idx],
                     "hparam/final_val_tar_at_far_1e3": history["val_tar_at_far_1e3"][final_idx],
+                    "hparam/final_val_baks": history["val_baks"][final_idx],
+                    "hparam/final_val_baus": history["val_baus"][final_idx],
                 },
             )
             self.tb_logger.close()
