@@ -120,7 +120,10 @@ class SphereFace2FocalLoss(nn.Module):
             logits, one_hot, weight=combined_weight
         )
 
-        return loss, logits
+        return loss  
 
+    # Required by your Trainer
     def predict_logits(self, x):
-        return self.forward(x, return_logits=True)
+        w = F.normalize(self.w, dim=0)
+        cos_theta = F.normalize(x, dim=1).mm(w)
+        return self.r * cos_theta + self.b
