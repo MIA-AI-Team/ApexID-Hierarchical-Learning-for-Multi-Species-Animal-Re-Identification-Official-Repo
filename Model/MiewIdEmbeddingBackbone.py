@@ -1,3 +1,5 @@
+import os
+import shutil
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -25,10 +27,22 @@ class MiewIdEmbeddingBackbone(nn.Module):
             raise ImportError(
                 "MiewIdEmbeddingBackbone requires the `transformers` package."
             )
+        # copy read-only model dir to a writable tmp location
+        writable_model_path = hf_model_id
+        if os.path.isdir(hf_model_id) and not os.access(hf_model_id, os.W_OK):
+            writable_model_path = f"/tmp/miewid_model"
+            if not os.path.exists(writable_model_path):
+                print(f"Copying read-only model to {writable_model_path} ...")
+                shutil.copytree(hf_model_id, writable_model_path)
+            hf_model_id = writable_model_path
 
         self.extractor = AutoModel.from_pretrained(
-            hf_model_id, trust_remote_code=trust_remote_code
+            hf_model_id,
+            trust_remote_code=trust_remote_code,
+            local_files_only=True,          # never hit the network on Kaggle
+            cache_dir="/tmp/hf_cache",      # writable cache dir
         )
+        
         with torch.no_grad():
             probe = torch.zeros(1, 3, img_size, img_size)
             feat = self.extractor(probe)
