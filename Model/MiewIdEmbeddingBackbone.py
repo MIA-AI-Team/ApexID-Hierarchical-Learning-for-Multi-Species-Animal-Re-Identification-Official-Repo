@@ -1,18 +1,14 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 try:
     from transformers import AutoModel
 except ImportError:
     AutoModel = None
-
-
 class MiewIdEmbeddingBackbone(nn.Module):
     """Loads a MiewID checkpoint from Hugging Face (EfficientNetV2 + GeM + BN feature
-    extractor), then maps features to ``embedding_dim`` and L2-normalizes, matching
-    the ``ApexID`` / ``TimmEmbeddingBackbone`` contract."""
-
+    extractor), then maps features to embedding_dim and L2-normalizes, matching
+    the ApexID / TimmEmbeddingBackbone contract."""
     def __init__(
         self,
         embedding_dim,
@@ -23,9 +19,8 @@ class MiewIdEmbeddingBackbone(nn.Module):
         super().__init__()
         if AutoModel is None:
             raise ImportError(
-                "MiewIdEmbeddingBackbone requires the `transformers` package."
+                "MiewIdEmbeddingBackbone requires the transformers package."
             )
-
         self.extractor = AutoModel.from_pretrained(
             hf_model_id, trust_remote_code=trust_remote_code
         )
@@ -34,7 +29,6 @@ class MiewIdEmbeddingBackbone(nn.Module):
             feat = self.extractor(probe)
         in_dim = int(feat.shape[-1])
         self.embedding = nn.Linear(in_dim, embedding_dim, bias=False)
-
     def forward(self, x):
         x = self.extractor(x)
         x = self.embedding(x)
