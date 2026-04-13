@@ -121,25 +121,32 @@ class LRFinder:
         The ideal learning rate is often found just before the point where the loss begins to increase sharply.
         """
         if not self.history["log_lr"]:
-            print("No data to plot.")
-            return
+                    print("No data to plot.")
+                    return
 
         losses = np.array(self.history["smoothed_loss"])
         log_lrs = np.array(self.history["log_lr"])
-        gradients = np.gradient(losses)
-        best_idx = np.argmin(gradients)
         
+        min_loss_idx = np.argmin(losses)
+        valid_gradients = np.gradient(losses[:min_loss_idx])
+        
+        if len(valid_gradients) > 0:
+            best_idx = np.argmin(valid_gradients)
+        else:
+            best_idx = min_loss_idx
+
         plt.figure(figsize=(10, 6))
         plt.plot(log_lrs, losses, lw=2, label='Smoothed Loss')
         
         plt.scatter(log_lrs[best_idx], losses[best_idx], color='red', s=100, 
                     label=f'Steepest Slope: 1e{log_lrs[best_idx]:.2f}', zorder=5)
 
-        ticks = plt.xticks()[0]
+        ticks = np.arange(math.floor(log_lrs.min()), math.ceil(log_lrs.max()) + 1)
         plt.xticks(ticks, [f"1e{int(t)}" for t in ticks])
+        
         plt.xlabel("Learning Rate (log scale)")
         plt.ylabel("Smoothed Loss")
-        plt.title("Learning Rate Finder")
+        plt.title("Learning Rate Finder (Corrected)")
         plt.legend()
         plt.grid(True, linestyle='--', alpha=0.7)
         
@@ -172,24 +179,22 @@ class LRFinder:
             """
             losses = np.array(self.history["smoothed_loss"])
             log_lrs = np.array(self.history["log_lr"])
-
-            # Find Steepest Slope (Maximum Negative Gradient)
-            # We calculate the rate of change of loss; the most negative is the steepest descent.
-            gradients = np.gradient(losses)
-            steepest_idx = np.argmin(gradients)
-            steepest_lr = 10**log_lrs[steepest_idx]
-
-            # Find Minimum Loss LR
-            # The point just before the model starts to explode/diverge.
+    
             min_loss_idx = np.argmin(losses)
             min_loss_lr = 10**log_lrs[min_loss_idx]
-
-            # Find Max LR reached in test
-            max_lr_reached = 10**np.max(log_lrs)
-
+    
+            valid_losses = losses[:min_loss_idx]
+            if len(valid_losses) > 1:
+                gradients = np.gradient(valid_losses)
+                steepest_idx = np.argmin(gradients)
+                steepest_lr = 10**log_lrs[steepest_idx]
+            else:
+                steepest_idx = min_loss_idx
+                steepest_lr = min_loss_lr
+    
             return {
                 "steepest_lr": steepest_lr,
                 "min_loss_lr": min_loss_lr,
-                "max_lr": max_lr_reached,
+                "max_lr": 10**np.max(log_lrs),
                 "best_idx": steepest_idx
             }
