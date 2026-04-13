@@ -241,7 +241,7 @@ class ApexID_Dataset(Dataset):
         img = np.array(img)
 
         if self.transform is not None:
-            img = self.transform(img)
+            img = self.transform(image=img)["image"]
 
         cls_label = torch.tensor(cls_label, dtype=torch.long)
         metric_label = torch.tensor(metric_label, dtype=torch.long)
