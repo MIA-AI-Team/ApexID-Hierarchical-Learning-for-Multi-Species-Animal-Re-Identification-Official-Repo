@@ -6,7 +6,7 @@ from torchvision import transforms
 import pandas as pd
 import os
 from collections import defaultdict
-
+import numpy as np
 
 class ApexID_Dataset(Dataset):
     def __init__(
@@ -238,6 +238,7 @@ class ApexID_Dataset(Dataset):
         metric_label = self.metrics_label_map[identity]
 
         img = Image.open(img_path).convert(self.image_mode)
+        img = np.array(img)
 
         if self.transform is not None:
             img = self.transform(img)
