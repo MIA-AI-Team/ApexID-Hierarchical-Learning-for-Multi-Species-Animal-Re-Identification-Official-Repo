@@ -29,9 +29,13 @@ class MiewIdEmbeddingBackbone(nn.Module):
             feat = self.extractor(probe)
         in_dim = int(feat.shape[-1])
         self.embedding = nn.Linear(in_dim, embedding_dim, bias=False)
+        self.dropout = nn.Dropout(p=0.5)
+        self.ln = nn.LayerNorm(embedding_dim)
+
     def forward(self, x):
         x = self.extractor(x)
         x = self.dropout(x)
         x = self.embedding(x)
+        x = self.ln(x)
         x = F.normalize(x)
         return x
