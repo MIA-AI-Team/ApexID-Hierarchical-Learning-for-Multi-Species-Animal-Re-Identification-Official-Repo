@@ -31,6 +31,7 @@ class MiewIdEmbeddingBackbone(nn.Module):
         self.embedding = nn.Linear(in_dim, embedding_dim, bias=False)
     def forward(self, x):
         x = self.extractor(x)
+        x = self.dropout(x)
         x = self.embedding(x)
         x = F.normalize(x)
         return x
