@@ -34,8 +34,8 @@ class MiewIdEmbeddingBackbone(nn.Module):
 
     def forward(self, x):
         x = self.extractor(x)
-        x = self.dropout(x)
+        # x = self.dropout(x)
         x = self.embedding(x)
-        x = self.ln(x)
+        # x = self.ln(x)
         x = F.normalize(x)
         return x
