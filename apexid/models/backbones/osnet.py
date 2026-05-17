@@ -269,6 +269,7 @@ class OSNet(nn.Module):
         layers,
         channels,
         embedding_dim=512,
+        input_channels=3,
         IN=False,
         **kwargs
     ):
@@ -284,9 +285,12 @@ class OSNet(nn.Module):
         assert num_blocks == len(channels) - 1
         self.embedding_dim = embedding_dim
         self.feature_dim = embedding_dim
+        self.input_channels = int(input_channels)
+        if self.input_channels <= 0:
+            raise ValueError("OSNet input_channels must be a positive integer.")
 
         # convolutional backbone
-        self.conv1 = ConvLayer(3, channels[0], 7, stride=2, padding=3, IN=IN)
+        self.conv1 = ConvLayer(self.input_channels, channels[0], 7, stride=2, padding=3, IN=IN)
         self.maxpool = nn.MaxPool2d(3, stride=2, padding=1)
         self.conv2 = self._make_layer(
             blocks[0],

@@ -41,6 +41,29 @@ def _normalise_name(name):
     return str(name).lower()
 
 
+def _is_auto(value):
+    return value is None or (
+        isinstance(value, str) and value.strip().lower() in {"", "auto", "none", "null"}
+    )
+
+
+def _resolve_input_channels(cfg, model_cfg, backbone_kwargs):
+    value = model_cfg.get("input_channels")
+    backbone_value = backbone_kwargs.pop("input_channels", None)
+
+    if _is_auto(value):
+        value = backbone_value
+
+    if _is_auto(value):
+        data_cfg = _section(cfg, "data") if "data" in _as_dict(cfg) else {}
+        value = 6 if bool(data_cfg.get("wavelet", False)) else 3
+
+    input_channels = int(value)
+    if input_channels <= 0:
+        raise ValueError("model.input_channels must be a positive integer.")
+    return input_channels
+
+
 def build_model(cfg_or_kwargs=None):
     """Build the canonical ApexID embedding model from config or kwargs."""
     cfg = _as_dict(cfg_or_kwargs)
@@ -54,10 +77,12 @@ def build_model(cfg_or_kwargs=None):
     embedding_dim = int(model_cfg.get("embedding_dim", 512))
     backbone_cfg = _as_dict(model_cfg.get("backbone", {}))
     backbone_name = backbone_cfg.get("name", "osnet_x1_0")
-    backbone_kwargs = _as_dict(backbone_cfg.get("kwargs", {}))
+    backbone_kwargs = dict(_as_dict(backbone_cfg.get("kwargs", {})))
+    input_channels = _resolve_input_channels(cfg, model_cfg, backbone_kwargs)
     return ApexID(
         backbone_name=backbone_name,
         embedding_dim=embedding_dim,
+        input_channels=input_channels,
         backbone_kwargs=backbone_kwargs,
     )
 

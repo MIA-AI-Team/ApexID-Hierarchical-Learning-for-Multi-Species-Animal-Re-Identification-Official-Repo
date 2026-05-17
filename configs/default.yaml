@@ -1,15 +1,42 @@
+experiment:
+  name: apexid_osnet_sphereface2
+  output_dir: outputs/apexid_osnet_sphereface2
+
 seed: 42
 
+device:
+  prefer_gpu: true
+  gpu_index: 0
+
 data:
+  train_path: animals/fine_tune_train.csv
+  val_path: animals/val_all.csv
+  train_csv: null
+  val_csv: null
+  root_dir: animals
   image_size: [440, 440]
-  wavelet: false
+  wavelet: True
   transforms:
-    mean: [0.485, 0.456, 0.406]
-    std: [0.229, 0.224, 0.225]
+    mean: [0.166292, 0.152588, 0.147616, 0.499996, 0.499999, 0.5]
+    std: [0.255829, 0.232257, 0.227407, 0.013016, 0.012588, 0.004816]
+
+dataloader:
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  drop_last: true
+  sampler:
+    name: pk
+    num_identities: 3
+    num_instances: 3
+    batches_per_epoch: null
+    shuffle: true
 
 model:
   name: apexid
   embedding_dim: 512
+  input_channels: 6
   backbone:
     name: osnet_x1_0
     kwargs: {}
@@ -25,3 +52,42 @@ head:
 loss:
   name: null
   kwargs: {}
+
+optimizer:
+  name: adam
+  kwargs:
+    lr: 0.001
+    weight_decay: 0.0
+
+scheduler:
+  name: null
+  kwargs: {}
+
+training:
+  epochs: 100
+  progress: true
+  gradient_clip_norm: null
+  classification_ignore_index: -100
+  metric_ignore_index: null
+
+validation:
+  every_n_epochs: 1
+  metrics: [top1, top5, mAP, micro_f1]
+
+checkpoint:
+  output_dir: outputs/apexid_osnet_sphereface2/checkpoints
+  every_n_epochs: 1
+  filename: last_checkpoint.pt
+  delete_previous: true
+  resume_path: null
+
+early_stopping:
+  enabled: true
+  monitor: val_mAP
+  mode: max
+  patience: 7
+  min_delta: 0.0
+  output_dir: outputs/apexid_osnet_sphereface2/checkpoints
+  full_model_name: best_full_model.pt
+  backbone_name: best_backbone.pt
+  metadata_name: best_metadata.json

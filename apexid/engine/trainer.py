@@ -1,40 +1,26 @@
 import math
-import numpy as np
+
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from torch import nn
 from tqdm.auto import tqdm
-from sklearn.metrics import roc_auc_score, roc_curve
 
-try:
-    from apexid.utils.seed import DEFAULT_SEED, seed_everything
-except ImportError:
-    DEFAULT_SEED = 42
-
-    def seed_everything(seed=DEFAULT_SEED, deterministic=True):
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed(seed)
-            torch.cuda.manual_seed_all(seed)
-        return seed
-
-try:
-    from Callback.EarlyStopping import EarlyStopping
-    from Callback.Checkpoint import save_checkpoint, save_backbone_weights
-    from Callback.Plotting import TensorBoardLogger
-except ImportError:
-    from ..Callback.EarlyStopping import EarlyStopping
-    from ..Callback.Checkpoint import save_checkpoint, save_backbone_weights
-    from ..Callback.Plotting import TensorBoardLogger
+from apexid.engine.checkpoint import save_training_checkpoint
+from apexid.engine.early_stopping import EarlyStopping
+from apexid.engine.validator import (
+    Validator,
+    _compute_loss_and_logits,
+    _format_metric,
+    _unpack_batch,
+)
+from apexid.utils.seed import DEFAULT_SEED, seed_everything
 
 
 seed_everything(DEFAULT_SEED)
 
 
-# TODO: Refactor
-
-
 class Trainer:
+    """Training loop for ApexID backbone+head experiments."""
+
     def __init__(
         self,
         backbone,
@@ -42,42 +28,78 @@ class Trainer:
         loss=None,
         optimizer=None,
         scheduler=None,
+        validator=None,
+        epochs=None,
+        device=None,
+        classification_ignore_index=-100,
+        metric_ignore_index=None,
+        progress=True,
+        gradient_clip_norm=None,
+        validation_every_n_epochs=1,
+        checkpoint_dir="checkpoints",
+        checkpoint_every_n_epochs=1,
+        checkpoint_filename="last_checkpoint.pt",
+        checkpoint_delete_previous=True,
+        early_stopping_enabled=True,
+        early_stopping_monitor="val_mAP",
+        early_stopping_mode="max",
         early_stopping_patience=7,
         early_stopping_delta=0.0,
-        early_stopping_path="best_state_dict.pt",
-        checkpoint_dir="checkpoints",
-        tensorboard_log_dir=None,
-        classification_ignore_index=-100,
-        device=None,
-        metrics_base_seed=42,
+        early_stopping_min_delta=None,
+        early_stopping_dir=None,
+        early_stopping_full_model_name="best_full_model.pt",
+        early_stopping_backbone_name="best_backbone.pt",
+        early_stopping_metadata_name="best_metadata.json",
+        early_stopping_path=None,
+        metrics_base_seed=DEFAULT_SEED,
     ):
-        """Initialize the training helper and its optional utilities.
+        """Initialize the training helper.
 
         Args:
-            backbone (torch.nn.Module): Feature extractor that produces embeddings.
-            head (torch.nn.Module): Classification or metric-learning head operating
-                on the embeddings.
-            loss (callable, optional): External loss function used when the head
-                returns logits instead of a scalar loss.
-            optimizer (torch.optim.Optimizer, optional): Optimizer used for model
-                updates. If omitted, Adam is created automatically.
-            scheduler (torch.optim.lr_scheduler._LRScheduler, optional): Learning
-                rate scheduler stepped during training.
-            early_stopping_patience (int, optional): Number of non-improving
-                validation epochs tolerated before stopping.
-            early_stopping_delta (float, optional): Minimum validation-loss
-                improvement required to reset early stopping.
-            early_stopping_path (str, optional): Path used by the early stopping
-                checkpoint saver.
-            checkpoint_dir (str, optional): Directory used to store training
-                checkpoints.
-            tensorboard_log_dir (str, optional): Directory enabling TensorBoard
-                logging when provided.
-            classification_ignore_index (int, optional): Label value ignored during
-                classification metrics and validation classification loss.
-            device (str or torch.device, optional): Device where the model is run.
-            metrics_base_seed (int, optional): Base seed stored for metric-related
-                reproducibility settings.
+            backbone (torch.nn.Module): Feature extractor that returns embeddings.
+            head (torch.nn.Module): Trainable classification or metric-learning
+                head.
+            loss (callable, optional): External objective for heads that return
+                logits.
+            optimizer (torch.optim.Optimizer, optional): Optimizer. If omitted,
+                Adam with ``lr=1e-3`` is created.
+            scheduler (torch.optim.lr_scheduler.LRScheduler, optional): Scheduler
+                stepped after each epoch.
+            validator (Validator, optional): Validator instance. If omitted, one
+                is created from the same backbone/head/loss.
+            epochs (int, optional): Default epoch count used when ``train`` is
+                called with ``epochs=None``.
+            device (str or torch.device, optional): Training device.
+            classification_ignore_index (int or None): Label disallowed in the
+                training loader and ignored by validation loss/accuracy.
+            metric_ignore_index (int or None): Metric label ignored by re-ID
+                validation metrics.
+            progress (bool): Whether to show tqdm progress bars.
+            gradient_clip_norm (float, optional): Max gradient norm. ``None``
+                disables clipping.
+            validation_every_n_epochs (int): Run validation every N epochs.
+            checkpoint_dir (str): Directory for latest resumable checkpoint.
+            checkpoint_every_n_epochs (int): Save checkpoint every N epochs.
+            checkpoint_filename (str): Latest checkpoint filename or epoch format
+                string.
+            checkpoint_delete_previous (bool): Whether to keep only the latest
+                checkpoint file.
+            early_stopping_enabled (bool): Whether to monitor validation metrics.
+            early_stopping_monitor (str): Metric key to monitor. Defaults to
+                ``val_mAP``.
+            early_stopping_mode (str): ``max`` for mAP/top-k metrics, ``min`` for
+                losses.
+            early_stopping_patience (int): Non-improving validations tolerated.
+            early_stopping_delta (float): Backward-compatible min-delta value.
+            early_stopping_min_delta (float, optional): Explicit min-delta value.
+            early_stopping_dir (str, optional): Directory for best full/backbone
+                weights. Defaults to ``checkpoint_dir``.
+            early_stopping_full_model_name (str): Best full model filename.
+            early_stopping_backbone_name (str): Best backbone-only filename.
+            early_stopping_metadata_name (str): Best metadata JSON filename.
+            early_stopping_path (str, optional): Backward-compatible full-model
+                path accepted by ``EarlyStopping``.
+            metrics_base_seed (int): Stored for experiment reproducibility.
 
         Returns:
             None
@@ -85,363 +107,92 @@ class Trainer:
         self.backbone = backbone
         self.head = head
         self.loss = loss
+        self.epochs = None if epochs is None else int(epochs)
         self.classification_ignore_index = classification_ignore_index
+        self.metric_ignore_index = metric_ignore_index
+        self.progress = bool(progress)
+        self.gradient_clip_norm = gradient_clip_norm
+        self.validation_every_n_epochs = int(validation_every_n_epochs)
+        self.checkpoint_dir = checkpoint_dir
+        self.checkpoint_every_n_epochs = int(checkpoint_every_n_epochs)
+        self.checkpoint_filename = checkpoint_filename
+        self.checkpoint_delete_previous = bool(checkpoint_delete_previous)
         self.metrics_base_seed = int(metrics_base_seed)
 
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        if self.validation_every_n_epochs <= 0:
+            raise ValueError("validation_every_n_epochs must be > 0.")
+        if self.checkpoint_every_n_epochs <= 0:
+            raise ValueError("checkpoint_every_n_epochs must be > 0.")
 
-        self.model = nn.ModuleDict({
-            "backbone": self.backbone,
-            "head": self.head
-        }).to(self.device)
+        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.model = nn.ModuleDict({"backbone": self.backbone, "head": self.head}).to(self.device)
 
         if optimizer is None:
             adam_kwargs = {"lr": 1e-3}
-            if "cuda" in str(self.device).lower():
+            if self.device.type == "cuda":
                 adam_kwargs["fused"] = True
             self.optimizer = torch.optim.Adam(self.model.parameters(), **adam_kwargs)
         else:
             self.optimizer = optimizer
 
         self.scheduler = scheduler
-
-        self.early_stopping = EarlyStopping(
-            patience=early_stopping_patience,
-            verbose=True,
-            delta=early_stopping_delta,
-            path=early_stopping_path
+        self.validator = validator or Validator(
+            self.backbone,
+            self.head,
+            loss=self.loss,
+            device=self.device,
+            classification_ignore_index=self.classification_ignore_index,
+            metric_ignore_index=self.metric_ignore_index,
+            progress=self.progress,
         )
 
-        self.checkpoint_dir = checkpoint_dir
-        self.tb_logger = TensorBoardLogger(tensorboard_log_dir) if tensorboard_log_dir else None
-
-    def _head_name(self):
-        """Return the class name of the active head module.
-
-        Args:
-            None
-
-        Returns:
-            str: Name of the head module class.
-        """
-        return type(self.head).__name__
-
-    def _format_metric(self, x):
-        """Format a metric value for progress-bar display.
-
-        Args:
-            x (Any): Metric value to format.
-
-        Returns:
-            str: Four-decimal string for finite numbers, otherwise ``"nan"``.
-        """
-        if x is None:
-            return "nan"
-        try:
-            x = float(x)
-        except Exception:
-            return "nan"
-        if np.isnan(x) or np.isinf(x):
-            return "nan"
-        return f"{x:.4f}"
-
-    def _unpack_batch(self, batch):
-        """
-        Unpack a training or validation batch into images and labels.
-
-        Args:
-            batch (tuple or list): Batch shaped as ``(images, cls_labels)`` or
-                ``(images, cls_labels, metric_labels)``.
-
-        Returns:
-            tuple: Three-item tuple containing images, classification labels, and
-            metric labels.
-        """
-        if not isinstance(batch, (list, tuple)):
-            raise ValueError(
-                "Each batch must be a tuple/list like "
-                "(images, cls_labels) or (images, cls_labels, metric_labels)."
+        min_delta = early_stopping_delta if early_stopping_min_delta is None else early_stopping_min_delta
+        self.early_stopping = None
+        if early_stopping_enabled:
+            self.early_stopping = EarlyStopping(
+                monitor=early_stopping_monitor,
+                mode=early_stopping_mode,
+                patience=early_stopping_patience,
+                min_delta=min_delta,
+                output_dir=early_stopping_dir or checkpoint_dir,
+                full_model_name=early_stopping_full_model_name,
+                backbone_name=early_stopping_backbone_name,
+                metadata_name=early_stopping_metadata_name,
+                verbose=self.progress,
+                path=early_stopping_path,
             )
 
-        if len(batch) == 2:
-            images, cls_labels = batch
-            metric_labels = cls_labels
-        elif len(batch) >= 3:
-            images, cls_labels, metric_labels = batch[:3]
-        else:
-            raise ValueError(
-                "Batch must contain at least 2 elements: "
-                "(images, cls_labels) or (images, cls_labels, metric_labels)."
-            )
-
-        return images, cls_labels, metric_labels
-
-    def _prediction_logits(self, embeddings):
-        """Obtain prediction logits from a head exposing ``predict_logits``.
-
-        Args:
-            embeddings (torch.Tensor): Embedding tensor passed to the head.
-
-        Returns:
-            torch.Tensor: Predicted class logits for the given embeddings.
-        """
-        if hasattr(self.head, "predict_logits"):
-            return self.head.predict_logits(embeddings)
-        raise ValueError(
-            "Head returned a scalar loss but does not expose predict_logits(...)."
-        )
-
-    def _compute_loss_and_logits(self, embeddings, labels):
-        """
-        Compute the training loss and logits for the configured head type.
-
-        Args:
-            embeddings (torch.Tensor): Embedding tensor produced by the backbone.
-            labels (torch.Tensor): Class labels corresponding to the embeddings.
-
-        Returns:
-            tuple: Two-item tuple containing the scalar loss tensor and the logits
-            used for predictions.
-        """
-        head_name = self._head_name()
-
-        if head_name in {"ArcFaceLoss", "DynArcFaceLoss"}:
-            logits = self.head(embeddings, labels)
-            if self.loss is None:
-                raise ValueError(
-                    f"{head_name} returns logits, so you must provide an external loss "
-                    "(usually nn.CrossEntropyLoss())."
-                )
-            loss = self.loss(logits, labels)
-            return loss, logits
-
-        elif head_name in {"SphereFace2Loss", "SphereFace2FocalLoss"}:
-            loss = self.head(embeddings, labels)
-            logits = self._prediction_logits(embeddings)
-            return loss, logits
-
-        else:
-            # generic fallback if we added new head
-            head_output = self.head(embeddings, labels)
-
-            if torch.is_tensor(head_output) and head_output.ndim == 0:
-                loss = head_output
-                logits = self._prediction_logits(embeddings)
-                return loss, logits
-
-            if self.loss is None:
-                raise ValueError(
-                    "Head returned class logits but no external loss was provided."
-                )
-
-            loss = self.loss(head_output, labels)
-            return loss, head_output
-
-    def _compute_retrieval_metrics(self, embeddings, metric_labels):
-        """
-        Compute leave-one-out retrieval metrics on the validation embeddings.
-
-        Args:
-            embeddings (torch.Tensor): Embedding tensor collected from validation.
-            metric_labels (torch.Tensor): Identity labels used for retrieval
-                evaluation.
-
-        Returns:
-            dict: Retrieval metric dictionary containing ``top1``, ``top5``,
-            ``top20``, and ``mAP`` scores.
-        """
-        if embeddings is None or metric_labels is None:
-            return {"top1": np.nan, "top5": np.nan, "top20": np.nan, "mAP": np.nan}
-
-        if len(embeddings) == 0:
-            return {"top1": np.nan, "top5": np.nan, "top20": np.nan, "mAP": np.nan}
-
-        emb = F.normalize(embeddings.float(), dim=1).cpu().numpy()
-        labels = metric_labels.cpu().numpy()
-
-        if self.classification_ignore_index is not None:
-            valid_mask = labels != self.classification_ignore_index
-            emb = emb[valid_mask]
-            labels = labels[valid_mask]
-
-        n = len(labels)
-        if n < 2:
-            return {"top1": np.nan, "top5": np.nan, "top20": np.nan, "mAP": np.nan}
-
-        sim = emb @ emb.T
-        np.fill_diagonal(sim, -np.inf)
-        ranked = np.argsort(-sim, axis=1)
-
-        top1_hits = []
-        top5_hits = []
-        top20_hits = []
-        ap_list = []
-
-        for i in range(n):
-            order = ranked[i]
-            rel = (labels[order] == labels[i]).astype(np.int32)
-
-            n_pos = int(rel.sum())
-            if n_pos == 0:
-                continue
-
-            top1_hits.append(float(rel[0]))
-            top5_hits.append(float(rel[: min(5, len(rel))].any()))
-            top20_hits.append(float(rel[: min(20, len(rel))].any()))
-
-            pos_ranks = np.flatnonzero(rel)
-            precisions = []
-            for hit_num, rank_idx in enumerate(pos_ranks, start=1):
-                precisions.append(hit_num / float(rank_idx + 1))
-            ap = float(np.mean(precisions)) if len(precisions) > 0 else np.nan
-            ap_list.append(ap)
-
-        if len(ap_list) == 0:
-            return {"top1": np.nan, "top5": np.nan, "top20": np.nan, "mAP": np.nan}
-
+    @staticmethod
+    def empty_history():
+        """Return an empty training history dictionary."""
         return {
-            "top1": float(np.mean(top1_hits)),
-            "top5": float(np.mean(top5_hits)),
-            "top20": float(np.mean(top20_hits)),
-            "mAP": float(np.mean(ap_list)),
+            "train_loss": [],
+            "train_acc": [],
+            "val_loss": [],
+            "val_acc": [],
+            "val_top1": [],
+            "val_top5": [],
+            "val_mAP": [],
+            "val_micro_f1": [],
         }
 
-    def _compute_verification_metrics(self, embeddings, metric_labels):
-        """
-        Compute pairwise verification metrics on the validation embeddings.
-
-        Args:
-            embeddings (torch.Tensor): Embedding tensor collected from validation.
-            metric_labels (torch.Tensor): Identity labels used for pairwise
-                verification.
-
-        Returns:
-            dict: Verification metric dictionary containing ``roc_auc``, ``eer``,
-            and ``tar_at_far_1e3``.
-        """
-        if embeddings is None or metric_labels is None:
-            return {"roc_auc": np.nan, "eer": np.nan, "tar_at_far_1e3": np.nan}
-
-        if len(embeddings) == 0:
-            return {"roc_auc": np.nan, "eer": np.nan, "tar_at_far_1e3": np.nan}
-
-        emb = F.normalize(embeddings.float(), dim=1).cpu().numpy()
-        labels = metric_labels.cpu().numpy()
-
-        if self.classification_ignore_index is not None:
-            valid_mask = labels != self.classification_ignore_index
-            emb = emb[valid_mask]
-            labels = labels[valid_mask]
-
-        n = len(labels)
-        if n < 2:
-            return {"roc_auc": np.nan, "eer": np.nan, "tar_at_far_1e3": np.nan}
-
-        sim = emb @ emb.T
-        iu = np.triu_indices(n, k=1)
-        scores = sim[iu]
-        targets = (labels[iu[0]] == labels[iu[1]]).astype(np.int32)
-
-        n_pos = int(targets.sum())
-        n_neg = int(len(targets) - n_pos)
-        if n_pos == 0 or n_neg == 0:
-            return {"roc_auc": np.nan, "eer": np.nan, "tar_at_far_1e3": np.nan}
-
-        roc_auc = float(roc_auc_score(targets, scores))
-
-        fpr, tpr, _ = roc_curve(targets, scores, drop_intermediate=False)
-        fnr = 1.0 - tpr
-
-        idx_eer = int(np.nanargmin(np.abs(fpr - fnr)))
-        eer = float((fpr[idx_eer] + fnr[idx_eer]) / 2.0)
-
-        far_target = 1e-3
-        valid = np.where(fpr <= far_target)[0]
-        if len(valid) == 0:
-            tar_at_far = 0.0
-        else:
-            tar_at_far = float(np.max(tpr[valid]))
-
-        return {
-            "roc_auc": roc_auc,
-            "eer": eer,
-            "tar_at_far_1e3": tar_at_far,
-        }
-
-    def _compute_baks_baus(self, known_true, known_pred, unknown_true, unknown_reject):
-        """Compute Balanced Accuracy for Known Samples (BAKS) and Unknown Samples (BAUS).
-
-        Args:
-            known_true (list): Ground-truth labels for known samples.
-            known_pred (list): Predicted labels for known samples.
-            unknown_true (list): Ground-truth identity labels for unknown samples.
-            unknown_reject (list): Boolean flags indicating whether each unknown
-                sample was correctly rejected (1) or not (0).
-
-        Returns:
-            dict: Dictionary containing ``baks`` and ``baus`` scores.
-        """
-        # BAKS: per-class accuracy averaged across known classes
-        known_true = np.array(known_true)
-        known_pred = np.array(known_pred)
-
-        if len(known_true) == 0:
-            baks = np.nan
-        else:
-            unique_known = np.unique(known_true)
-            per_class_acc = []
-            for cid in unique_known:
-                idxs = known_true == cid
-                per_class_acc.append(
-                    (known_pred[idxs] == cid).sum() / max(idxs.sum(), 1)
-                )
-            baks = float(np.mean(per_class_acc)) if len(per_class_acc) > 0 else np.nan
-
-        # BAUS: per-unknown-identity correct-reject rate averaged across unknown identities
-        unknown_true = np.array(unknown_true)
-        unknown_reject = np.array(unknown_reject)
-
-        if len(unknown_true) == 0:
-            baus = np.nan
-        else:
-            unique_unknown = np.unique(unknown_true)
-            per_unknown_acc = []
-            for uid in unique_unknown:
-                idxs = unknown_true == uid
-                per_unknown_acc.append(
-                    unknown_reject[idxs].sum() / max(idxs.sum(), 1)
-                )
-            baus = float(np.mean(per_unknown_acc)) if len(per_unknown_acc) > 0 else np.nan
-
-        return {"baks": baks, "baus": baus}
-
-    def _compute_open_set_metrics(self, embeddings, metric_labels):
-        """Combine retrieval and verification metrics into one dictionary.
-
-        Args:
-            embeddings (torch.Tensor): Embedding tensor collected from validation.
-            metric_labels (torch.Tensor): Identity labels used for open-set
-                evaluation.
-
-        Returns:
-            dict: Dictionary merging retrieval and verification metrics.
-        """
-        retrieval = self._compute_retrieval_metrics(embeddings, metric_labels)
-        verification = self._compute_verification_metrics(embeddings, metric_labels)
-        return {**retrieval, **verification}
+    def _known_mask(self, labels):
+        """Return training samples that are valid known identities."""
+        if self.classification_ignore_index is None:
+            return torch.ones_like(labels, dtype=torch.bool)
+        return labels != self.classification_ignore_index
 
     def train_one_epoch(self, train_loader, epoch, epochs):
-        """Run one full training epoch.
+        """Run one training epoch.
 
         Args:
-            train_loader (torch.utils.data.DataLoader): Loader providing training
+            train_loader (torch.utils.data.DataLoader): Loader yielding training
                 batches.
             epoch (int): Zero-based epoch index.
-            epochs (int): Total number of training epochs.
+            epochs (int): Total number of epochs.
 
         Returns:
-            tuple: Two-item tuple containing average training loss and average
-            training accuracy for the epoch.
+            dict: Training metrics with keys ``loss`` and ``acc``.
         """
         self.backbone.train()
         self.head.train()
@@ -450,349 +201,189 @@ class Trainer:
         total_correct = 0
         total_samples = 0
 
-        pbar = tqdm(
+        iterator = tqdm(
             train_loader,
-            desc=f"Train [{epoch+1}/{epochs}]",
+            desc=f"Train [{epoch + 1}/{epochs}]",
             leave=False,
-            dynamic_ncols=True
+            dynamic_ncols=True,
+            disable=not self.progress,
         )
 
-        for batch in pbar:
-            images, labels, _ = self._unpack_batch(batch)
-
+        for batch in iterator:
+            images, labels, _ = _unpack_batch(batch)
             images = images.to(self.device, non_blocking=True)
-            labels = labels.to(self.device, non_blocking=True)
+            labels = labels.to(self.device, non_blocking=True).long()
 
-            if self.classification_ignore_index is not None:
-                if (labels == self.classification_ignore_index).any():
-                    raise ValueError(
-                        "Unknown/ignored labels appeared in the training loader. "
-                        "Training must contain only known IDs."
-                    )
+            if not self._known_mask(labels).all():
+                raise ValueError(
+                    "Unknown/ignored labels appeared in the training loader. "
+                    "Training must contain only known IDs."
+                )
 
-            self.optimizer.zero_grad()
-
+            self.optimizer.zero_grad(set_to_none=True)
             embeddings = self.backbone(images)
-            loss, logits = self._compute_loss_and_logits(embeddings, labels)
-
+            loss, logits = _compute_loss_and_logits(self.head, self.loss, embeddings, labels)
             loss.backward()
+
+            if self.gradient_clip_norm is not None:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.gradient_clip_norm))
+
             self.optimizer.step()
 
-            batch_size = images.size(0)
-            total_loss += loss.item() * batch_size
+            batch_size = int(images.size(0))
+            total_loss += float(loss.item()) * batch_size
             total_samples += batch_size
-
             preds = torch.argmax(logits, dim=1)
-            total_correct += (preds == labels).sum().item()
+            total_correct += int((preds == labels).sum().item())
 
             avg_loss = total_loss / max(total_samples, 1)
             avg_acc = total_correct / max(total_samples, 1)
-            current_lr = self.optimizer.param_groups[0]["lr"]
+            lr = self.optimizer.param_groups[0]["lr"]
+            iterator.set_postfix(
+                {
+                    "loss": _format_metric(avg_loss),
+                    "acc": _format_metric(avg_acc),
+                    "lr": f"{lr:.2e}",
+                }
+            )
 
-            pbar.set_postfix({
-                "loss": self._format_metric(avg_loss),
-                "acc": self._format_metric(avg_acc),
-                "lr": f"{current_lr:.2e}"
-            })
-
-        avg_loss = total_loss / max(total_samples, 1)
-        avg_acc = total_correct / max(total_samples, 1)
-
-        return avg_loss, avg_acc
-
-    def validate_one_epoch(self, val_loader, epoch, epochs, collect_embeddings=False):
-        """Run one validation epoch and compute open-set evaluation metrics.
-
-        Args:
-            val_loader (torch.utils.data.DataLoader): Loader providing validation
-                batches.
-            epoch (int): Zero-based epoch index.
-            epochs (int): Total number of training epochs.
-            collect_embeddings (bool, optional): Whether to include validation
-                embeddings and metric labels in the returned tuple.
-
-        Returns:
-            tuple: Validation loss, validation accuracy, metric dictionary, and
-            optionally the collected embeddings and metric labels.
-        """
-        self.backbone.eval()
-        self.head.eval()
-
-        total_loss = 0.0
-        total_correct = 0
-        total_known = 0
-
-        all_embeddings = []
-        all_metric_labels = []
-
-        # For BAKS / BAUS
-        known_true = []
-        known_pred = []
-        unknown_true = []
-        unknown_reject = []
-
-        pbar = tqdm(
-            val_loader,
-            desc=f"Val   [{epoch+1}/{epochs}]",
-            leave=False,
-            dynamic_ncols=True
-        )
-
-        with torch.no_grad():
-            for batch in pbar:
-                images, cls_labels, metric_labels = self._unpack_batch(batch)
-
-                images = images.to(self.device, non_blocking=True)
-                cls_labels = cls_labels.to(self.device, non_blocking=True)
-                metric_labels = metric_labels.to(self.device, non_blocking=True)
-
-                embeddings = self.backbone(images)
-
-                # collect ALL val embeddings for retrieval / verification metrics
-                all_embeddings.append(embeddings.detach().cpu())
-                all_metric_labels.append(metric_labels.detach().cpu())
-
-                if self.classification_ignore_index is None:
-                    known_mask = torch.ones_like(cls_labels, dtype=torch.bool)
-                else:
-                    known_mask = cls_labels != self.classification_ignore_index
-
-                unknown_mask = ~known_mask
-
-                # ── known samples: loss, acc, BAKS collection ──
-                if known_mask.any():
-                    known_embeddings = embeddings[known_mask]
-                    known_labels = cls_labels[known_mask]
-
-                    loss, logits = self._compute_loss_and_logits(known_embeddings, known_labels)
-
-                    batch_known = known_labels.size(0)
-                    total_loss += loss.item() * batch_known
-                    total_known += batch_known
-
-                    preds = torch.argmax(logits, dim=1)
-                    total_correct += (preds == known_labels).sum().item()
-
-                    # accumulate for BAKS
-                    known_true.extend(known_labels.cpu().numpy().tolist())
-                    known_pred.extend(preds.cpu().numpy().tolist())
-
-                # ── unknown samples: BAUS collection ──
-                if unknown_mask.any():
-                    unknown_embeddings = embeddings[unknown_mask]
-                    unknown_labels = metric_labels[unknown_mask]
-
-                    # get logits for unknown samples to determine rejection
-                    unknown_logits = self._prediction_logits(unknown_embeddings)
-                    unknown_preds = torch.argmax(unknown_logits, dim=1).cpu().numpy()
-
-                    # a sample is "rejected" when its predicted class is not in
-                    # the known class set (argmax falls outside known range, or
-                    # we treat any prediction as "accepted" so reject=False here
-                    # since we have no explicit threshold — mark all as not rejected
-                    # unless the head outputs a dedicated rejection signal).
-                    # Conservative default: rejected = pred not matching any known label.
-                    # Users can override by subclassing if a threshold is available.
-                    rejected = np.zeros(unknown_preds.shape[0], dtype=np.int32)  # default: not rejected
-
-                    unknown_true.extend(unknown_labels.cpu().numpy().tolist())
-                    unknown_reject.extend(rejected.tolist())
-
-                avg_loss = total_loss / max(total_known, 1)
-                avg_acc = total_correct / max(total_known, 1)
-
-                pbar.set_postfix({
-                    "loss": self._format_metric(avg_loss),
-                    "acc": self._format_metric(avg_acc),
-                })
-
-        avg_loss = total_loss / max(total_known, 1)
-        avg_acc = total_correct / max(total_known, 1)
-
-        all_embeddings = torch.cat(all_embeddings, dim=0) if len(all_embeddings) > 0 else torch.empty(0)
-        all_metric_labels = torch.cat(all_metric_labels, dim=0) if len(all_metric_labels) > 0 else torch.empty(0, dtype=torch.long)
-
-        metric_dict = self._compute_open_set_metrics(all_embeddings, all_metric_labels)
-
-        # BAKS / BAUS
-        baks_baus = self._compute_baks_baus(known_true, known_pred, unknown_true, unknown_reject)
-        metric_dict.update(baks_baus)
-
-        if collect_embeddings:
-            return avg_loss, avg_acc, metric_dict, all_embeddings, all_metric_labels
-        return avg_loss, avg_acc, metric_dict
-
-    def train(self, train_loader, val_loader, epochs, log_embeddings_every=5,
-              start_epoch=0, resume_history=None):
-        """Train the model for multiple epochs and record history.
-
-        Args:
-            train_loader (torch.utils.data.DataLoader): Loader providing training
-                batches.
-            val_loader (torch.utils.data.DataLoader): Loader providing validation
-                batches.
-            epochs (int): Total number of epochs to run.
-            log_embeddings_every (int, optional): Frequency for logging validation
-                embeddings to TensorBoard.
-            start_epoch (int, optional): Epoch index to start from when resuming.
-            resume_history (dict, optional): Existing history dictionary to extend.
-
-        Returns:
-            dict: History dictionary containing loss, accuracy, and open-set metric
-            series accumulated during training.
-        """
-        history = resume_history if resume_history is not None else {
-            "train_loss": [],
-            "train_acc": [],
-            "val_loss": [],
-            "val_acc": [],
-            "val_top1": [],
-            "val_top5": [],
-            "val_top20": [],
-            "val_mAP": [],
-            "val_roc_auc": [],
-            "val_eer": [],
-            "val_tar_at_far_1e3": [],
-            "val_baks": [],
-            "val_baus": [],
+        return {
+            "loss": total_loss / max(total_samples, 1),
+            "acc": total_correct / max(total_samples, 1),
         }
 
-        best_val_loss = float("inf")
-        if resume_history and len(resume_history.get("val_loss", [])) > 0:
-            best_val_loss = min(resume_history["val_loss"])
-            self.early_stopping.best_score = -best_val_loss
-            self.early_stopping.val_loss_min = best_val_loss
+    def _step_scheduler(self, epoch_metrics):
+        """Step the configured scheduler once per epoch."""
+        if self.scheduler is None:
+            return
+        if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            metric = epoch_metrics.get("val_loss", epoch_metrics["train_loss"])
+            if metric is None or math.isnan(float(metric)):
+                metric = epoch_metrics["train_loss"]
+            self.scheduler.step(metric)
+        else:
+            self.scheduler.step()
 
-        if self.tb_logger:
-            sample_batch = next(iter(train_loader))
-            sample_input, _, _ = self._unpack_batch(sample_batch)
-            sample_input = sample_input[:1].to(self.device)
-            self.tb_logger.log_graph(self.backbone, sample_input)
+    def _append_history(self, history, train_metrics, val_metrics):
+        """Append one epoch of train/validation metrics to history."""
+        history["train_loss"].append(float(train_metrics["loss"]))
+        history["train_acc"].append(float(train_metrics["acc"]))
+        if val_metrics is None:
+            history["val_loss"].append(float("nan"))
+            history["val_acc"].append(float("nan"))
+            history["val_top1"].append(float("nan"))
+            history["val_top5"].append(float("nan"))
+            history["val_mAP"].append(float("nan"))
+            history["val_micro_f1"].append(float("nan"))
+            return
 
-        epoch_bar = tqdm(range(start_epoch, epochs), desc="Epochs", dynamic_ncols=True)
+        history["val_loss"].append(float(val_metrics["loss"]))
+        history["val_acc"].append(float(val_metrics["acc"]))
+        history["val_top1"].append(float(val_metrics["top1"]))
+        history["val_top5"].append(float(val_metrics["top5"]))
+        history["val_mAP"].append(float(val_metrics["mAP"]))
+        history["val_micro_f1"].append(float(val_metrics["micro_f1"]))
+
+    @staticmethod
+    def _prefixed_epoch_metrics(train_metrics, val_metrics):
+        """Build a flat metric dictionary for checkpointing and early stopping."""
+        metrics = {
+            "train_loss": float(train_metrics["loss"]),
+            "train_acc": float(train_metrics["acc"]),
+        }
+        if val_metrics is not None:
+            metrics.update(
+                {
+                    "val_loss": float(val_metrics["loss"]),
+                    "val_acc": float(val_metrics["acc"]),
+                    "val_top1": float(val_metrics["top1"]),
+                    "val_top5": float(val_metrics["top5"]),
+                    "val_mAP": float(val_metrics["mAP"]),
+                    "val_micro_f1": float(val_metrics["micro_f1"]),
+                }
+            )
+        return metrics
+
+    def train(self, train_loader, val_loader, epochs=None, start_epoch=0, resume_history=None):
+        """Train for multiple epochs.
+
+        Args:
+            train_loader (torch.utils.data.DataLoader): Training loader.
+            val_loader (torch.utils.data.DataLoader): Validation loader.
+            epochs (int, optional): Total epoch count. If omitted, uses
+                ``self.epochs``.
+            start_epoch (int): Zero-based starting epoch, usually
+                ``checkpoint["next_epoch"]`` when resuming.
+            resume_history (dict, optional): Existing history loaded from a
+                checkpoint.
+
+        Returns:
+            dict: Training history.
+        """
+        epochs = self.epochs if epochs is None else int(epochs)
+        if epochs is None:
+            raise ValueError("epochs must be provided either to Trainer(...) or train(...).")
+
+        history = resume_history if resume_history is not None else self.empty_history()
+        epoch_bar = tqdm(
+            range(int(start_epoch), int(epochs)),
+            desc="Epochs",
+            dynamic_ncols=True,
+            disable=not self.progress,
+        )
 
         for epoch in epoch_bar:
-            train_loss, train_acc = self.train_one_epoch(train_loader, epoch, epochs)
+            train_metrics = self.train_one_epoch(train_loader, epoch, epochs)
+            run_validation = ((epoch + 1) % self.validation_every_n_epochs == 0) or (epoch == epochs - 1)
+            val_metrics = self.validator.validate(val_loader, epoch=epoch, epochs=epochs) if run_validation else None
+            self._append_history(history, train_metrics, val_metrics)
 
-            should_log_emb = self.tb_logger and (epoch % log_embeddings_every == 0 or epoch == epochs - 1)
-            val_result = self.validate_one_epoch(
-                val_loader,
-                epoch,
-                epochs,
-                collect_embeddings=should_log_emb
-            )
+            epoch_metrics = self._prefixed_epoch_metrics(train_metrics, val_metrics)
+            self._step_scheduler(epoch_metrics)
 
-            if should_log_emb:
-                val_loss, val_acc, val_metrics, val_embeddings, val_metric_labels = val_result
-                self.tb_logger.log_embeddings(val_embeddings, val_metric_labels, epoch)
-            else:
-                val_loss, val_acc, val_metrics = val_result
-
-            history["train_loss"].append(float(train_loss))
-            history["train_acc"].append(float(train_acc))
-            history["val_loss"].append(float(val_loss))
-            history["val_acc"].append(float(val_acc))
-            history["val_top1"].append(float(val_metrics["top1"]) if not np.isnan(val_metrics["top1"]) else np.nan)
-            history["val_top5"].append(float(val_metrics["top5"]) if not np.isnan(val_metrics["top5"]) else np.nan)
-            history["val_top20"].append(float(val_metrics["top20"]) if not np.isnan(val_metrics["top20"]) else np.nan)
-            history["val_mAP"].append(float(val_metrics["mAP"]) if not np.isnan(val_metrics["mAP"]) else np.nan)
-            history["val_roc_auc"].append(float(val_metrics["roc_auc"]) if not np.isnan(val_metrics["roc_auc"]) else np.nan)
-            history["val_eer"].append(float(val_metrics["eer"]) if not np.isnan(val_metrics["eer"]) else np.nan)
-            history["val_tar_at_far_1e3"].append(
-                float(val_metrics["tar_at_far_1e3"]) if not np.isnan(val_metrics["tar_at_far_1e3"]) else np.nan
-            )
-            history["val_baks"].append(float(val_metrics["baks"]) if not np.isnan(val_metrics["baks"]) else np.nan)
-            history["val_baus"].append(float(val_metrics["baus"]) if not np.isnan(val_metrics["baus"]) else np.nan)
-
-            epoch_bar.set_postfix({
-                "tr_loss": self._format_metric(train_loss),
-                "tr_acc": self._format_metric(train_acc),
-                "va_loss": self._format_metric(val_loss),
-                "va_acc": self._format_metric(val_acc),
-                "top1": self._format_metric(val_metrics["top1"]),
-                "top5": self._format_metric(val_metrics["top5"]),
-                "top20": self._format_metric(val_metrics["top20"]),
-                "mAP": self._format_metric(val_metrics["mAP"]),
-                "auc": self._format_metric(val_metrics["roc_auc"]),
-                "eer": self._format_metric(val_metrics["eer"]),
-                "baks": self._format_metric(val_metrics["baks"]),
-                "baus": self._format_metric(val_metrics["baus"]),
-            })
-
-            if self.scheduler is not None:
-                if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                    self.scheduler.step(val_loss)
-                else:
-                    self.scheduler.step()
-
-            is_best = self.early_stopping(val_loss, self.model)
-
-            checkpoint_state = {
-                "epoch": epoch,
-                "state_dict": self.model.state_dict(),
-                "optimizer": self.optimizer.state_dict(),
-                "lr_scheduler": self.scheduler.state_dict() if self.scheduler is not None else None,
-                "history": history,
-                "val_metrics": val_metrics,
+            postfix = {
+                "tr_loss": _format_metric(train_metrics["loss"]),
+                "tr_acc": _format_metric(train_metrics["acc"]),
             }
+            if val_metrics is not None:
+                postfix.update(
+                    {
+                        "va_loss": _format_metric(val_metrics["loss"]),
+                        "va_acc": _format_metric(val_metrics["acc"]),
+                        "top1": _format_metric(val_metrics["top1"]),
+                        "top5": _format_metric(val_metrics["top5"]),
+                        "mAP": _format_metric(val_metrics["mAP"]),
+                        "micro_f1": _format_metric(val_metrics["micro_f1"]),
+                    }
+                )
+            epoch_bar.set_postfix(postfix)
 
-            save_checkpoint(
-                checkpoint_state,
-                is_best=is_best,
-                save_dir=self.checkpoint_dir,
-                best_name="best.pt",
+            if self.early_stopping is not None and val_metrics is not None:
+                self.early_stopping(epoch_metrics, model=self.model, epoch=epoch)
+
+            save_training_checkpoint(
+                epoch=epoch,
+                model=self.model,
+                optimizer=self.optimizer,
+                scheduler=self.scheduler,
+                output_dir=self.checkpoint_dir,
+                every_n_epochs=self.checkpoint_every_n_epochs,
+                history=history,
+                metrics=epoch_metrics,
+                filename=self.checkpoint_filename,
+                delete_previous=self.checkpoint_delete_previous,
+                extra_state={
+                    "classification_ignore_index": self.classification_ignore_index,
+                    "metric_ignore_index": self.metric_ignore_index,
+                },
             )
 
-            if is_best:
-                save_backbone_weights(self.backbone, self.checkpoint_dir)
-
-            if self.tb_logger:
-                self.tb_logger.log_epoch(
-                    epoch,
-                    train_loss,
-                    val_loss,
-                    train_acc,
-                    val_acc,
-                    lr=self.optimizer.param_groups[0]["lr"],
-                )
-
-                # optional extra scalar logging if your TensorBoardLogger exposes .writer
-                if hasattr(self.tb_logger, "writer") and self.tb_logger.writer is not None:
-                    for k, v in val_metrics.items():
-                        if v is not None and not np.isnan(v):
-                            self.tb_logger.writer.add_scalar(f"val/{k}", v, epoch)
-
-                self.tb_logger.log_weight_histograms(self.model, epoch)
-
-            best_val_loss = min(best_val_loss, val_loss)
-
-            if self.early_stopping.early_stop:
-                print("\nEarly stopping triggered.")
+            if self.early_stopping is not None and self.early_stopping.early_stop:
+                if self.progress:
+                    print("\nEarly stopping triggered.")
                 break
 
-        if self.tb_logger:
-            final_idx = len(history["train_loss"]) - 1
-            self.tb_logger.log_hparams(
-                hparam_dict={
-                    "lr": self.optimizer.param_groups[0]["lr"],
-                    "optimizer": type(self.optimizer).__name__,
-                    "early_stopping_patience": self.early_stopping.patience,
-                },
-                metric_dict={
-                    "hparam/best_val_loss": best_val_loss,
-                    "hparam/final_train_loss": history["train_loss"][final_idx],
-                    "hparam/final_val_acc": history["val_acc"][final_idx],
-                    "hparam/final_val_top1": history["val_top1"][final_idx],
-                    "hparam/final_val_top5": history["val_top5"][final_idx],
-                    "hparam/final_val_top20": history["val_top20"][final_idx],
-                    "hparam/final_val_mAP": history["val_mAP"][final_idx],
-                    "hparam/final_val_roc_auc": history["val_roc_auc"][final_idx],
-                    "hparam/final_val_eer": history["val_eer"][final_idx],
-                    "hparam/final_val_tar_at_far_1e3": history["val_tar_at_far_1e3"][final_idx],
-                    "hparam/final_val_baks": history["val_baks"][final_idx],
-                    "hparam/final_val_baus": history["val_baus"][final_idx],
-                },
-            )
-            self.tb_logger.close()
-
         return history
+
+
+__all__ = ["Trainer"]
