@@ -1,8 +1,5 @@
 wildlife-datasets @ git+https://github.com/WildlifeDatasets/wildlife-datasets@develop
 wildlife-tools @ git+https://github.com/WildlifeDatasets/wildlife-tools
-transformers==4.45.2
-huggingface-hub<1.0.0
-accelerate
 torch
 torchvision
 timm

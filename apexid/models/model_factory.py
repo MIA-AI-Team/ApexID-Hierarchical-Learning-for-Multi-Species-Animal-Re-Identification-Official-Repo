@@ -1,0 +1,107 @@
+from torch import nn
+
+from .apexid_model import ApexID
+from .heads import ArcFaceHead, DynArcFaceHead, SphereFace2FocalHead, SphereFace2Head
+from ..losses import DCMIPLoss
+from ..utils.seed import DEFAULT_SEED, seed_everything
+
+
+HEAD_REGISTRY = {
+    "arcface": ArcFaceHead,
+    "arcface_head": ArcFaceHead,
+    "dynarcface": DynArcFaceHead,
+    "dynamic_arcface": DynArcFaceHead,
+    "dyn_arcface": DynArcFaceHead,
+    "sphereface2": SphereFace2Head,
+    "sphereface2_head": SphereFace2Head,
+    "sphereface2_focal": SphereFace2FocalHead,
+    "sphereface2focal": SphereFace2FocalHead,
+}
+
+
+def _as_dict(cfg):
+    if cfg is None:
+        return {}
+    if isinstance(cfg, dict):
+        return cfg
+    if hasattr(cfg, "items"):
+        return dict(cfg.items())
+    raise TypeError(f"Expected a dict-like config, got {type(cfg).__name__}.")
+
+
+def _section(cfg, name):
+    cfg = _as_dict(cfg)
+    value = cfg.get(name, {})
+    return _as_dict(value)
+
+
+def _normalise_name(name):
+    if name is None:
+        return None
+    return str(name).lower()
+
+
+def build_model(cfg_or_kwargs=None):
+    """Build the canonical ApexID embedding model from config or kwargs."""
+    cfg = _as_dict(cfg_or_kwargs)
+    seed_everything(cfg.get("seed", DEFAULT_SEED) or DEFAULT_SEED)
+    model_cfg = _section(cfg, "model") if "model" in cfg else cfg
+
+    model_name = _normalise_name(model_cfg.get("name", "apexid"))
+    if model_name != "apexid":
+        raise ValueError("Unknown model '{}'. Available models: apexid".format(model_cfg.get("name")))
+
+    embedding_dim = int(model_cfg.get("embedding_dim", 512))
+    backbone_cfg = _as_dict(model_cfg.get("backbone", {}))
+    backbone_name = backbone_cfg.get("name", "osnet_x1_0")
+    backbone_kwargs = _as_dict(backbone_cfg.get("kwargs", {}))
+    return ApexID(
+        backbone_name=backbone_name,
+        embedding_dim=embedding_dim,
+        backbone_kwargs=backbone_kwargs,
+    )
+
+
+def build_head(name, embedding_dim, num_classes, **kwargs):
+    """Build a trainable metric/classification head."""
+    key = _normalise_name(name)
+    if key not in HEAD_REGISTRY:
+        available = ", ".join(sorted(HEAD_REGISTRY.keys()))
+        raise ValueError(f"Unknown head '{name}'. Available heads: {available}")
+    return HEAD_REGISTRY[key](
+        in_features=int(embedding_dim),
+        out_features=int(num_classes),
+        **kwargs,
+    )
+
+
+def build_loss(name, **kwargs):
+    """Build objective-only losses used outside trainable margin heads."""
+    key = _normalise_name(name)
+    if key in {None, "", "none", "null"}:
+        return None
+    if key in {"cross_entropy", "ce", "crossentropy"}:
+        return nn.CrossEntropyLoss(**kwargs)
+    if key == "dcmip":
+        return DCMIPLoss(**kwargs)
+    raise ValueError("Unknown loss '{}'. Available losses: cross_entropy, dcmip".format(name))
+
+
+def build_components(cfg, num_classes):
+    """Build ``(model, head, criterion)`` from an experiment config."""
+    cfg = _as_dict(cfg)
+    model = build_model(cfg)
+
+    head_cfg = _section(cfg, "head")
+    head_name = head_cfg.get("name", "sphereface2")
+    head_kwargs = _as_dict(head_cfg.get("kwargs", {}))
+    head = build_head(
+        head_name,
+        embedding_dim=model.embedding_dim,
+        num_classes=num_classes,
+        **head_kwargs,
+    )
+
+    loss_cfg = _section(cfg, "loss")
+    criterion = build_loss(loss_cfg.get("name"), **_as_dict(loss_cfg.get("kwargs", {})))
+    return model, head, criterion
