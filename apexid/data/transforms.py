@@ -323,13 +323,30 @@ def build_train_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
         [
             A.Resize(height=height, width=width),
             _clahe_transform(),
-            A.ToGray(num_output_channels=3, p=0.35),
             A.Affine(
-                scale=(0.90, 1.10),
-                translate_percent=(-0.1, 0.1),
-                rotate=(-25, 25),
-                border_mode=cv2.BORDER_CONSTANT,
-                p=0.5,
+                scale=(0.95, 1.05),
+                translate_percent=(-0.03, 0.03),
+                rotate=(-10, 10),
+                border_mode=cv2.BORDER_REFLECT_101,
+                p=0.35,
+            ),
+            A.ToGray(
+                num_output_channels=3,
+                p=0.15,
+            ),
+            A.GaussianBlur(
+                blur_limit=(3, 5),
+                p=0.2,
+            ),
+            A.GaussNoise(
+                std_range=(0.02, 0.05),
+                p=0.2,
+            ),
+            A.PixelDropout(
+                dropout_prob=0.005,
+                per_channel=False,
+                drop_value=0,
+                p=0.10,
             ),
             to_float,
             _normalization(settings["mean"], settings["std"]),
