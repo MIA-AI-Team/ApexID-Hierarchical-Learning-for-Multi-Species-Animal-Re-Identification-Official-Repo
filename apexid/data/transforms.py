@@ -323,6 +323,7 @@ def build_train_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
         [
             A.Resize(height=height, width=width),
             _clahe_transform(),
+            A.ToGray(num_output_channels=3, p=0.35),
             A.Affine(
                 scale=(0.90, 1.10),
                 translate_percent=(-0.1, 0.1),
