@@ -14,16 +14,16 @@ data:
   image_size:
   - 440
   - 440
-  wavelet: false
+  wavelet: true
   transforms:
     mean:
-    - 0.350467
-    - 0.352786
-    - 0.323204
+    - 0.350194
+    - 0.352513
+    - 0.322936
     std:
-    - 0.313266
-    - 0.302628
-    - 0.288989
+    - 0.313112
+    - 0.302449
+    - 0.288811
 dataloader:
   batch_size: 32
   num_workers: 4
@@ -67,7 +67,7 @@ training:
   epochs: 100
   progress: true
   verbose: true
-  gradient_clip_norm: null
+  gradient_clip_norm: 7.0
   classification_ignore_index: -100
   metric_ignore_index: null
 validation:
@@ -87,7 +87,7 @@ early_stopping:
   enabled: true
   monitor: val_mAP
   mode: max
-  patience: 7
+  patience: 10
   min_delta: 0.0
   output_dir: outputs/apexid_osnet_sphereface2/checkpoints
   full_model_name: best_full_model.pt

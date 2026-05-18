@@ -274,7 +274,7 @@ class Trainer:
             loss.backward()
 
             if self.gradient_clip_norm is not None:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.gradient_clip_norm))
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.gradient_clip_norm), foreach=True)
 
             self.optimizer.step()
 
