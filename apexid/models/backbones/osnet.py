@@ -251,7 +251,7 @@ class OSBlock(nn.Module):
         out = x3 + identity
         if self.IN is not None:
             out = self.IN(out)
-        return F.ReLU(out)
+        return F.relu(out)
 
 
 class OSNet(nn.Module):
