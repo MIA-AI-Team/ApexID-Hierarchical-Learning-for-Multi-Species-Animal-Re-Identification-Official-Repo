@@ -82,7 +82,7 @@ checkpoint:
   resume_path: null
 early_stopping:
   enabled: true
-  monitor: top1
+  monitor: val_top1
   mode: max
   patience: 7
   min_delta: 0.0
