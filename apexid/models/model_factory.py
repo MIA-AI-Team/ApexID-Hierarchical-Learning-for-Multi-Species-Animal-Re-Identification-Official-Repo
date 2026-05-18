@@ -19,6 +19,14 @@ HEAD_REGISTRY = {
     "sphereface2focal": SphereFace2FocalHead,
 }
 
+INTERNAL_LOSS_HEADS = {
+    "sphereface2",
+    "sphereface2_head",
+    "sphereface2_focal",
+    "sphereface2_focal_head",
+    "sphereface2focal",
+}
+
 
 def _as_dict(cfg):
     if cfg is None:
@@ -40,6 +48,10 @@ def _normalise_name(name):
     if name is None:
         return None
     return str(name).lower()
+
+
+def _is_null_name(name):
+    return _normalise_name(name) in {None, "", "none", "null"}
 
 
 def _is_auto(value):
@@ -104,7 +116,7 @@ def build_head(name, embedding_dim, num_classes, **kwargs):
 def build_loss(name, **kwargs):
     """Build objective-only losses used outside trainable margin heads."""
     key = _normalise_name(name)
-    if key in {None, "", "none", "null"}:
+    if _is_null_name(key):
         return None
     if key in {"cross_entropy", "ce", "crossentropy"}:
         return nn.CrossEntropyLoss(**kwargs)
@@ -120,6 +132,7 @@ def build_components(cfg, num_classes):
 
     head_cfg = _section(cfg, "head")
     head_name = head_cfg.get("name", "sphereface2")
+    head_key = _normalise_name(head_name)
     head_kwargs = _as_dict(head_cfg.get("kwargs", {}))
     head = build_head(
         head_name,
@@ -129,5 +142,11 @@ def build_components(cfg, num_classes):
     )
 
     loss_cfg = _section(cfg, "loss")
-    criterion = build_loss(loss_cfg.get("name"), **_as_dict(loss_cfg.get("kwargs", {})))
+    loss_name = loss_cfg.get("name")
+    if head_key in INTERNAL_LOSS_HEADS and not _is_null_name(loss_name):
+        raise ValueError(
+            "SphereFace2 heads compute their own loss. Set loss.name to null "
+            "when using sphereface2 or sphereface2_focal."
+        )
+    criterion = build_loss(loss_name, **_as_dict(loss_cfg.get("kwargs", {})))
     return model, head, criterion

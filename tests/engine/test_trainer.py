@@ -5,6 +5,7 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from apexid.engine.trainer import Trainer
+from apexid.models.heads import SphereFace2Head
 
 
 class TrainHead(nn.Module):
@@ -169,6 +170,34 @@ def test_trainer_rejects_unknown_labels_in_training(tmp_path):
         assert "Unknown/ignored labels" in str(exc)
     else:
         raise AssertionError("Expected training with unknown labels to fail.")
+
+
+def test_trainer_trains_one_epoch_with_sphereface2_internal_loss(tmp_path):
+    torch.manual_seed(42)
+    head = SphereFace2Head(
+        in_features=2,
+        out_features=2,
+        alpha=0.7,
+        r=16.0,
+        m=0.2,
+        t=2.0,
+        lw=20.0,
+    )
+    trainer = Trainer(
+        nn.Identity(),
+        head,
+        loss=None,
+        device="cpu",
+        progress=False,
+        checkpoint_dir=tmp_path,
+        early_stopping_enabled=False,
+    )
+
+    metrics = trainer.train_one_epoch(_loader(), epoch=0, epochs=1)
+
+    assert metrics["loss"] > 0.0
+    assert torch.isfinite(torch.tensor(metrics["loss"]))
+    assert 0.0 <= metrics["acc"] <= 1.0
 
 
 def test_trainer_prints_stable_epoch_summaries(tmp_path, capsys):

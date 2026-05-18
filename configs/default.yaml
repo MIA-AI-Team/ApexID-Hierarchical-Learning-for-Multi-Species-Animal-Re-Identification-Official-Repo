@@ -46,10 +46,12 @@ model:
 head:
   name: sphereface2
   kwargs:
+    magn_type: C
+    alpha: 0.7
     r: 40.0
     m: 0.4
-    t: 3
-    lam: 0.7
+    t: 3.0
+    lw: 50.0
 loss:
   name: null
   kwargs: {}

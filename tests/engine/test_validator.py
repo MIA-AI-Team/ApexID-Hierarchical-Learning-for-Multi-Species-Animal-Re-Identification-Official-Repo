@@ -4,7 +4,8 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from apexid.engine.validator import Validator
+from apexid.engine.validator import Validator, _compute_loss_and_logits
+from apexid.models.heads import SphereFace2Head
 
 
 class LogitHead(nn.Module):
@@ -103,3 +104,24 @@ def test_validator_returns_nan_loss_and_acc_when_no_known_samples():
     assert math.isnan(result["loss"])
     assert math.isnan(result["acc"])
     assert result["top1"] == 1.0
+
+
+def test_compute_loss_and_logits_supports_sphereface2_internal_loss():
+    torch.manual_seed(42)
+    head = SphereFace2Head(
+        in_features=2,
+        out_features=2,
+        alpha=0.7,
+        r=16.0,
+        m=0.2,
+        t=2.0,
+        lw=20.0,
+    )
+    embeddings = torch.randn(4, 2)
+    labels = torch.tensor([0, 0, 1, 1])
+
+    loss, logits = _compute_loss_and_logits(head, None, embeddings, labels)
+
+    assert loss.ndim == 0
+    assert torch.isfinite(loss)
+    assert tuple(logits.shape) == (4, 2)

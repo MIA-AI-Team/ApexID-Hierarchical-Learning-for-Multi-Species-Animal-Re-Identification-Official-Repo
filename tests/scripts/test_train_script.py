@@ -4,7 +4,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pandas as pd
+import pytest
 import torch
+
+from apexid.models.heads import SphereFace2Head
 
 
 def _load_train_script():
@@ -137,6 +140,44 @@ def test_train_script_builds_optimizer_and_scheduler(tmp_path):
     assert criterion is not None
     assert type(optimizer).__name__ == "SGD"
     assert scheduler is None
+
+
+def test_train_script_builds_sphereface2_internal_loss_components(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["head"] = {
+        "name": "sphereface2",
+        "kwargs": {
+            "magn_type": "C",
+            "alpha": 0.7,
+            "r": 16.0,
+            "m": 0.2,
+            "t": 2.0,
+            "lw": 20.0,
+        },
+    }
+    cfg["loss"] = {"name": None, "kwargs": {}}
+    _, _, num_classes = train_script.build_datasets(cfg)
+
+    model, head, criterion = train_script.build_components(cfg, num_classes=num_classes)
+    optimizer = train_script.build_optimizer(cfg, model, head)
+
+    assert isinstance(head, SphereFace2Head)
+    assert criterion is None
+    assert len(optimizer.param_groups[0]["params"]) > 0
+
+
+def test_train_script_rejects_external_loss_for_sphereface2(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["head"] = {
+        "name": "sphereface2_focal",
+        "kwargs": {"alpha": 0.7, "focal_gamma": 2.0},
+    }
+    _, _, num_classes = train_script.build_datasets(cfg)
+
+    with pytest.raises(ValueError, match="Set loss.name to null"):
+        train_script.build_components(cfg, num_classes=num_classes)
 
 
 def test_train_script_builds_trainer_verbose_from_config(tmp_path):
