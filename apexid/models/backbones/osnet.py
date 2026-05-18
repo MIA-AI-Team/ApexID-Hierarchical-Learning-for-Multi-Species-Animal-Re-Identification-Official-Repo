@@ -6,7 +6,7 @@ __all__ = ['osnet_x1_0', 'osnet_x0_75', 'osnet_x0_5', 'osnet_x0_25', 'osnet_ibn_
 
 
 class ConvLayer(nn.Module):
-    """Convolution layer (conv + bn + Mish)."""
+    """Convolution layer (conv + bn + ReLU)."""
 
     def __init__(
         self,
@@ -32,7 +32,7 @@ class ConvLayer(nn.Module):
             self.bn = nn.InstanceNorm2d(out_channels, affine=True)
         else:
             self.bn = nn.BatchNorm2d(out_channels)
-        self.activation = nn.Mish(inplace=True)
+        self.activation = nn.ReLU(inplace=True)
 
     def forward(self, x):
         x = self.conv(x)
@@ -42,7 +42,7 @@ class ConvLayer(nn.Module):
 
 
 class Conv1x1(nn.Module):
-    """1x1 convolution + bn + Mish."""
+    """1x1 convolution + bn + ReLU."""
 
     def __init__(self, in_channels, out_channels, stride=1, groups=1):
         super(Conv1x1, self).__init__()
@@ -56,7 +56,7 @@ class Conv1x1(nn.Module):
             groups=groups
         )
         self.bn = nn.BatchNorm2d(out_channels)
-        self.activation = nn.Mish(inplace=True)
+        self.activation = nn.ReLU(inplace=True)
 
     def forward(self, x):
         x = self.conv(x)
@@ -96,7 +96,7 @@ class Conv3x3(nn.Module):
             groups=groups
         )
         self.bn = nn.BatchNorm2d(out_channels)
-        self.activation = nn.Mish(inplace=True)
+        self.activation = nn.ReLU(inplace=True)
 
     def forward(self, x):
         x = self.conv(x)
@@ -126,7 +126,7 @@ class LightConv3x3(nn.Module):
             groups=out_channels
         )
         self.bn = nn.BatchNorm2d(out_channels)
-        self.activation = nn.Mish(inplace=True)
+        self.activation = nn.ReLU(inplace=True)
 
     def forward(self, x):
         x = self.conv1(x)
@@ -164,7 +164,7 @@ class ChannelGate(nn.Module):
         self.norm1 = None
         if layer_norm:
             self.norm1 = nn.LayerNorm((in_channels // reduction, 1, 1))
-        self.activation = nn.Mish(inplace=True)
+        self.activation = nn.ReLU(inplace=True)
         self.fc2 = nn.Conv2d(
             in_channels // reduction,
             num_gates,
@@ -251,7 +251,7 @@ class OSBlock(nn.Module):
         out = x3 + identity
         if self.IN is not None:
             out = self.IN(out)
-        return F.mish(out)
+        return F.ReLU(out)
 
 
 class OSNet(nn.Module):
@@ -361,7 +361,7 @@ class OSNet(nn.Module):
         for dim in fc_dims:
             layers.append(nn.Linear(input_dim, dim))
             layers.append(nn.BatchNorm1d(dim))
-            layers.append(nn.Mish(inplace=True))
+            layers.append(nn.ReLU(inplace=True))
             if dropout_p is not None:
                 layers.append(nn.Dropout(p=dropout_p))
             input_dim = dim

@@ -14,22 +14,16 @@ data:
   image_size:
   - 440
   - 440
-  wavelet: true
+  wavelet: false
   transforms:
     mean:
-    - 0.350465
-    - 0.352782
-    - 0.323203
-    - 0.500017
-    - 0.500003
-    - 0.5
+    - 0.350467
+    - 0.352786
+    - 0.323204
     std:
-    - 0.313364
-    - 0.30266
-    - 0.289014
-    - 0.015906
-    - 0.016484
-    - 0.00591
+    - 0.313266
+    - 0.302628
+    - 0.288989
 dataloader:
   batch_size: 32
   num_workers: 4
@@ -45,7 +39,7 @@ dataloader:
 model:
   name: apexid
   embedding_dim: 512
-  input_channels: 6
+  input_channels: 3
   backbone:
     name: osnet_x0_25
     kwargs: {}
