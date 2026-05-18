@@ -31,4 +31,5 @@ def test_default_config_contains_experiment_training_sections():
     assert cfg["early_stopping"]["monitor"] == "val_mAP"
     assert cfg["early_stopping"]["mode"] == "max"
     assert cfg["checkpoint"]["delete_previous"] is True
+    assert cfg["training"]["verbose"] is True
     assert cfg["training"]["classification_ignore_index"] == -100

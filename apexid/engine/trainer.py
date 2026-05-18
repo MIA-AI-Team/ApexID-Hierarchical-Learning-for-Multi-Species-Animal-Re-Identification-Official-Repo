@@ -34,6 +34,7 @@ class Trainer:
         classification_ignore_index=-100,
         metric_ignore_index=None,
         progress=True,
+        verbose=True,
         gradient_clip_norm=None,
         validation_every_n_epochs=1,
         checkpoint_dir="checkpoints",
@@ -75,6 +76,7 @@ class Trainer:
             metric_ignore_index (int or None): Metric label ignored by re-ID
                 validation metrics.
             progress (bool): Whether to show tqdm progress bars.
+            verbose (bool): Whether to print one-line epoch summaries.
             gradient_clip_norm (float, optional): Max gradient norm. ``None``
                 disables clipping.
             validation_every_n_epochs (int): Run validation every N epochs.
@@ -111,6 +113,7 @@ class Trainer:
         self.classification_ignore_index = classification_ignore_index
         self.metric_ignore_index = metric_ignore_index
         self.progress = bool(progress)
+        self.verbose = bool(verbose)
         self.gradient_clip_norm = gradient_clip_norm
         self.validation_every_n_epochs = int(validation_every_n_epochs)
         self.checkpoint_dir = checkpoint_dir
@@ -158,7 +161,7 @@ class Trainer:
                 full_model_name=early_stopping_full_model_name,
                 backbone_name=early_stopping_backbone_name,
                 metadata_name=early_stopping_metadata_name,
-                verbose=self.progress,
+                verbose=self.verbose,
                 path=early_stopping_path,
             )
 
@@ -181,6 +184,51 @@ class Trainer:
         if self.classification_ignore_index is None:
             return torch.ones_like(labels, dtype=torch.bool)
         return labels != self.classification_ignore_index
+
+    @staticmethod
+    def _set_train_loader_epoch(train_loader, epoch):
+        """Synchronize epoch-aware samplers before consuming a loader."""
+        samplers = (
+            getattr(train_loader, "batch_sampler", None),
+            getattr(train_loader, "sampler", None),
+        )
+        seen = set()
+        for sampler in samplers:
+            if sampler is None or id(sampler) in seen:
+                continue
+            seen.add(id(sampler))
+            set_epoch = getattr(sampler, "set_epoch", None)
+            if set_epoch is not None:
+                set_epoch(int(epoch))
+
+    def _print_epoch_summary(self, epoch, epochs, train_metrics, val_metrics):
+        """Print a stable, one-line epoch summary when verbose output is enabled."""
+        if not self.verbose:
+            return
+
+        parts = [
+            f"Epoch {int(epoch) + 1}/{int(epochs)}",
+            f"train_loss={_format_metric(train_metrics['loss'])}",
+            f"train_acc={_format_metric(train_metrics['acc'])}",
+        ]
+        if val_metrics is not None:
+            parts.extend(
+                [
+                    f"val_loss={_format_metric(val_metrics['loss'])}",
+                    f"val_acc={_format_metric(val_metrics['acc'])}",
+                    f"top1={_format_metric(val_metrics['top1'])}",
+                    f"top5={_format_metric(val_metrics['top5'])}",
+                    f"mAP={_format_metric(val_metrics['mAP'])}",
+                    f"micro_f1={_format_metric(val_metrics['micro_f1'])}",
+                ]
+            )
+        parts.append(f"lr={self.optimizer.param_groups[0]['lr']:.2e}")
+
+        message = " | ".join(parts)
+        if self.progress:
+            tqdm.write(message)
+        else:
+            print(message)
 
     def train_one_epoch(self, train_loader, epoch, epochs):
         """Run one training epoch.
@@ -325,14 +373,9 @@ class Trainer:
             raise ValueError("epochs must be provided either to Trainer(...) or train(...).")
 
         history = resume_history if resume_history is not None else self.empty_history()
-        epoch_bar = tqdm(
-            range(int(start_epoch), int(epochs)),
-            desc="Epochs",
-            dynamic_ncols=True,
-            disable=not self.progress,
-        )
 
-        for epoch in epoch_bar:
+        for epoch in range(int(start_epoch), int(epochs)):
+            self._set_train_loader_epoch(train_loader, epoch)
             train_metrics = self.train_one_epoch(train_loader, epoch, epochs)
             run_validation = ((epoch + 1) % self.validation_every_n_epochs == 0) or (epoch == epochs - 1)
             val_metrics = self.validator.validate(val_loader, epoch=epoch, epochs=epochs) if run_validation else None
@@ -341,22 +384,7 @@ class Trainer:
             epoch_metrics = self._prefixed_epoch_metrics(train_metrics, val_metrics)
             self._step_scheduler(epoch_metrics)
 
-            postfix = {
-                "tr_loss": _format_metric(train_metrics["loss"]),
-                "tr_acc": _format_metric(train_metrics["acc"]),
-            }
-            if val_metrics is not None:
-                postfix.update(
-                    {
-                        "va_loss": _format_metric(val_metrics["loss"]),
-                        "va_acc": _format_metric(val_metrics["acc"]),
-                        "top1": _format_metric(val_metrics["top1"]),
-                        "top5": _format_metric(val_metrics["top5"]),
-                        "mAP": _format_metric(val_metrics["mAP"]),
-                        "micro_f1": _format_metric(val_metrics["micro_f1"]),
-                    }
-                )
-            epoch_bar.set_postfix(postfix)
+            self._print_epoch_summary(epoch, epochs, train_metrics, val_metrics)
 
             if self.early_stopping is not None and val_metrics is not None:
                 self.early_stopping(epoch_metrics, model=self.model, epoch=epoch)
@@ -379,7 +407,7 @@ class Trainer:
             )
 
             if self.early_stopping is not None and self.early_stopping.early_stop:
-                if self.progress:
+                if self.verbose:
                     print("\nEarly stopping triggered.")
                 break
 

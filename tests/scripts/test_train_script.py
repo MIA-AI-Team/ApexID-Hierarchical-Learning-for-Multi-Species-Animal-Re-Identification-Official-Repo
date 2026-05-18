@@ -139,6 +139,43 @@ def test_train_script_builds_optimizer_and_scheduler(tmp_path):
     assert scheduler is None
 
 
+def test_train_script_builds_trainer_verbose_from_config(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["training"]["progress"] = False
+    cfg["training"]["verbose"] = True
+    _, _, num_classes = train_script.build_datasets(cfg)
+    model, head, criterion = train_script.build_components(cfg, num_classes=num_classes)
+    optimizer = train_script.build_optimizer(cfg, model, head)
+    scheduler = train_script.build_scheduler(cfg, optimizer)
+
+    trainer = train_script.build_trainer(
+        cfg,
+        model,
+        head,
+        criterion,
+        optimizer,
+        scheduler,
+        torch.device("cpu"),
+    )
+
+    assert trainer.progress is False
+    assert trainer.verbose is True
+
+    cfg["training"].pop("verbose")
+    fallback_trainer = train_script.build_trainer(
+        cfg,
+        model,
+        head,
+        criterion,
+        optimizer,
+        scheduler,
+        torch.device("cpu"),
+    )
+
+    assert fallback_trainer.verbose is False
+
+
 def test_train_script_requires_train_and_val_paths(tmp_path):
     train_script = _load_train_script()
     cfg = _base_cfg(tmp_path)

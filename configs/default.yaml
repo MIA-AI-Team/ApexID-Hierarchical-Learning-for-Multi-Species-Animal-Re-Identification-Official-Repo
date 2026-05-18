@@ -64,6 +64,7 @@ scheduler:
 training:
   epochs: 100
   progress: true
+  verbose: true
   gradient_clip_norm: null
   classification_ignore_index: -100
   metric_ignore_index: null
@@ -82,7 +83,7 @@ checkpoint:
   resume_path: null
 early_stopping:
   enabled: true
-  monitor: val_top1
+  monitor: val_mAP
   mode: max
   patience: 7
   min_delta: 0.0

@@ -211,6 +211,7 @@ def build_trainer(cfg, model, head, criterion, optimizer, scheduler, device):
         classification_ignore_index=training_cfg.get("classification_ignore_index", -100),
         metric_ignore_index=training_cfg.get("metric_ignore_index"),
         progress=bool(training_cfg.get("progress", True)),
+        verbose=bool(training_cfg.get("verbose", training_cfg.get("progress", True))),
         gradient_clip_norm=training_cfg.get("gradient_clip_norm"),
         validation_every_n_epochs=int(validation_cfg.get("every_n_epochs", 1)),
         checkpoint_dir=checkpoint_cfg.get("output_dir", "checkpoints"),
