@@ -4,7 +4,8 @@ import time
 import cv2
 import numpy as np
 
-from apexid.data.transforms import _append_haar_wavelet_channels, _image_to_float01
+from apexid.data.DWT import append_haar_wavelet_channels
+from apexid.data.transforms import _image_to_float01
 
 
 def _write_rgb_png(path, image):
@@ -42,7 +43,7 @@ def test_dwt_on_the_fly_vs_offline_loading_timing(tmp_path):
         _write_rgb_png(image_path, image)
 
         loaded = _load_rgb(image_path)
-        dwt_channels = _append_haar_wavelet_channels(loaded)[..., 3:]
+        dwt_channels = append_haar_wavelet_channels(loaded)[..., 3:]
         np.save(dwt_path, dwt_channels.astype(np.float32))
 
         image_paths.append(image_path)
@@ -52,7 +53,7 @@ def test_dwt_on_the_fly_vs_offline_loading_timing(tmp_path):
         outputs = []
         for image_path in image_paths:
             image = _load_rgb(image_path)
-            outputs.append(_append_haar_wavelet_channels(image))
+            outputs.append(append_haar_wavelet_channels(image))
         return outputs
 
     def offline_load():

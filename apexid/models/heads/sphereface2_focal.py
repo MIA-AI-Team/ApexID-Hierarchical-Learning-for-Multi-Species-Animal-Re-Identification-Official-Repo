@@ -1,105 +1,70 @@
-import math
-
 import torch
-from torch import nn
 from torch.nn import functional as F
 
+from .sphereface2 import SphereFace2Head
 
-class SphereFace2FocalHead(nn.Module):
-    """SphereFace2 head with focal weighting.
 
-    Forward returns the scalar loss. ``predict_logits`` returns class scores for
-    accuracy/evaluation.
-    """
+class SphereFace2FocalHead(SphereFace2Head):
+    """SphereFace2 head with focal weighting added to the base loss."""
 
     def __init__(
         self,
         in_features,
         out_features,
-        magn_type="C",
-        alpha=0.7,
         r=40.0,
         m=0.4,
-        t=3.0,
-        lw=50.0,
+        t=3,
+        lam=0.7,
         focal_gamma=2.0,
+        alpha=None,
+        magn_type=None,
+        lw=None,
     ):
-        super().__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.magn_type = magn_type
-        self.alpha = alpha
-        self.r = r
-        self.m = m
-        self.t = t
+        if magn_type not in {None, "C"}:
+            raise ValueError(
+                "SphereFace2FocalHead reuses SphereFace2Head and supports only "
+                "magn_type='C'."
+            )
+        if alpha is not None:
+            lam = alpha
+        super().__init__(
+            in_features=in_features,
+            out_features=out_features,
+            r=r,
+            m=m,
+            t=t,
+            lam=lam,
+        )
+        self.focal_gamma = float(focal_gamma)
+        self.magn_type = "C"
+        self.alpha = self.lam
         self.lw = lw
-        self.focal_gamma = focal_gamma
-
-        self.weight = nn.Parameter(torch.empty(in_features, out_features))
-        nn.init.xavier_normal_(self.weight)
-
-        z = alpha / ((1.0 - alpha) * max(out_features - 1, 1))
-        if magn_type == "C":
-            ay = r * (2.0 * 0.5**t - 1.0 - m)
-            ai = r * (2.0 * 0.5**t - 1.0 + m)
-        elif magn_type == "A":
-            theta_y = min(math.pi, math.pi / 2.0 + m)
-            ay = r * (2.0 * ((math.cos(theta_y) + 1.0) / 2.0) ** t - 1.0)
-            ai = r * (2.0 * 0.5**t - 1.0)
-        elif magn_type == "M":
-            theta_y = min(math.pi, m * math.pi / 2.0)
-            ay = r * (2.0 * ((math.cos(theta_y) + 1.0) / 2.0) ** t - 1.0)
-            ai = r * (2.0 * 0.5**t - 1.0)
-        else:
-            raise ValueError(f"Unknown SphereFace2 focal magn_type: {magn_type}")
-
-        temp = (1.0 - z) ** 2 + 4.0 * z * math.exp(ay - ai)
-        b = math.log(2.0 * z) - ai - math.log(1.0 - z + math.sqrt(temp))
-        self.bias = nn.Parameter(torch.empty(1))
-        nn.init.constant_(self.bias, b)
-
-    def _cosine(self, embeddings):
-        weight = F.normalize(self.weight, p=2, dim=0)
-        return F.normalize(embeddings, p=2, dim=1).mm(weight)
-
-    def predict_logits(self, embeddings):
-        return self.r * self._cosine(embeddings) + self.bias
 
     def forward(self, embeddings, labels):
-        cos_theta = self._cosine(embeddings)
-        labels = labels.long()
+        """Compute the scalar SphereFace2 loss with focal weighting."""
+        if self.focal_gamma == 0.0:
+            return super().forward(embeddings, labels)
 
-        one_hot = torch.zeros_like(cos_theta)
-        one_hot.scatter_(1, labels.view(-1, 1), 1.0)
-
-        with torch.no_grad():
-            if self.magn_type == "C":
-                g_cos_theta = 2.0 * ((cos_theta + 1.0) / 2.0).pow(self.t) - 1.0
-                g_cos_theta = g_cos_theta - self.m * (2.0 * one_hot - 1.0)
-            elif self.magn_type == "A":
-                theta_m = torch.acos(cos_theta.clamp(-1.0 + 1e-5, 1.0 - 1e-5))
-                theta_m[torch.arange(labels.size(0), device=labels.device), labels] += self.m
-                theta_m.clamp_(1e-5, math.pi)
-                g_cos_theta = 2.0 * ((torch.cos(theta_m) + 1.0) / 2.0).pow(self.t) - 1.0
-            elif self.magn_type == "M":
-                theta_m = torch.acos(cos_theta.clamp(-1.0 + 1e-5, 1.0 - 1e-5))
-                theta_m[torch.arange(labels.size(0), device=labels.device), labels] *= self.m
-                theta_m.clamp_(1e-5, math.pi)
-                g_cos_theta = 2.0 * ((torch.cos(theta_m) + 1.0) / 2.0).pow(self.t) - 1.0
-            else:
-                raise ValueError(f"Unknown SphereFace2 focal magn_type: {self.magn_type}")
-
-            d_theta = g_cos_theta - cos_theta
-
-        logits = self.r * (cos_theta + d_theta) + self.bias
-        weight = self.alpha * one_hot + (1.0 - self.alpha) * (1.0 - one_hot)
-        weight = self.lw * self.out_features / self.r * weight
-
-        probs = torch.sigmoid(logits)
-        pt = one_hot * probs + (1.0 - one_hot) * (1.0 - probs)
-        focal_weight = (1.0 - pt).pow(self.focal_gamma)
-        return F.binary_cross_entropy_with_logits(
-            logits,
-            one_hot,
-            weight=(weight * focal_weight).detach(),
+        cosine = F.linear(
+            F.normalize(embeddings),
+            F.normalize(self.weight),
         )
+        g_cos = self._g(cosine)
+
+        one_hot = torch.zeros_like(cosine)
+        one_hot.scatter_(1, labels.view(-1, 1).long(), 1)
+
+        pos_logits = -self.r * (g_cos - self.m) - self.bias
+        pos_loss = (self.lam / self.r) * F.softplus(pos_logits)
+        pos_focal = torch.sigmoid(pos_logits).pow(self.focal_gamma)
+        pos_loss = (one_hot * pos_loss * pos_focal).sum(dim=1)
+
+        neg_logits = self.r * (g_cos + self.m) + self.bias
+        neg_loss = ((1.0 - self.lam) / self.r) * F.softplus(neg_logits)
+        neg_focal = torch.sigmoid(neg_logits).pow(self.focal_gamma)
+        neg_loss = ((1.0 - one_hot) * neg_loss * neg_focal).sum(dim=1)
+
+        return (pos_loss + neg_loss).mean()
+
+
+__all__ = ["SphereFace2FocalHead"]

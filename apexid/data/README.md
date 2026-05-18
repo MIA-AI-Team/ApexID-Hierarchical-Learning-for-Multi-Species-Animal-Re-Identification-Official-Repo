@@ -25,8 +25,9 @@ identities, `id`, `individual_id`, and `label` are treated as `identity`.
 ## Files
 
 - `datasets/dataset.py`: CSV-backed PyTorch dataset.
-- `transforms.py`: train/eval transform builders, wavelet channel construction,
-  CLAHE enhancement, and dataset mean/std calculation.
+- `transforms.py`: train/eval transform builders, CLAHE enhancement, and dataset
+  mean/std calculation.
+- `DWT.py`: Haar wavelet channel construction utilities.
 - `samplers/pk_sampler.py`: deterministic P x K batch sampler for metric
   learning.
 - `__init__.py`: public exports for the data package.

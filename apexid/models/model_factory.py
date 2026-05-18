@@ -15,6 +15,7 @@ HEAD_REGISTRY = {
     "sphereface2": SphereFace2Head,
     "sphereface2_head": SphereFace2Head,
     "sphereface2_focal": SphereFace2FocalHead,
+    "sphereface2_focal_head": SphereFace2FocalHead,
     "sphereface2focal": SphereFace2FocalHead,
 }
 

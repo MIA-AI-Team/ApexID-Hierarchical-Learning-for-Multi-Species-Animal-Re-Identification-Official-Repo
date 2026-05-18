@@ -3,10 +3,10 @@ import numpy as np
 import pandas as pd
 import albumentations as A
 
+from apexid.data.DWT import append_haar_wavelet_channels
 from apexid.data.transforms import (
     CLAHE_CLIP_LIMIT,
     CLAHE_TILE_GRID_SIZE,
-    _append_haar_wavelet_channels,
     calculate_dataset_mean_std,
 )
 
@@ -36,7 +36,7 @@ def _manual_stats(paths, image_size, wavelet=False):
         image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
         image = clahe(image=image)["image"]
         if wavelet:
-            image = _append_haar_wavelet_channels(image)
+            image = append_haar_wavelet_channels(image)
         else:
             image = image.astype(np.float32) / 255.0
         pixels_per_image.append(image.reshape(-1, image.shape[-1]).astype(np.float64))
