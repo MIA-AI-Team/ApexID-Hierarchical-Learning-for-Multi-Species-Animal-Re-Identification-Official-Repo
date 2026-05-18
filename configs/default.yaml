@@ -1,25 +1,35 @@
 experiment:
   name: apexid_osnet_sphereface2
   output_dir: outputs/apexid_osnet_sphereface2
-
 seed: 42
-
 device:
   prefer_gpu: true
   gpu_index: 0
-
 data:
   train_path: animals/fine_tune_train.csv
   val_path: animals/val_all.csv
   train_csv: null
   val_csv: null
   root_dir: animals
-  image_size: [440, 440]
-  wavelet: True
+  image_size:
+  - 440
+  - 440
+  wavelet: true
   transforms:
-    mean: [0.166292, 0.152588, 0.147616, 0.499996, 0.499999, 0.5]
-    std: [0.255829, 0.232257, 0.227407, 0.013016, 0.012588, 0.004816]
-
+    mean:
+    - 0.350465
+    - 0.352782
+    - 0.323203
+    - 0.500017
+    - 0.500003
+    - 0.5
+    std:
+    - 0.313364
+    - 0.30266
+    - 0.289014
+    - 0.015906
+    - 0.016484
+    - 0.00591
 dataloader:
   batch_size: 32
   num_workers: 4
@@ -28,19 +38,17 @@ dataloader:
   drop_last: true
   sampler:
     name: pk
-    num_identities: 3
-    num_instances: 3
+    num_identities: 4
+    num_instances: 8
     batches_per_epoch: null
     shuffle: true
-
 model:
   name: apexid
   embedding_dim: 512
   input_channels: 6
   backbone:
-    name: osnet_x1_0
+    name: osnet_x0_25
     kwargs: {}
-
 head:
   name: sphereface2
   kwargs:
@@ -48,42 +56,39 @@ head:
     m: 0.4
     t: 3
     lam: 0.7
-
 loss:
   name: null
   kwargs: {}
-
 optimizer:
   name: adam
   kwargs:
     lr: 0.001
     weight_decay: 0.0
-
 scheduler:
   name: null
   kwargs: {}
-
 training:
   epochs: 100
   progress: true
   gradient_clip_norm: null
   classification_ignore_index: -100
   metric_ignore_index: null
-
 validation:
   every_n_epochs: 1
-  metrics: [top1, top5, mAP, micro_f1]
-
+  metrics:
+  - top1
+  - top5
+  - mAP
+  - micro_f1
 checkpoint:
   output_dir: outputs/apexid_osnet_sphereface2/checkpoints
   every_n_epochs: 1
   filename: last_checkpoint.pt
   delete_previous: true
   resume_path: null
-
 early_stopping:
   enabled: true
-  monitor: val_mAP
+  monitor: top1
   mode: max
   patience: 7
   min_delta: 0.0
