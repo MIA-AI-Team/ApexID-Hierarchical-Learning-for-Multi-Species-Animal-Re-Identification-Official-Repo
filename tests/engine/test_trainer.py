@@ -230,6 +230,40 @@ def test_trainer_logs_epoch_metrics_and_best_artifacts(tmp_path):
     assert "last_checkpoint" not in artifact_names
 
 
+def test_trainer_steps_cyclic_lr_once_per_optimizer_update(tmp_path):
+    torch.manual_seed(42)
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.001)
+    scheduler = torch.optim.lr_scheduler.CyclicLR(
+        optimizer,
+        base_lr=0.001,
+        max_lr=0.01,
+        step_size_up=1,
+        cycle_momentum=False,
+    )
+    initial_last_epoch = scheduler.last_epoch
+    train_loader = _loader()
+
+    trainer = Trainer(
+        backbone,
+        head,
+        loss=nn.CrossEntropyLoss(),
+        optimizer=optimizer,
+        scheduler=scheduler,
+        validator=DummyValidator(),
+        device="cpu",
+        progress=False,
+        verbose=False,
+        checkpoint_dir=tmp_path,
+        early_stopping_enabled=False,
+    )
+
+    trainer.train(train_loader, _loader(), epochs=1)
+
+    assert scheduler.last_epoch == initial_last_epoch + len(train_loader)
+
+
 def test_trainer_rejects_unknown_labels_in_training(tmp_path):
     images = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
     cls_labels = torch.tensor([0, -100])

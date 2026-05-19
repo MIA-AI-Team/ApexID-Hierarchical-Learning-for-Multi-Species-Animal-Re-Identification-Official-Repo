@@ -32,13 +32,13 @@ dataloader:
   drop_last: true
   sampler:
     name: pk
-    num_identities: 4
-    num_instances: 8
+    num_identities: 16
+    num_instances: 4
     batches_per_epoch: null
     shuffle: true
 model:
   name: apexid
-  embedding_dim: 512
+  embedding_dim: 128
   input_channels: 3
   backbone:
     name: osnet_x0_25
@@ -47,10 +47,10 @@ head:
   name: sphereface2
   kwargs:
     magn_type: C
-    alpha: 0.7
+    alpha: 0.9989
     r: 40.0
     m: 0.4
-    t: 3.0
+    t: 4.0
     lw: 50.0
 loss:
   name: null
@@ -58,11 +58,26 @@ loss:
 optimizer:
   name: adam
   kwargs:
-    lr: 0.001
-    weight_decay: 0.0
+    lr: 0.0003
+    weight_decay: 0.0001
+lr_range_test:
+  enabled: true
+  mode: auto_apply
+  start_lr: 1.0e-7
+  end_lr: 1.0e-2
+  num_iter: 100
+  smooth_beta: 0.98
+  stop_factor: 4.0
+  base_lr_divisor: 4.0
+  output_dir: null
 scheduler:
-  name: null
-  kwargs: {}
+  name: cyclic_lr
+  kwargs:
+    base_lr: 1.0e-5
+    max_lr: 3.0e-4
+    step_size_epochs: 4
+    mode: triangular2
+    cycle_momentum: false
 training:
   epochs: 100
   progress: true
@@ -94,7 +109,7 @@ early_stopping:
   backbone_name: best_backbone.pt
   metadata_name: best_metadata.json
 tracking:
-  enabled: true
+  enabled: false
   provider: wandb
   project: ApexID
   entity: null

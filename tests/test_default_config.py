@@ -16,6 +16,7 @@ def test_default_config_contains_experiment_training_sections():
         "head",
         "loss",
         "optimizer",
+        "lr_range_test",
         "scheduler",
         "training",
         "validation",
@@ -37,8 +38,14 @@ def test_default_config_contains_experiment_training_sections():
     assert cfg["training"]["verbose"] is True
     assert cfg["training"]["classification_ignore_index"] == -100
     assert cfg["head"]["name"] == "sphereface2"
-    assert cfg["head"]["kwargs"]["alpha"] == 0.7
+    assert cfg["head"]["kwargs"]["alpha"] == 0.9989
     assert cfg["loss"]["name"] is None
+    assert cfg["lr_range_test"]["enabled"] is True
+    assert cfg["lr_range_test"]["mode"] == "auto_apply"
+    assert cfg["scheduler"]["name"] == "cyclic_lr"
+    assert cfg["scheduler"]["kwargs"]["base_lr"] == 1e-5
+    assert cfg["scheduler"]["kwargs"]["max_lr"] == 3e-4
+    assert cfg["scheduler"]["kwargs"]["cycle_momentum"] is False
     assert cfg["tracking"]["enabled"] is False
     assert cfg["tracking"]["provider"] == "wandb"
     assert cfg["tracking"]["log_artifacts"] == "best"
@@ -46,7 +53,7 @@ def test_default_config_contains_experiment_training_sections():
 
 def test_default_config_builds_internal_loss_sphereface2_head():
     cfg = load_config()
-    model, head, criterion = build_components(cfg, num_classes=4)
+    model, head, criterion = build_components(cfg, num_classes=1000)
 
     assert model.embedding_dim == cfg["model"]["embedding_dim"]
     assert isinstance(head, SphereFace2Head)

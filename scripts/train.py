@@ -17,6 +17,7 @@ from apexid.engine import Trainer, build_experiment_logger, load_training_checkp
 from apexid.models import build_components
 from apexid.utils.config import DEFAULT_CONFIG_PATH, load_config
 from apexid.utils.device import get_device
+from apexid.utils.lr_range_test import run_lr_range_test, write_lr_range_test_artifacts
 from apexid.utils.seed import DEFAULT_SEED, make_torch_generator, seed_everything, seed_worker
 
 
@@ -172,7 +173,7 @@ def build_optimizer(cfg, model, head):
     raise ValueError("Unknown optimizer '{}'. Available: adam, adamw, sgd.".format(name))
 
 
-def build_scheduler(cfg, optimizer):
+def build_scheduler(cfg, optimizer, train_loader=None, overrides=None):
     """Build an optional learning-rate scheduler from config."""
     scheduler_cfg = _as_dict(cfg.get("scheduler", {}))
     name = scheduler_cfg.get("name")
@@ -180,17 +181,82 @@ def build_scheduler(cfg, optimizer):
         return None
 
     name = str(name).lower()
-    kwargs = _as_dict(scheduler_cfg.get("kwargs", {}))
+    kwargs = dict(_as_dict(scheduler_cfg.get("kwargs", {})))
     if name in {"step_lr", "steplr"}:
         return torch.optim.lr_scheduler.StepLR(optimizer, **kwargs)
     if name in {"cosine_annealing_lr", "cosineannealinglr", "cosine"}:
         return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, **kwargs)
     if name in {"reduce_on_plateau", "reduce_lr_on_plateau", "reducelronplateau"}:
         return torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **kwargs)
+    if name in {"cyclic_lr", "cycliclr", "cyclic"}:
+        if overrides is not None:
+            kwargs.update(_as_dict(overrides))
+        step_size_epochs = kwargs.pop("step_size_epochs", None)
+        if "step_size_up" not in kwargs:
+            if train_loader is None:
+                raise ValueError("train_loader is required when scheduler.step_size_up is omitted for CyclicLR.")
+            step_size_epochs = 4.0 if step_size_epochs is None else float(step_size_epochs)
+            kwargs["step_size_up"] = max(1, int(step_size_epochs * len(train_loader)))
+        kwargs.setdefault("cycle_momentum", False)
+        return torch.optim.lr_scheduler.CyclicLR(optimizer, **kwargs)
     raise ValueError(
         "Unknown scheduler '{}'. Available: step_lr, cosine_annealing_lr, "
-        "reduce_on_plateau.".format(name)
+        "reduce_on_plateau, cyclic_lr.".format(name)
     )
+
+
+def maybe_run_lr_range_test(cfg, model, head, criterion, optimizer, train_loader, device, resume_path=None):
+    """Run the optional LR range test and return scheduler overrides."""
+    lr_test_cfg = _as_dict(cfg.get("lr_range_test", {}))
+    if not bool(lr_test_cfg.get("enabled", False)):
+        return None
+    if resume_path not in {None, ""}:
+        return None
+
+    mode = str(lr_test_cfg.get("mode", "auto_apply")).lower()
+    if mode not in {"auto_apply", "report_only"}:
+        raise ValueError("lr_range_test.mode must be 'auto_apply' or 'report_only'.")
+
+    experiment_dir = Path(_as_dict(cfg.get("experiment", {})).get("output_dir", "outputs/apexid_run"))
+    output_dir = lr_test_cfg.get("output_dir")
+    if output_dir in {None, ""}:
+        output_dir = experiment_dir / "lr_range_test"
+
+    result = run_lr_range_test(
+        backbone=model,
+        head=head,
+        criterion=criterion,
+        train_loader=train_loader,
+        optimizer=optimizer,
+        device=device,
+        start_lr=float(lr_test_cfg.get("start_lr", 1e-7)),
+        end_lr=float(lr_test_cfg.get("end_lr", 1e-2)),
+        num_iter=int(lr_test_cfg.get("num_iter", 100)),
+        smooth_beta=float(lr_test_cfg.get("smooth_beta", 0.98)),
+        stop_factor=float(lr_test_cfg.get("stop_factor", 4.0)),
+        base_lr_divisor=float(lr_test_cfg.get("base_lr_divisor", 4.0)),
+        classification_ignore_index=_as_dict(cfg.get("training", {})).get("classification_ignore_index", -100),
+        gradient_clip_norm=_as_dict(cfg.get("training", {})).get("gradient_clip_norm"),
+    )
+    artifact_paths = write_lr_range_test_artifacts(result, output_dir)
+
+    print(
+        "LR range test: "
+        f"base_lr={result.suggested_base_lr:.3e}, "
+        f"max_lr={result.suggested_max_lr:.3e}, "
+        f"stop_reason={result.stop_reason}, "
+        f"artifacts={artifact_paths['json']}"
+    )
+
+    if mode == "report_only":
+        return None
+
+    for group in optimizer.param_groups:
+        group["lr"] = result.suggested_base_lr
+    return {
+        "base_lr": result.suggested_base_lr,
+        "max_lr": result.suggested_max_lr,
+    }
 
 
 def build_trainer(cfg, model, head, criterion, optimizer, scheduler, device, experiment_logger=None):
@@ -267,8 +333,20 @@ def train_from_config(cfg):
     }
 
     model, head, criterion = build_components(cfg, num_classes=num_classes)
+    model.to(device)
+    head.to(device)
     optimizer = build_optimizer(cfg, model, head)
-    scheduler = build_scheduler(cfg, optimizer)
+    scheduler_overrides = maybe_run_lr_range_test(
+        cfg,
+        model,
+        head,
+        criterion,
+        optimizer,
+        train_loader,
+        device,
+        resume_path=resume_path,
+    )
+    scheduler = build_scheduler(cfg, optimizer, train_loader=train_loader, overrides=scheduler_overrides)
     experiment_logger = build_experiment_logger(cfg, metadata=tracking_metadata)
     trainer = build_trainer(cfg, model, head, criterion, optimizer, scheduler, device,
         experiment_logger=experiment_logger,

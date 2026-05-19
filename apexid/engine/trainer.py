@@ -66,8 +66,9 @@ class Trainer:
                 logits.
             optimizer (torch.optim.Optimizer, optional): Optimizer. If omitted,
                 Adam with ``lr=1e-3`` is created.
-            scheduler (torch.optim.lr_scheduler.LRScheduler, optional): Scheduler
-                stepped after each epoch.
+            scheduler (torch.optim.lr_scheduler.LRScheduler, optional): Scheduler.
+                ``CyclicLR`` is stepped after each optimizer update; other
+                schedulers are stepped after each epoch.
             validator (Validator, optional): Validator instance. If omitted, one
                 is created from the same backbone/head/loss.
             epochs (int, optional): Default epoch count used when ``train`` is
@@ -282,6 +283,8 @@ class Trainer:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.gradient_clip_norm), foreach=True)
 
             self.optimizer.step()
+            if isinstance(self.scheduler, torch.optim.lr_scheduler.CyclicLR):
+                self.scheduler.step()
 
             batch_size = int(images.size(0))
             total_loss += float(loss.item()) * batch_size
@@ -306,8 +309,10 @@ class Trainer:
         }
 
     def _step_scheduler(self, epoch_metrics):
-        """Step the configured scheduler once per epoch."""
+        """Step epoch-level schedulers after one epoch."""
         if self.scheduler is None:
+            return
+        if isinstance(self.scheduler, torch.optim.lr_scheduler.CyclicLR):
             return
         if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
             metric = epoch_metrics.get("val_loss", epoch_metrics["train_loss"])

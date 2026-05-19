@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
+from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
 
 from apexid.models.heads import SphereFace2Head
 from apexid.engine.loggers import NullLogger
@@ -106,6 +108,31 @@ def _base_cfg(tmp_path):
     }
 
 
+class TrainHead(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(2, 2)
+
+    def forward(self, embeddings, labels):
+        return self.linear(embeddings)
+
+    def predict_logits(self, embeddings):
+        return self.linear(embeddings)
+
+
+def _tensor_loader():
+    images = torch.tensor(
+        [
+            [1.0, 0.0],
+            [0.9, 0.1],
+            [0.0, 1.0],
+            [0.1, 0.9],
+        ]
+    )
+    labels = torch.tensor([0, 0, 1, 1])
+    return DataLoader(TensorDataset(images, labels, labels), batch_size=2, shuffle=False)
+
+
 def test_train_script_builds_datasets_and_loaders_from_train_val_paths(tmp_path):
     train_script = _load_train_script()
     cfg = _base_cfg(tmp_path)
@@ -141,6 +168,123 @@ def test_train_script_builds_optimizer_and_scheduler(tmp_path):
     assert criterion is not None
     assert type(optimizer).__name__ == "SGD"
     assert scheduler is None
+
+
+def test_train_script_builds_cyclic_lr_scheduler_from_loader_length(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["scheduler"] = {
+        "name": "cyclic_lr",
+        "kwargs": {
+            "base_lr": 1e-4,
+            "max_lr": 1e-3,
+            "step_size_epochs": 3,
+            "mode": "triangular2",
+            "cycle_momentum": False,
+        },
+    }
+    optimizer = torch.optim.SGD([torch.nn.Parameter(torch.ones(1))], lr=1e-4)
+
+    scheduler = train_script.build_scheduler(cfg, optimizer, train_loader=_tensor_loader())
+
+    assert isinstance(scheduler, torch.optim.lr_scheduler.CyclicLR)
+    assert scheduler.total_size == 2 * 3 * len(_tensor_loader())
+    assert scheduler.step_ratio == 0.5
+
+
+def test_train_script_auto_applies_lr_range_test_overrides(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["lr_range_test"] = {
+        "enabled": True,
+        "mode": "auto_apply",
+        "start_lr": 1e-5,
+        "end_lr": 1e-2,
+        "num_iter": 4,
+        "smooth_beta": 0.98,
+        "stop_factor": 4.0,
+        "base_lr_divisor": 4.0,
+        "output_dir": str(tmp_path / "lr_auto"),
+    }
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.01)
+
+    overrides = train_script.maybe_run_lr_range_test(
+        cfg,
+        backbone,
+        head,
+        nn.CrossEntropyLoss(),
+        optimizer,
+        _tensor_loader(),
+        torch.device("cpu"),
+        resume_path=None,
+    )
+
+    assert set(overrides) == {"base_lr", "max_lr"}
+    assert optimizer.param_groups[0]["lr"] == overrides["base_lr"]
+    assert overrides["max_lr"] > overrides["base_lr"]
+    assert (tmp_path / "lr_auto" / "lr_range_test.json").exists()
+    assert (tmp_path / "lr_auto" / "lr_range_test.csv").exists()
+
+
+def test_train_script_report_only_lr_range_test_keeps_optimizer_lr(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["lr_range_test"] = {
+        "enabled": True,
+        "mode": "report_only",
+        "start_lr": 1e-5,
+        "end_lr": 1e-2,
+        "num_iter": 4,
+        "output_dir": str(tmp_path / "lr_report"),
+    }
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.01)
+
+    overrides = train_script.maybe_run_lr_range_test(
+        cfg,
+        backbone,
+        head,
+        nn.CrossEntropyLoss(),
+        optimizer,
+        _tensor_loader(),
+        torch.device("cpu"),
+        resume_path=None,
+    )
+
+    assert overrides is None
+    assert optimizer.param_groups[0]["lr"] == 0.01
+    assert (tmp_path / "lr_report" / "lr_range_test.json").exists()
+
+
+def test_train_script_skips_lr_range_test_when_resuming(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["lr_range_test"] = {
+        "enabled": True,
+        "mode": "auto_apply",
+        "output_dir": str(tmp_path / "lr_resume"),
+    }
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.01)
+
+    overrides = train_script.maybe_run_lr_range_test(
+        cfg,
+        backbone,
+        head,
+        nn.CrossEntropyLoss(),
+        optimizer,
+        _tensor_loader(),
+        torch.device("cpu"),
+        resume_path=str(tmp_path / "checkpoint.pt"),
+    )
+
+    assert overrides is None
+    assert optimizer.param_groups[0]["lr"] == 0.01
+    assert not (tmp_path / "lr_resume").exists()
 
 
 def test_train_script_builds_sphereface2_internal_loss_components(tmp_path):
