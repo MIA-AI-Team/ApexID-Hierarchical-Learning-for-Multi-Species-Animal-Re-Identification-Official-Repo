@@ -21,6 +21,7 @@ def test_default_config_contains_experiment_training_sections():
         "validation",
         "checkpoint",
         "early_stopping",
+        "tracking",
     ]:
         assert section in cfg
 
@@ -38,6 +39,9 @@ def test_default_config_contains_experiment_training_sections():
     assert cfg["head"]["name"] == "sphereface2"
     assert cfg["head"]["kwargs"]["alpha"] == 0.7
     assert cfg["loss"]["name"] is None
+    assert cfg["tracking"]["enabled"] is False
+    assert cfg["tracking"]["provider"] == "wandb"
+    assert cfg["tracking"]["log_artifacts"] == "best"
 
 
 def test_default_config_builds_internal_loss_sphereface2_head():

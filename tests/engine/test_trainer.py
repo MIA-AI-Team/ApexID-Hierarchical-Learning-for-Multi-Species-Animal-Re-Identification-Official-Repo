@@ -8,6 +8,30 @@ from apexid.engine.trainer import Trainer
 from apexid.models.heads import SphereFace2Head
 
 
+class RecordingLogger:
+    def __init__(self):
+        self.metrics = []
+        self.artifacts = []
+        self.finished = False
+
+    def log_metrics(self, metrics, step=None):
+        self.metrics.append((dict(metrics), step))
+
+    def log_artifact(self, path, name=None, artifact_type="model", aliases=None, metadata=None):
+        self.artifacts.append(
+            {
+                "path": Path(path),
+                "name": name,
+                "artifact_type": artifact_type,
+                "aliases": list(aliases or []),
+                "metadata": dict(metadata or {}),
+            }
+        )
+
+    def finish(self):
+        self.finished = True
+
+
 class TrainHead(nn.Module):
     def __init__(self):
         super().__init__()
@@ -147,6 +171,63 @@ def test_trainer_uses_validator_history_checkpoint_and_val_map_early_stopping(tm
     ]
     assert (tmp_path / "best_full_model.pt").exists()
     assert (tmp_path / "best_backbone.pt").exists()
+
+
+def test_trainer_logs_epoch_metrics_and_best_artifacts(tmp_path):
+    torch.manual_seed(42)
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.01)
+    logger = RecordingLogger()
+
+    trainer = Trainer(
+        backbone,
+        head,
+        loss=nn.CrossEntropyLoss(),
+        optimizer=optimizer,
+        validator=DummyValidator(),
+        device="cpu",
+        progress=False,
+        verbose=False,
+        checkpoint_dir=tmp_path,
+        checkpoint_every_n_epochs=1,
+        checkpoint_filename="last_checkpoint.pt",
+        early_stopping_enabled=True,
+        early_stopping_monitor="val_mAP",
+        early_stopping_mode="max",
+        early_stopping_dir=tmp_path,
+        experiment_logger=logger,
+    )
+
+    trainer.train(_loader(), _loader(), epochs=1)
+
+    assert logger.finished is True
+    assert len(logger.metrics) == 1
+    metrics, step = logger.metrics[0]
+    assert step == 1
+    assert metrics["epoch"] == 1
+    assert metrics["epoch_index"] == 0
+    assert metrics["epochs"] == 1
+    assert metrics["lr"] == 0.01
+    assert metrics["train_loss"] > 0.0
+    assert metrics["train_acc"] >= 0.0
+    assert metrics["val_loss"] == 1.0
+    assert metrics["val_acc"] == 0.5
+    assert metrics["val_top1"] == 0.25
+    assert metrics["val_top5"] == 0.75
+    assert metrics["val_mAP"] == 0.5
+    assert metrics["val_micro_f1"] == 0.6
+    assert metrics["val_num_known"] == 4
+    assert metrics["val_num_samples"] == 4
+    assert metrics["early_stopping_improved"] == 1
+    assert metrics["early_stopping_best_metric"] == 0.5
+    assert metrics["early_stopping_counter"] == 0
+    assert metrics["early_stopping_early_stop"] == 0
+
+    artifact_names = {artifact["name"] for artifact in logger.artifacts}
+    assert artifact_names == {"best_full_model", "best_backbone", "best_metadata"}
+    assert all("best" in artifact["aliases"] for artifact in logger.artifacts)
+    assert "last_checkpoint" not in artifact_names
 
 
 def test_trainer_rejects_unknown_labels_in_training(tmp_path):

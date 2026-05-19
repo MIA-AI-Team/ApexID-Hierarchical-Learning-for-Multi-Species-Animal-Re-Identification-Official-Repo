@@ -6,6 +6,7 @@ from tqdm.auto import tqdm
 
 from apexid.engine.checkpoint import save_training_checkpoint
 from apexid.engine.early_stopping import EarlyStopping
+from apexid.engine.loggers import NullLogger
 from apexid.engine.validator import (
     Validator,
     _compute_loss_and_logits,
@@ -53,6 +54,7 @@ class Trainer:
         early_stopping_metadata_name="best_metadata.json",
         early_stopping_path=None,
         metrics_base_seed=DEFAULT_SEED,
+        experiment_logger=None,
     ):
         """Initialize the training helper.
 
@@ -102,6 +104,8 @@ class Trainer:
             early_stopping_path (str, optional): Backward-compatible full-model
                 path accepted by ``EarlyStopping``.
             metrics_base_seed (int): Stored for experiment reproducibility.
+            experiment_logger (ExperimentLogger, optional): Logger used for
+                epoch metrics and selected artifacts.
 
         Returns:
             None
@@ -121,6 +125,7 @@ class Trainer:
         self.checkpoint_filename = checkpoint_filename
         self.checkpoint_delete_previous = bool(checkpoint_delete_previous)
         self.metrics_base_seed = int(metrics_base_seed)
+        self.experiment_logger = experiment_logger or NullLogger()
 
         if self.validation_every_n_epochs <= 0:
             raise ValueError("validation_every_n_epochs must be > 0.")
@@ -352,6 +357,51 @@ class Trainer:
             )
         return metrics
 
+    def _epoch_log_metrics(self, epoch, epochs, epoch_metrics, val_metrics, early_stopping_improved=False):
+        """Build the metric payload sent to experiment loggers."""
+        metrics = dict(epoch_metrics)
+        metrics.update(
+            {
+                "epoch": int(epoch) + 1,
+                "epoch_index": int(epoch),
+                "epochs": int(epochs),
+                "lr": float(self.optimizer.param_groups[0]["lr"]),
+            }
+        )
+
+        if val_metrics is not None:
+            metrics["val_num_known"] = int(val_metrics.get("num_known", 0))
+            metrics["val_num_samples"] = int(val_metrics.get("num_samples", 0))
+
+        if self.early_stopping is not None:
+            metrics["early_stopping_counter"] = int(self.early_stopping.counter)
+            metrics["early_stopping_early_stop"] = int(self.early_stopping.early_stop)
+            metrics["early_stopping_improved"] = int(bool(early_stopping_improved))
+            if self.early_stopping.best_metric is not None:
+                metrics["early_stopping_best_metric"] = float(self.early_stopping.best_metric)
+
+        return metrics
+
+    def _log_best_artifacts(self, epoch, metrics):
+        """Log best-model files produced by EarlyStopping."""
+        if self.early_stopping is None:
+            return
+
+        aliases = ["best", f"epoch-{int(epoch) + 1}"]
+        artifact_specs = (
+            (self.early_stopping.full_model_path, "best_full_model", "model"),
+            (self.early_stopping.backbone_path, "best_backbone", "model"),
+            (self.early_stopping.metadata_path, "best_metadata", "metadata"),
+        )
+        for path, name, artifact_type in artifact_specs:
+            self.experiment_logger.log_artifact(
+                path,
+                name=name,
+                artifact_type=artifact_type,
+                aliases=aliases,
+                metadata=metrics,
+            )
+
     def train(self, train_loader, val_loader, epochs=None, start_epoch=0, resume_history=None):
         """Train for multiple epochs.
 
@@ -374,42 +424,57 @@ class Trainer:
 
         history = resume_history if resume_history is not None else self.empty_history()
 
-        for epoch in range(int(start_epoch), int(epochs)):
-            self._set_train_loader_epoch(train_loader, epoch)
-            train_metrics = self.train_one_epoch(train_loader, epoch, epochs)
-            run_validation = ((epoch + 1) % self.validation_every_n_epochs == 0) or (epoch == epochs - 1)
-            val_metrics = self.validator.validate(val_loader, epoch=epoch, epochs=epochs) if run_validation else None
-            self._append_history(history, train_metrics, val_metrics)
+        try:
+            for epoch in range(int(start_epoch), int(epochs)):
+                self._set_train_loader_epoch(train_loader, epoch)
+                train_metrics = self.train_one_epoch(train_loader, epoch, epochs)
+                run_validation = ((epoch + 1) % self.validation_every_n_epochs == 0) or (epoch == epochs - 1)
+                val_metrics = self.validator.validate(val_loader, epoch=epoch, epochs=epochs) if run_validation else None
+                self._append_history(history, train_metrics, val_metrics)
 
-            epoch_metrics = self._prefixed_epoch_metrics(train_metrics, val_metrics)
-            self._step_scheduler(epoch_metrics)
+                epoch_metrics = self._prefixed_epoch_metrics(train_metrics, val_metrics)
+                self._step_scheduler(epoch_metrics)
 
-            self._print_epoch_summary(epoch, epochs, train_metrics, val_metrics)
+                self._print_epoch_summary(epoch, epochs, train_metrics, val_metrics)
 
-            if self.early_stopping is not None and val_metrics is not None:
-                self.early_stopping(epoch_metrics, model=self.model, epoch=epoch)
+                early_stopping_improved = False
+                if self.early_stopping is not None and val_metrics is not None:
+                    early_stopping_improved = self.early_stopping(epoch_metrics, model=self.model, epoch=epoch)
 
-            save_training_checkpoint(
-                epoch=epoch,
-                model=self.model,
-                optimizer=self.optimizer,
-                scheduler=self.scheduler,
-                output_dir=self.checkpoint_dir,
-                every_n_epochs=self.checkpoint_every_n_epochs,
-                history=history,
-                metrics=epoch_metrics,
-                filename=self.checkpoint_filename,
-                delete_previous=self.checkpoint_delete_previous,
-                extra_state={
-                    "classification_ignore_index": self.classification_ignore_index,
-                    "metric_ignore_index": self.metric_ignore_index,
-                },
-            )
+                log_metrics = self._epoch_log_metrics(
+                    epoch,
+                    epochs,
+                    epoch_metrics,
+                    val_metrics,
+                    early_stopping_improved=early_stopping_improved,
+                )
+                self.experiment_logger.log_metrics(log_metrics, step=int(epoch) + 1)
+                if early_stopping_improved:
+                    self._log_best_artifacts(epoch, log_metrics)
 
-            if self.early_stopping is not None and self.early_stopping.early_stop:
-                if self.verbose:
-                    print("\nEarly stopping triggered.")
-                break
+                save_training_checkpoint(
+                    epoch=epoch,
+                    model=self.model,
+                    optimizer=self.optimizer,
+                    scheduler=self.scheduler,
+                    output_dir=self.checkpoint_dir,
+                    every_n_epochs=self.checkpoint_every_n_epochs,
+                    history=history,
+                    metrics=epoch_metrics,
+                    filename=self.checkpoint_filename,
+                    delete_previous=self.checkpoint_delete_previous,
+                    extra_state={
+                        "classification_ignore_index": self.classification_ignore_index,
+                        "metric_ignore_index": self.metric_ignore_index,
+                    },
+                )
+
+                if self.early_stopping is not None and self.early_stopping.early_stop:
+                    if self.verbose:
+                        print("\nEarly stopping triggered.")
+                    break
+        finally:
+            self.experiment_logger.finish()
 
         return history
 

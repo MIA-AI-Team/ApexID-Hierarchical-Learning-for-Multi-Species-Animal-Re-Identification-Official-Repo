@@ -14,7 +14,7 @@ data:
   image_size:
   - 440
   - 440
-  wavelet: true
+  wavelet: false
   transforms:
     mean:
     - 0.350194
@@ -93,3 +93,13 @@ early_stopping:
   full_model_name: best_full_model.pt
   backbone_name: best_backbone.pt
   metadata_name: best_metadata.json
+tracking:
+  enabled: true
+  provider: wandb
+  project: ApexID
+  entity: null
+  run_name: null
+  group: null
+  tags: []
+  mode: online
+  log_artifacts: best

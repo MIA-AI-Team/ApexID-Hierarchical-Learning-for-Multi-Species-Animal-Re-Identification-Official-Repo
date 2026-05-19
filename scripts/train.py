@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from apexid.data import build_eval_transforms, build_train_transforms
 from apexid.data.datasets.dataset import ApexID_Dataset
 from apexid.data.samplers import PKBatchSampler
-from apexid.engine import Trainer, load_training_checkpoint
+from apexid.engine import Trainer, build_experiment_logger, load_training_checkpoint
 from apexid.models import build_components
 from apexid.utils.config import DEFAULT_CONFIG_PATH, load_config
 from apexid.utils.device import get_device
@@ -193,7 +193,7 @@ def build_scheduler(cfg, optimizer):
     )
 
 
-def build_trainer(cfg, model, head, criterion, optimizer, scheduler, device):
+def build_trainer(cfg, model, head, criterion, optimizer, scheduler, device, experiment_logger=None):
     """Build the ApexID Trainer from config-derived components."""
     training_cfg = _as_dict(cfg.get("training", {}))
     validation_cfg = _as_dict(cfg.get("validation", {}))
@@ -228,6 +228,7 @@ def build_trainer(cfg, model, head, criterion, optimizer, scheduler, device):
         early_stopping_backbone_name=early_cfg.get("backbone_name", "best_backbone.pt"),
         early_stopping_metadata_name=early_cfg.get("metadata_name", "best_metadata.json"),
         metrics_base_seed=int(cfg.get("seed", DEFAULT_SEED) or DEFAULT_SEED),
+        experiment_logger=experiment_logger,
     )
 
 
@@ -255,13 +256,24 @@ def train_from_config(cfg):
     train_dataset, val_dataset, num_classes = build_datasets(cfg)
     train_loader, val_loader = build_dataloaders(cfg, train_dataset, val_dataset, device)
 
+    checkpoint_cfg = _as_dict(cfg.get("checkpoint", {}))
+    resume_path = checkpoint_cfg.get("resume_path")
+    tracking_metadata = {
+        "num_classes": int(num_classes),
+        "train_dataset_size": int(len(train_dataset)),
+        "val_dataset_size": int(len(val_dataset)),
+        "device": str(device),
+        "resume_path": resume_path,
+    }
+
     model, head, criterion = build_components(cfg, num_classes=num_classes)
     optimizer = build_optimizer(cfg, model, head)
     scheduler = build_scheduler(cfg, optimizer)
-    trainer = build_trainer(cfg, model, head, criterion, optimizer, scheduler, device)
+    experiment_logger = build_experiment_logger(cfg, metadata=tracking_metadata)
+    trainer = build_trainer(cfg, model, head, criterion, optimizer, scheduler, device,
+        experiment_logger=experiment_logger,
+    )
 
-    checkpoint_cfg = _as_dict(cfg.get("checkpoint", {}))
-    resume_path = checkpoint_cfg.get("resume_path")
     start_epoch = 0
     resume_history = None
     if resume_path not in {None, ""}:

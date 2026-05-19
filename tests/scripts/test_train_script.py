@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from apexid.models.heads import SphereFace2Head
+from apexid.engine.loggers import NullLogger
 
 
 def _load_train_script():
@@ -215,6 +216,30 @@ def test_train_script_builds_trainer_verbose_from_config(tmp_path):
     )
 
     assert fallback_trainer.verbose is False
+
+
+def test_train_script_tracking_disabled_builds_null_logger(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["tracking"] = {
+        "enabled": False,
+        "provider": "wandb",
+        "project": "ApexID",
+        "log_artifacts": "best",
+    }
+
+    logger = train_script.build_experiment_logger(
+        cfg,
+        metadata={
+            "num_classes": 2,
+            "train_dataset_size": 4,
+            "val_dataset_size": 3,
+            "device": "cpu",
+            "resume_path": None,
+        },
+    )
+
+    assert isinstance(logger, NullLogger)
 
 
 def test_train_script_requires_train_and_val_paths(tmp_path):
