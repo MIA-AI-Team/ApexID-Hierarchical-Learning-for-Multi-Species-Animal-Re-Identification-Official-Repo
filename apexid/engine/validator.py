@@ -56,6 +56,56 @@ def _prediction_logits(head, embeddings):
     raise ValueError("Head returned a scalar loss but does not expose predict_logits(...).")
 
 
+def _head_num_classes(head):
+    """Infer the number of classifier identities from a head when available."""
+    for attr in ("out_features", "num_class", "num_classes"):
+        if hasattr(head, attr):
+            return int(getattr(head, attr))
+    return None
+
+
+def _validate_labels(labels, num_classes, context="classification"):
+    """Validate label dtype and range before invoking margin heads or losses."""
+    if labels.dtype != torch.long:
+        raise ValueError(f"{context} labels must have dtype torch.long, got {labels.dtype}.")
+    if labels.ndim != 1:
+        raise ValueError(f"{context} labels must be one-dimensional, got shape {tuple(labels.shape)}.")
+    if labels.numel() == 0:
+        raise ValueError(f"{context} labels must not be empty.")
+    if num_classes is None:
+        return
+
+    min_label = int(labels.min().item())
+    max_label = int(labels.max().item())
+    if min_label < 0 or max_label >= int(num_classes):
+        raise ValueError(
+            f"{context} labels must be in range [0, {int(num_classes) - 1}], "
+            f"got min={min_label}, max={max_label}."
+        )
+
+
+def _validate_logits(logits, labels, num_classes, context="classification"):
+    """Validate that logits match the labels and classifier class count."""
+    if not torch.is_tensor(logits):
+        raise ValueError(f"{context} logits must be a torch.Tensor.")
+    if logits.ndim != 2:
+        raise ValueError(f"{context} logits must have shape [batch_size, num_classes].")
+    if logits.shape[0] != labels.shape[0]:
+        raise ValueError(
+            f"{context} logits batch size must match labels. "
+            f"Got logits={tuple(logits.shape)} and labels={tuple(labels.shape)}."
+        )
+    inferred_classes = int(logits.shape[1])
+    if num_classes is None:
+        num_classes = inferred_classes
+    if inferred_classes != int(num_classes):
+        raise ValueError(
+            f"{context} logits class dimension must equal num_classes={int(num_classes)}, "
+            f"got shape {tuple(logits.shape)}."
+        )
+    _validate_labels(labels, int(num_classes), context=context)
+
+
 def _compute_loss_and_logits(head, criterion, embeddings, labels):
     """Compute loss and prediction logits for ApexID heads.
 
@@ -74,14 +124,20 @@ def _compute_loss_and_logits(head, criterion, embeddings, labels):
         Supports ArcFace-style heads that return logits and SphereFace2-style
         heads that return scalar loss and expose ``predict_logits``.
     """
+    num_classes = _head_num_classes(head)
+    _validate_labels(labels, num_classes, context="classification")
+
     head_output = head(embeddings, labels)
 
     if torch.is_tensor(head_output) and head_output.ndim == 0:
-        return head_output, _prediction_logits(head, embeddings)
+        logits = _prediction_logits(head, embeddings)
+        _validate_logits(logits, labels, num_classes, context="classification")
+        return head_output, logits
 
     if criterion is None:
         raise ValueError("Head returned class logits but no external loss was provided.")
 
+    _validate_logits(head_output, labels, num_classes, context="classification")
     return criterion(head_output, labels), head_output
 
 
@@ -246,6 +302,9 @@ __all__ = [
     "Validator",
     "_compute_loss_and_logits",
     "_format_metric",
+    "_head_num_classes",
     "_prediction_logits",
     "_unpack_batch",
+    "_validate_labels",
+    "_validate_logits",
 ]

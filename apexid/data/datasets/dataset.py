@@ -111,6 +111,7 @@ class ApexID_Dataset(Dataset):
             raise KeyError(f"Missing required column: '{self.path_column}'")
         if self.identity_column not in self.data_csv.columns:
             raise KeyError(f"Missing required column: '{self.identity_column}'")
+        self._validate_global_identity_values(self.data_csv, identity_column=self.identity_column)
 
         # In open-set training, this should come from TRAIN only.
         if label_to_idx is None:
@@ -118,6 +119,7 @@ class ApexID_Dataset(Dataset):
             label_to_idx = {label: idx for idx, label in enumerate(unique_identities)}
 
         self.label_to_idx = dict(label_to_idx)
+        self._validate_label_mapping(self.label_to_idx, name="label_to_idx")
         self.idx_to_label = {idx: label for label, idx in self.label_to_idx.items()}
 
         # Used for retrieval / verification metrics.
@@ -125,6 +127,7 @@ class ApexID_Dataset(Dataset):
         if metrics_label_map is None:
             metrics_label_map = self.build_label_mapping(self.data_csv, identity_column=self.identity_column)
         self.metrics_label_map = dict(metrics_label_map)
+        self._validate_label_mapping(self.metrics_label_map, name="metrics_label_map")
         self.metric_idx_to_label = {idx: label for label, idx in self.metrics_label_map.items()}
 
         self._build_identity_index()
@@ -164,6 +167,77 @@ class ApexID_Dataset(Dataset):
         return df
 
     @staticmethod
+    def _identity_source_column(df):
+        """Return the species/source column used to detect non-global labels."""
+        if 'species' in df.columns:
+            return 'species'
+        if 'dataset' in df.columns:
+            return 'dataset'
+        return None
+
+    @staticmethod
+    def _validate_label_mapping(label_map, name="label_to_idx"):
+        """Validate that each numeric label maps to exactly one identity."""
+        label_to_identities = defaultdict(list)
+        for identity, numeric_label in label_map.items():
+            if pd.isna(identity):
+                raise ValueError(f"{name} contains a null identity key.")
+            if pd.isna(numeric_label):
+                raise ValueError(f"{name} contains a null numeric label for identity '{identity}'.")
+            numeric_label = int(numeric_label)
+            if numeric_label < 0:
+                raise ValueError(
+                    f"{name} contains negative numeric label {numeric_label} "
+                    f"for identity '{identity}'."
+                )
+            label_to_identities[numeric_label].append(identity)
+
+        collisions = {
+            label: identities
+            for label, identities in label_to_identities.items()
+            if len(set(identities)) > 1
+        }
+        if collisions:
+            examples = []
+            for label, identities in list(sorted(collisions.items()))[:5]:
+                examples.append(f"{label}: {sorted(map(str, set(identities)))[:5]}")
+            raise ValueError(
+                f"{name} is not one-to-one. Numeric labels map to multiple "
+                f"identities: {'; '.join(examples)}"
+            )
+
+    @staticmethod
+    def _validate_global_identity_values(data_csv, identity_column='identity'):
+        """Reject identity strings that collide across species/source columns."""
+        df = ApexID_Dataset._standardize_columns(data_csv)
+        if identity_column not in df.columns:
+            raise KeyError(f"Missing required column: '{identity_column}'")
+
+        source_column = ApexID_Dataset._identity_source_column(df)
+        if source_column is None:
+            return
+
+        check_df = df[[identity_column, source_column]].dropna()
+        if check_df.empty:
+            return
+
+        source_counts = check_df.groupby(identity_column)[source_column].nunique()
+        colliding_identities = source_counts[source_counts > 1]
+        if colliding_identities.empty:
+            return
+
+        examples = []
+        for identity in colliding_identities.index[:5]:
+            sources = sorted(check_df.loc[check_df[identity_column] == identity, source_column].astype(str).unique())
+            examples.append(f"{identity}: {sources}")
+        raise ValueError(
+            "Identity labels are not globally unique across species/source values. "
+            f"Column '{identity_column}' has the same raw identity in multiple "
+            f"'{source_column}' groups. Use globally scoped identities such as "
+            "'species_identity' before training. Examples: " + "; ".join(examples)
+        )
+
+    @staticmethod
     def build_label_mapping(data_csv, identity_column='identity'):
         """Build a label-to-index mapping from a single dataset split.
 
@@ -182,8 +256,11 @@ class ApexID_Dataset(Dataset):
             IDs, which are used by classification heads during training.
         """
         df = ApexID_Dataset._standardize_columns(data_csv)
+        ApexID_Dataset._validate_global_identity_values(df, identity_column=identity_column)
         unique_identities = sorted(df[identity_column].dropna().unique())
-        return {label: idx for idx, label in enumerate(unique_identities)}
+        label_map = {label: idx for idx, label in enumerate(unique_identities)}
+        ApexID_Dataset._validate_label_mapping(label_map)
+        return label_map
 
     @staticmethod
     def build_label_mapping_union(train_df, val_df, identity_column='identity'):
@@ -207,10 +284,14 @@ class ApexID_Dataset(Dataset):
         """
         train_df = ApexID_Dataset._standardize_columns(train_df)
         val_df = ApexID_Dataset._standardize_columns(val_df)
+        ApexID_Dataset._validate_global_identity_values(train_df, identity_column=identity_column)
+        ApexID_Dataset._validate_global_identity_values(val_df, identity_column=identity_column)
         train_ids = set(train_df[identity_column].dropna().unique().tolist())
         val_ids = set(val_df[identity_column].dropna().unique().tolist())
         all_ids = sorted(train_ids | val_ids)
-        return {label: idx for idx, label in enumerate(all_ids)}
+        label_map = {label: idx for idx, label in enumerate(all_ids)}
+        ApexID_Dataset._validate_label_mapping(label_map, name="metrics_label_map")
+        return label_map
     
     def _build_identity_index(self):
         """Build the sampling index for identities known to the classifier.

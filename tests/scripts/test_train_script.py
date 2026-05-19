@@ -287,6 +287,46 @@ def test_train_script_skips_lr_range_test_when_resuming(tmp_path):
     assert not (tmp_path / "lr_resume").exists()
 
 
+def test_train_script_builds_embedding_plotter_with_default_output_dirs(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["embedding_plot"] = {
+        "enabled": True,
+        "split": "val",
+        "output_dir": None,
+        "best_output_dir": None,
+        "n_neighbors": 5,
+        "min_dist": 0.2,
+        "metric": "cosine",
+        "random_state": None,
+        "point_size": 9,
+        "alpha": 0.7,
+        "dpi": 150,
+        "max_points": 100,
+        "filename_template": "epoch_{epoch_number:03d}_umap.png",
+        "best_filename": "best_embedding_space.png",
+    }
+
+    plotter = train_script.build_embedding_plotter(cfg)
+
+    assert plotter.output_dir == tmp_path / "outputs" / "embedding_space"
+    assert plotter.best_output_dir == tmp_path / "checkpoints"
+    assert plotter.n_neighbors == 5
+    assert plotter.min_dist == 0.2
+    assert plotter.metric == "cosine"
+    assert plotter.random_state == 42
+    assert plotter.max_points == 100
+
+
+def test_train_script_rejects_non_validation_embedding_plot_split(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["embedding_plot"] = {"enabled": True, "split": "train"}
+
+    with pytest.raises(ValueError, match="supports only 'val'"):
+        train_script.build_embedding_plotter(cfg)
+
+
 def test_train_script_builds_sphereface2_internal_loss_components(tmp_path):
     train_script = _load_train_script()
     cfg = _base_cfg(tmp_path)

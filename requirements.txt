@@ -11,3 +11,5 @@ Pillow
 albumentations
 PyYAML
 wandb
+umap-learn
+matplotlib

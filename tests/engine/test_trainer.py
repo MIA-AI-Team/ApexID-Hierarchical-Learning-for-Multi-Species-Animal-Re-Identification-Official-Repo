@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import torch
 from torch import nn
@@ -60,6 +61,58 @@ class DummyValidator:
             "num_known": 4,
             "num_samples": 4,
         }
+
+
+class EmbeddingValidator:
+    def __init__(self):
+        self.return_embeddings_flags = []
+
+    def validate(self, val_loader, epoch=None, epochs=None, return_embeddings=False):
+        self.return_embeddings_flags.append(bool(return_embeddings))
+        result = {
+            "loss": 1.0,
+            "acc": 0.5,
+            "top1": 0.25,
+            "top5": 0.75,
+            "mAP": 0.5,
+            "micro_f1": 0.6,
+            "num_known": 4,
+            "num_samples": 4,
+        }
+        if return_embeddings:
+            result["embeddings"] = torch.randn(4, 2)
+            result["metric_labels"] = torch.tensor([0, 0, 1, 1])
+        return result
+
+
+class RecordingEmbeddingPlotter:
+    def __init__(self, output_dir):
+        self.output_dir = Path(output_dir)
+        self.plot_calls = []
+        self.best_calls = []
+
+    def plot_epoch(self, embeddings, labels, epoch):
+        self.plot_calls.append(
+            {
+                "epoch": int(epoch),
+                "embedding_shape": tuple(embeddings.shape),
+                "labels": labels.tolist(),
+            }
+        )
+        png = self.output_dir / f"epoch_{int(epoch) + 1:03d}_umap.png"
+        meta = png.with_suffix(".json")
+        png.parent.mkdir(parents=True, exist_ok=True)
+        png.write_bytes(b"png")
+        meta.write_text(json.dumps({"epoch": int(epoch)}), encoding="utf-8")
+        return {"png": png, "json": meta, "metadata": {"epoch": int(epoch)}}
+
+    def save_best(self, epoch_artifacts):
+        self.best_calls.append(epoch_artifacts)
+        png = self.output_dir / "best_embedding_space.png"
+        meta = png.with_suffix(".json")
+        png.write_bytes(epoch_artifacts["png"].read_bytes())
+        meta.write_text(epoch_artifacts["json"].read_text(encoding="utf-8"), encoding="utf-8")
+        return {"png": png, "json": meta, "metadata": {"best": True}}
 
 
 def _loader():
@@ -228,6 +281,56 @@ def test_trainer_logs_epoch_metrics_and_best_artifacts(tmp_path):
     assert artifact_names == {"best_full_model", "best_backbone", "best_metadata"}
     assert all("best" in artifact["aliases"] for artifact in logger.artifacts)
     assert "last_checkpoint" not in artifact_names
+
+
+def test_trainer_plots_validation_embeddings_and_logs_best_artifacts(tmp_path):
+    torch.manual_seed(42)
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.01)
+    validator = EmbeddingValidator()
+    plotter = RecordingEmbeddingPlotter(tmp_path / "embedding_space")
+    logger = RecordingLogger()
+
+    trainer = Trainer(
+        backbone,
+        head,
+        loss=nn.CrossEntropyLoss(),
+        optimizer=optimizer,
+        validator=validator,
+        device="cpu",
+        progress=False,
+        verbose=False,
+        checkpoint_dir=tmp_path,
+        early_stopping_enabled=True,
+        early_stopping_monitor="val_mAP",
+        early_stopping_mode="max",
+        early_stopping_dir=tmp_path,
+        experiment_logger=logger,
+        embedding_plotter=plotter,
+    )
+
+    trainer.train(_loader(), _loader(), epochs=1)
+
+    assert validator.return_embeddings_flags == [True]
+    assert len(plotter.plot_calls) == 1
+    assert plotter.plot_calls[0]["embedding_shape"] == (4, 2)
+    assert len(plotter.best_calls) == 1
+    assert (tmp_path / "embedding_space" / "epoch_001_umap.png").exists()
+    assert (tmp_path / "embedding_space" / "best_embedding_space.png").exists()
+
+    artifact_names = {artifact["name"] for artifact in logger.artifacts}
+    assert "best_embedding_space" in artifact_names
+    assert "best_embedding_space_metadata" in artifact_names
+
+
+def test_trainer_does_not_request_embeddings_when_plotting_disabled(tmp_path):
+    validator = EmbeddingValidator()
+    trainer = _trainer(tmp_path, progress=False, verbose=False, validator=validator)
+
+    trainer.train(_loader(), _loader(), epochs=1)
+
+    assert validator.return_embeddings_flags == [False]
 
 
 def test_trainer_steps_cyclic_lr_once_per_optimizer_update(tmp_path):

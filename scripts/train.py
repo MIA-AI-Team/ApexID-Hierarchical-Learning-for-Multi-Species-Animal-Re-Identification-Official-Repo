@@ -1,7 +1,33 @@
 #!/usr/bin/env python3
 import argparse
+import logging
+import os
 import sys
+import warnings
 from pathlib import Path
+
+
+def _suppress_library_warnings():
+    """Silence noisy third-party warnings/logs for training runs."""
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+    os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+    os.environ.setdefault("GLOG_minloglevel", "3")
+    os.environ.setdefault("ABSL_LOGGING_MIN_LOG_LEVEL", "3")
+    os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+    warnings.filterwarnings("ignore")
+    logging.captureWarnings(True)
+    for logger_name in (
+        "absl",
+        "matplotlib",
+        "numba",
+        "tensorflow",
+        "umap",
+        "wandb",
+    ):
+        logging.getLogger(logger_name).setLevel(logging.ERROR)
+
+
+_suppress_library_warnings()
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -17,6 +43,7 @@ from apexid.engine import Trainer, build_experiment_logger, load_training_checkp
 from apexid.models import build_components
 from apexid.utils.config import DEFAULT_CONFIG_PATH, load_config
 from apexid.utils.device import get_device
+from apexid.utils.embedding_umap import EmbeddingUMAPPlotter
 from apexid.utils.lr_range_test import run_lr_range_test, write_lr_range_test_artifacts
 from apexid.utils.seed import DEFAULT_SEED, make_torch_generator, seed_everything, seed_worker
 
@@ -259,7 +286,58 @@ def maybe_run_lr_range_test(cfg, model, head, criterion, optimizer, train_loader
     }
 
 
-def build_trainer(cfg, model, head, criterion, optimizer, scheduler, device, experiment_logger=None):
+def build_embedding_plotter(cfg):
+    """Build the optional validation embedding UMAP plotter from config."""
+    plot_cfg = _as_dict(cfg.get("embedding_plot", {}))
+    if not bool(plot_cfg.get("enabled", False)):
+        return None
+
+    split = str(plot_cfg.get("split", "val")).lower()
+    if split not in {"val", "validation"}:
+        raise ValueError("embedding_plot.split currently supports only 'val'.")
+
+    experiment_dir = Path(_as_dict(cfg.get("experiment", {})).get("output_dir", "outputs/apexid_run"))
+    checkpoint_cfg = _as_dict(cfg.get("checkpoint", {}))
+    early_cfg = _as_dict(cfg.get("early_stopping", {}))
+    output_dir = plot_cfg.get("output_dir")
+    if output_dir in {None, ""}:
+        output_dir = experiment_dir / "embedding_space"
+    best_output_dir = plot_cfg.get("best_output_dir")
+    if best_output_dir in {None, ""}:
+        best_output_dir = early_cfg.get("output_dir", checkpoint_cfg.get("output_dir", "checkpoints"))
+
+    random_state = plot_cfg.get("random_state")
+    if random_state in {None, ""}:
+        random_state = int(cfg.get("seed", DEFAULT_SEED) or DEFAULT_SEED)
+
+    return EmbeddingUMAPPlotter(
+        output_dir=output_dir,
+        best_output_dir=best_output_dir,
+        split="val",
+        n_neighbors=int(plot_cfg.get("n_neighbors", 15)),
+        min_dist=float(plot_cfg.get("min_dist", 0.1)),
+        metric=plot_cfg.get("metric", "euclidean"),
+        random_state=int(random_state),
+        point_size=float(plot_cfg.get("point_size", 8)),
+        alpha=float(plot_cfg.get("alpha", 0.85)),
+        dpi=int(plot_cfg.get("dpi", 200)),
+        max_points=plot_cfg.get("max_points"),
+        filename_template=plot_cfg.get("filename_template", "epoch_{epoch_number:03d}_umap.png"),
+        best_filename=plot_cfg.get("best_filename", "best_embedding_space.png"),
+    )
+
+
+def build_trainer(
+    cfg,
+    model,
+    head,
+    criterion,
+    optimizer,
+    scheduler,
+    device,
+    experiment_logger=None,
+    embedding_plotter=None,
+):
     """Build the ApexID Trainer from config-derived components."""
     training_cfg = _as_dict(cfg.get("training", {}))
     validation_cfg = _as_dict(cfg.get("validation", {}))
@@ -295,6 +373,7 @@ def build_trainer(cfg, model, head, criterion, optimizer, scheduler, device, exp
         early_stopping_metadata_name=early_cfg.get("metadata_name", "best_metadata.json"),
         metrics_base_seed=int(cfg.get("seed", DEFAULT_SEED) or DEFAULT_SEED),
         experiment_logger=experiment_logger,
+        embedding_plotter=embedding_plotter,
     )
 
 
@@ -348,8 +427,10 @@ def train_from_config(cfg):
     )
     scheduler = build_scheduler(cfg, optimizer, train_loader=train_loader, overrides=scheduler_overrides)
     experiment_logger = build_experiment_logger(cfg, metadata=tracking_metadata)
+    embedding_plotter = build_embedding_plotter(cfg)
     trainer = build_trainer(cfg, model, head, criterion, optimizer, scheduler, device,
         experiment_logger=experiment_logger,
+        embedding_plotter=embedding_plotter,
     )
 
     start_epoch = 0

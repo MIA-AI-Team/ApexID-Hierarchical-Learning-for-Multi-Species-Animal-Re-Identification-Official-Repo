@@ -55,6 +55,7 @@ class Trainer:
         early_stopping_path=None,
         metrics_base_seed=DEFAULT_SEED,
         experiment_logger=None,
+        embedding_plotter=None,
     ):
         """Initialize the training helper.
 
@@ -107,6 +108,8 @@ class Trainer:
             metrics_base_seed (int): Stored for experiment reproducibility.
             experiment_logger (ExperimentLogger, optional): Logger used for
                 epoch metrics and selected artifacts.
+            embedding_plotter (optional): Object with ``plot_epoch`` and
+                ``save_best`` methods used to visualize validation embeddings.
 
         Returns:
             None
@@ -127,6 +130,7 @@ class Trainer:
         self.checkpoint_delete_previous = bool(checkpoint_delete_previous)
         self.metrics_base_seed = int(metrics_base_seed)
         self.experiment_logger = experiment_logger or NullLogger()
+        self.embedding_plotter = embedding_plotter
 
         if self.validation_every_n_epochs <= 0:
             raise ValueError("validation_every_n_epochs must be > 0.")
@@ -387,17 +391,24 @@ class Trainer:
 
         return metrics
 
-    def _log_best_artifacts(self, epoch, metrics):
+    def _log_best_artifacts(self, epoch, metrics, embedding_artifacts=None):
         """Log best-model files produced by EarlyStopping."""
         if self.early_stopping is None:
             return
 
         aliases = ["best", f"epoch-{int(epoch) + 1}"]
-        artifact_specs = (
+        artifact_specs = [
             (self.early_stopping.full_model_path, "best_full_model", "model"),
             (self.early_stopping.backbone_path, "best_backbone", "model"),
             (self.early_stopping.metadata_path, "best_metadata", "metadata"),
-        )
+        ]
+        if embedding_artifacts is not None:
+            artifact_specs.extend(
+                [
+                    (embedding_artifacts["png"], "best_embedding_space", "image"),
+                    (embedding_artifacts["json"], "best_embedding_space_metadata", "metadata"),
+                ]
+            )
         for path, name, artifact_type in artifact_specs:
             self.experiment_logger.log_artifact(
                 path,
@@ -434,7 +445,32 @@ class Trainer:
                 self._set_train_loader_epoch(train_loader, epoch)
                 train_metrics = self.train_one_epoch(train_loader, epoch, epochs)
                 run_validation = ((epoch + 1) % self.validation_every_n_epochs == 0) or (epoch == epochs - 1)
-                val_metrics = self.validator.validate(val_loader, epoch=epoch, epochs=epochs) if run_validation else None
+                return_embeddings = bool(self.embedding_plotter) and run_validation
+                if run_validation and return_embeddings:
+                    val_metrics = self.validator.validate(
+                        val_loader,
+                        epoch=epoch,
+                        epochs=epochs,
+                        return_embeddings=True,
+                    )
+                elif run_validation:
+                    val_metrics = self.validator.validate(val_loader, epoch=epoch, epochs=epochs)
+                else:
+                    val_metrics = None
+                embedding_plot_artifacts = None
+                if val_metrics is not None and self.embedding_plotter is not None:
+                    embeddings = val_metrics.pop("embeddings", None)
+                    metric_labels = val_metrics.pop("metric_labels", None)
+                    if embeddings is None or metric_labels is None:
+                        raise ValueError(
+                            "Embedding plotting requires validator.validate(..., return_embeddings=True) "
+                            "to return 'embeddings' and 'metric_labels'."
+                        )
+                    embedding_plot_artifacts = self.embedding_plotter.plot_epoch(
+                        embeddings,
+                        metric_labels,
+                        epoch=epoch,
+                    )
                 self._append_history(history, train_metrics, val_metrics)
 
                 epoch_metrics = self._prefixed_epoch_metrics(train_metrics, val_metrics)
@@ -443,8 +479,11 @@ class Trainer:
                 self._print_epoch_summary(epoch, epochs, train_metrics, val_metrics)
 
                 early_stopping_improved = False
+                best_embedding_artifacts = None
                 if self.early_stopping is not None and val_metrics is not None:
                     early_stopping_improved = self.early_stopping(epoch_metrics, model=self.model, epoch=epoch)
+                    if early_stopping_improved and embedding_plot_artifacts is not None:
+                        best_embedding_artifacts = self.embedding_plotter.save_best(embedding_plot_artifacts)
 
                 log_metrics = self._epoch_log_metrics(
                     epoch,
@@ -455,7 +494,11 @@ class Trainer:
                 )
                 self.experiment_logger.log_metrics(log_metrics, step=int(epoch) + 1)
                 if early_stopping_improved:
-                    self._log_best_artifacts(epoch, log_metrics)
+                    self._log_best_artifacts(
+                        epoch,
+                        log_metrics,
+                        embedding_artifacts=best_embedding_artifacts,
+                    )
 
                 save_training_checkpoint(
                     epoch=epoch,

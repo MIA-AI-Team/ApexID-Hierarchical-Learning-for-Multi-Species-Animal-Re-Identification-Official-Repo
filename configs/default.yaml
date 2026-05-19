@@ -1,6 +1,6 @@
 experiment:
-  name: apexid_osnet_sphereface2
-  output_dir: outputs/apexid_osnet_sphereface2
+  name: apexid_osnet_arcface
+  output_dir: outputs/apexid_osnet_arcface
 seed: 42
 device:
   prefer_gpu: true
@@ -44,16 +44,12 @@ model:
     name: osnet_x0_25
     kwargs: {}
 head:
-  name: sphereface2
+  name: arcface
   kwargs:
-    magn_type: C
-    alpha: 0.9989
-    r: 40.0
-    m: 0.4
-    t: 4.0
-    lw: 50.0
+    s: 64.0
+    m: 0.5
 loss:
-  name: null
+  name: cross_entropy
   kwargs: {}
 optimizer:
   name: adam
@@ -92,8 +88,23 @@ validation:
   - top5
   - mAP
   - micro_f1
+embedding_plot:
+  enabled: true
+  split: val
+  output_dir: null
+  best_output_dir: null
+  n_neighbors: 15
+  min_dist: 0.1
+  metric: euclidean
+  random_state: null
+  point_size: 8
+  alpha: 0.85
+  dpi: 200
+  max_points: null
+  filename_template: epoch_{epoch_number:03d}_umap.png
+  best_filename: best_embedding_space.png
 checkpoint:
-  output_dir: outputs/apexid_osnet_sphereface2/checkpoints
+  output_dir: outputs/apexid_osnet_arcface/checkpoints
   every_n_epochs: 1
   filename: last_checkpoint.pt
   delete_previous: true
@@ -104,7 +115,7 @@ early_stopping:
   mode: max
   patience: 10
   min_delta: 0.0
-  output_dir: outputs/apexid_osnet_sphereface2/checkpoints
+  output_dir: outputs/apexid_osnet_arcface/checkpoints
   full_model_name: best_full_model.pt
   backbone_name: best_backbone.pt
   metadata_name: best_metadata.json

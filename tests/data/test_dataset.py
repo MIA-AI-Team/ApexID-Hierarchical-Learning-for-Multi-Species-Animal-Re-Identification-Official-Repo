@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 
 from apexid.data.datasets.dataset import ApexID_Dataset
@@ -47,6 +48,38 @@ def test_apexid_dataset_loads_rgb_images_labels_and_identity_index(tmp_path):
     assert metric_label.item() == 1
     assert dataset.label_to_idx == {"zebra_1": 0, "zebra_2": 1}
     assert dataset.identity_to_indices == {"zebra_1": [1], "zebra_2": [0, 2]}
+
+
+def test_apexid_dataset_keeps_global_animal_identities_distinct():
+    data = pd.DataFrame(
+        {
+            "species": ["lynx", "turtle", "salamander"],
+            "identity": ["lynx_001", "turtle_001", "salamander_001"],
+            "path": ["lynx.jpg", "turtle.jpg", "salamander.jpg"],
+        }
+    )
+
+    dataset = ApexID_Dataset(data)
+
+    assert dataset.label_to_idx == {
+        "lynx_001": 0,
+        "salamander_001": 1,
+        "turtle_001": 2,
+    }
+    assert len(set(dataset.label_to_idx.values())) == 3
+
+
+def test_apexid_dataset_rejects_identity_collisions_across_species():
+    data = pd.DataFrame(
+        {
+            "species": ["lynx", "turtle", "salamander"],
+            "identity": ["001", "001", "001"],
+            "path": ["lynx.jpg", "turtle.jpg", "salamander.jpg"],
+        }
+    )
+
+    with pytest.raises(ValueError, match="not globally unique"):
+        ApexID_Dataset(data)
 
 
 def test_apexid_dataset_applies_transform_after_rgb_loading(tmp_path):
