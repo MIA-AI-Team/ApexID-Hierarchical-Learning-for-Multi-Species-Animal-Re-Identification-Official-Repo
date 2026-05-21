@@ -18,9 +18,8 @@ cd /home/seifelkerdany/PC/MIA/ApexID
 - `configs/`: YAML experiment configuration. `configs/default.yaml` is the
   default entry point used by scripts and tests.
 - `scripts/`: command-line entry points for training and data-pipeline checks.
-- `animals/`: local CSV metadata and image tree used by the default config.
-- `data/`: placeholder for external or temporary datasets that should stay
-  separate from the committed `animals/` layout.
+- `ApexID_Dataset/`: ignored local dataset root used by the default config.
+- `data/`: local dataset preparation notes and scripts.
 - `notebooks/`: exploratory notebook examples.
 - `tests/`: pytest suite covering data, model, engine, metric, script, and
   utility behavior.
@@ -48,9 +47,9 @@ The default configuration expects these dataset paths:
 
 ```yaml
 data:
-  train_path: animals/fine_tune_train.csv
-  val_path: animals/val_all.csv
-  root_dir: animals
+  train_path: ApexID_Dataset/open_set_splits/train.csv
+  val_path: ApexID_Dataset/open_set_splits/val.csv
+  root_dir: ApexID_Dataset
 ```
 
 The train and validation CSV files must contain at least:
@@ -58,6 +57,9 @@ The train and validation CSV files must contain at least:
 ```text
 identity,path
 ```
+
+For the default ApexID dataset, CSV image paths such as `images/...` are
+resolved relative to `root_dir: ApexID_Dataset`.
 
 Start training:
 

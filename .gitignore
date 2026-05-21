@@ -1,7 +1,6 @@
 .vscode
 data_preprocessing.py
-animals/*
-!animals/README.md
 __pycache__/
 outputs/
 wandb/
+ApexID_Dataset/

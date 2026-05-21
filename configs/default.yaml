@@ -6,11 +6,11 @@ device:
   prefer_gpu: true
   gpu_index: 0
 data:
-  train_path: animals/fine_tune_train.csv
-  val_path: animals/val_all.csv
+  train_path: ApexID_Dataset/open_set_splits/train.csv
+  val_path: ApexID_Dataset/open_set_splits/val.csv
   train_csv: null
   val_csv: null
-  root_dir: animals
+  root_dir: ApexID_Dataset
   image_size:
   - 440
   - 440
