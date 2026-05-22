@@ -277,8 +277,8 @@ def build_train_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
             A.Affine(
                 scale=(0.95, 1.05),
                 translate_percent=(-0.03, 0.03),
-                rotate=(-10, 10),
-                border_mode=cv2.BORDER_REFLECT_101,
+                rotate=(-8, 8),
+                border_mode=0,
                 p=0.35,
             ),
             A.ToGray(
@@ -286,12 +286,12 @@ def build_train_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
                 p=0.15,
             ),
             A.GaussianBlur(
-                blur_limit=(3, 5),
+                blur_limit=(2, 3),
                 p=0.2,
             ),
             A.GaussNoise(
                 std_range=(0.02, 0.05),
-                p=0.2,
+                p=0.35,
             ),
             A.PixelDropout(
                 dropout_prob=0.005,
