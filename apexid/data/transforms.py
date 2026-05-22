@@ -324,7 +324,7 @@ def build_eval_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
         when ``wavelet=True``.
 
     Functionality:
-        Applies deterministic preprocessing only: resize, CLAHE, optional
+        Applies deterministic preprocessing only: resize, optional
         wavelet channel construction, dataset-stat normalization, and tensor
         conversion.
     """
@@ -339,7 +339,6 @@ def build_eval_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
     return A.Compose(
         [
             A.Resize(height=height, width=width),
-            _clahe_transform(),
             to_float,
             _normalization(settings["mean"], settings["std"]),
             ToTensorV2(),
