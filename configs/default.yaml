@@ -17,13 +17,13 @@ data:
   wavelet: false
   transforms:
     mean:
-    - 0.350194
-    - 0.352513
-    - 0.322936
+    - 0.177705
+    - 0.174851
+    - 0.171054
     std:
-    - 0.313112
-    - 0.302449
-    - 0.288811
+    - 0.249854
+    - 0.242255
+    - 0.238203
 dataloader:
   batch_size: 32
   num_workers: 4
@@ -33,7 +33,7 @@ dataloader:
   sampler:
     name: pk
     num_identities: 16
-    num_instances: 4
+    num_instances: 2
     batches_per_epoch: null
     shuffle: true
 model:
@@ -59,8 +59,8 @@ optimizer:
 lr_range_test:
   enabled: true
   mode: auto_apply
-  start_lr: 1.0e-7
-  end_lr: 1.0e-2
+  start_lr: 1.0e-07
+  end_lr: 0.01
   num_iter: 100
   smooth_beta: 0.98
   stop_factor: 4.0
@@ -69,8 +69,8 @@ lr_range_test:
 scheduler:
   name: cyclic_lr
   kwargs:
-    base_lr: 1.0e-5
-    max_lr: 3.0e-4
+    base_lr: 1.0e-05
+    max_lr: 0.0003
     step_size_epochs: 4
     mode: triangular2
     cycle_momentum: false
