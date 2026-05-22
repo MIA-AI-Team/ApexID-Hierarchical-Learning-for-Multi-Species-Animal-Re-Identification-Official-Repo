@@ -133,7 +133,7 @@ def _clahe_transform():
     return A.CLAHE(
         clip_limit=CLAHE_CLIP_LIMIT,
         tile_grid_size=CLAHE_TILE_GRID_SIZE,
-        p=1.0,
+        p=0.25,
     )
 
 
