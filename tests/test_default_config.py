@@ -20,6 +20,7 @@ def test_default_config_contains_experiment_training_sections():
         "scheduler",
         "training",
         "validation",
+        "evaluation",
         "embedding_plot",
         "checkpoint",
         "early_stopping",
@@ -29,12 +30,18 @@ def test_default_config_contains_experiment_training_sections():
 
     assert cfg["seed"] == 42
     assert "train_path" in cfg["data"]
+    assert "val_known_path" in cfg["data"]
+    assert "val_unknown_path" in cfg["data"]
     assert "val_path" in cfg["data"]
     assert cfg["model"]["name"] == "apexid"
     assert "input_channels" in cfg["model"]
     assert cfg["validation"]["metric_chunk_size"] == 1024
     assert cfg["validation"]["metrics"] == ["top1", "top5", "mAP", "micro_f1"]
-    assert cfg["early_stopping"]["monitor"] == "val_mAP"
+    assert cfg["evaluation"]["diagnostics_every_n_epochs"] == 5
+    assert cfg["evaluation"]["diagnostics"]["max_pairs"] == 100000
+    assert cfg["evaluation"]["clustering"]["method"] == "threshold_connected_components"
+    assert cfg["evaluation"]["dir"]["far_levels"] == [0.01, 0.001]
+    assert cfg["early_stopping"]["monitor"] == "mixed/NormAcc"
     assert cfg["early_stopping"]["mode"] == "max"
     assert cfg["checkpoint"]["delete_previous"] is True
     assert cfg["training"]["verbose"] is True

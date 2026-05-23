@@ -52,7 +52,7 @@ from apexid.engine import save_training_checkpoint, load_training_checkpoint
 
 - Keep checkpoint formats backward-compatible when possible; resume training
   depends on saved model, optimizer, scheduler, history, metrics, and RNG state.
-- Keep validation metric keys aligned with config names such as `val_mAP`,
-  `val_top1`, and `val_micro_f1`.
+- Keep validation metric keys aligned with config names such as
+  `mixed/NormAcc`, `known/mAP`, and the legacy `val_*` aliases.
 - Preserve `classification_ignore_index` and `metric_ignore_index` behavior for
   open-set validation.

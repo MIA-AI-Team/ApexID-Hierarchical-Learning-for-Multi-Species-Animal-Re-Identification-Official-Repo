@@ -35,6 +35,8 @@ def _make_rows(image_dir, prefix, identities):
 def test_debug_data_pipeline_script_smoke(tmp_path):
     image_dir = tmp_path / "images"
     train_csv = tmp_path / "train.csv"
+    val_known_csv = tmp_path / "val_known.csv"
+    val_unknown_csv = tmp_path / "val_unknown.csv"
     val_csv = tmp_path / "val.csv"
     config_path = tmp_path / "config.yaml"
 
@@ -53,11 +55,15 @@ def test_debug_data_pipeline_script_smoke(tmp_path):
     val_rows[1]["val_type"] = "known"
     pd.DataFrame(train_rows).to_csv(train_csv, index=False)
     pd.DataFrame(val_rows).to_csv(val_csv, index=False)
+    pd.DataFrame([row for row in val_rows if row["val_type"] == "known"]).to_csv(val_known_csv, index=False)
+    pd.DataFrame([row for row in val_rows if row["val_type"] == "unknown"]).to_csv(val_unknown_csv, index=False)
 
     config = {
         "seed": 42,
         "data": {
             "train_path": str(train_csv),
+            "val_known_path": str(val_known_csv),
+            "val_unknown_path": str(val_unknown_csv),
             "val_path": str(val_csv),
             "root_dir": str(image_dir),
             "image_size": [8, 8],

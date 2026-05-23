@@ -1,6 +1,7 @@
 import torch
 
 from apexid.models import ApexID, build_model
+from apexid.models.backbones.osnet import osnet_x0_25
 
 
 def test_apexid_accepts_explicit_six_channel_inputs():
@@ -51,3 +52,10 @@ def test_build_model_defaults_to_rgb_channels_without_wavelet():
 
     assert model.input_channels == 3
     assert model.backbone.conv1.conv.in_channels == 3
+
+
+def test_osnet_embedding_projection_keeps_signed_features():
+    model = osnet_x0_25(embedding_dim=16, input_channels=3)
+
+    assert model.fc is not None
+    assert not any(isinstance(layer, torch.nn.ReLU) for layer in model.fc)

@@ -107,6 +107,64 @@ def test_validator_returns_nan_loss_and_acc_when_no_known_samples():
     assert result["top1"] == 1.0
 
 
+def test_validator_open_set_uses_gallery_known_unknown_and_mixed_loaders():
+    gallery_images = torch.tensor(
+        [
+            [1.0, 0.0],
+            [0.95, 0.05],
+            [0.0, 1.0],
+            [0.05, 0.95],
+        ]
+    )
+    gallery_labels = torch.tensor([0, 0, 1, 1])
+    known_images = torch.tensor([[0.98, 0.02], [0.02, 0.98]])
+    known_cls = torch.tensor([0, 1])
+    known_metric = torch.tensor([0, 1])
+    unknown_images = torch.tensor([[-1.0, 0.0], [0.0, -1.0]])
+    unknown_cls = torch.tensor([-100, -100])
+    unknown_metric = torch.tensor([2, 3])
+    mixed_images = torch.cat([known_images, unknown_images], dim=0)
+    mixed_cls = torch.cat([known_cls, unknown_cls], dim=0)
+    mixed_metric = torch.cat([known_metric, unknown_metric], dim=0)
+
+    validator = Validator(
+        nn.Identity(),
+        LogitHead(),
+        loss=nn.CrossEntropyLoss(),
+        device="cpu",
+        classification_ignore_index=-100,
+        metric_chunk_size=2,
+        progress=False,
+    )
+    result = validator.validate_open_set(
+        DataLoader(TensorDataset(gallery_images, gallery_labels, gallery_labels), batch_size=2),
+        DataLoader(TensorDataset(known_images, known_cls, known_metric), batch_size=2),
+        DataLoader(TensorDataset(unknown_images, unknown_cls, unknown_metric), batch_size=2),
+        DataLoader(TensorDataset(mixed_images, mixed_cls, mixed_metric), batch_size=2),
+        evaluation_config={
+            "known_unknown_threshold": 0.5,
+            "diagnostics_every_n_epochs": 5,
+            "diagnostics": {"enabled": True, "max_pairs": 20},
+            "clustering": {"method": "threshold_connected_components", "threshold": 0.8},
+        },
+        epoch=4,
+        epochs=5,
+        return_embeddings=True,
+    )
+
+    assert result["num_known"] == 2
+    assert result["num_samples"] == 4
+    assert result["known/mAP"] == 1.0
+    assert result["unknown/ARI"] == 1.0
+    assert result["mixed/NormAcc"] == 1.0
+    assert result["rejection/AUROC"] == 1.0
+    assert result["validation/diagnostics_ran"] == 1
+    assert result["diagnostics/knn_top1"] == 1.0
+    assert result["mAP"] == result["known/mAP"]
+    assert result["micro_f1"] == result["mixed/F1"]
+    assert tuple(result["embeddings"].shape) == (4, 2)
+
+
 def test_compute_loss_and_logits_supports_sphereface2_internal_loss():
     torch.manual_seed(42)
     head = SphereFace2Head(

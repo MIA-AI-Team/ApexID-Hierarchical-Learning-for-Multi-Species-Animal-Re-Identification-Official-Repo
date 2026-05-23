@@ -1,61 +1,157 @@
 # apexid/evaluation
 
-This package contains metric functions for re-identification validation.
+This package contains ApexID validation metrics for closed-set retrieval,
+unknown identity discovery, known-vs-unknown rejection, mixed open-set behavior,
+and embedding diagnostics.
 
-## Main Files
+## Three Validation CSVs
 
-- `reid_metrics.py`: embedding normalization, leave-one-out top-k accuracy, mAP,
-  nearest-neighbor predictions, micro-F1, and `compute_reid_metrics`.
-- `__init__.py`: exports the metric helpers.
+ApexID uses three validation CSVs because open-set animal re-identification has
+different failure modes:
 
-## How It Connects
+- `val_known.csv`: held-out images whose identities also exist in `train.csv`.
+  This measures closed-set known identity retrieval against the train gallery.
+- `val_unknown.csv`: images whose identities do not exist in `train.csv`. True
+  labels are used only for evaluation, never as training classifier classes.
+- `val.csv`: the concatenation of `val_known.csv` and `val_unknown.csv`. This
+  measures the full mixed open-set decision: identify known animals, reject
+  unknown animals, and cluster rejected unknowns.
 
-`apexid.engine.Validator` collects validation embeddings and metric labels, then
-calls `compute_reid_metrics`. The resulting values are added to epoch metrics
-and can drive early stopping through config keys such as `val_mAP`.
+| Group | CSV / Source | Metrics |
+|---|---|---|
+| Known | `val_known.csv` | mAP, Top-1, Top-5, Top-10, BAKS, CMC |
+| Unknown | `val_unknown.csv` | ARI, AMI, V-measure, BAUS |
+| Rejection | `val_known.csv + val_unknown.csv` | AUROC, FAR, FPR95 |
+| Mixed | `val.csv` | Mixed ARI, F1, NormAcc, OSCR AUC, DIR@1%FAR, DIR@0.1%FAR |
+| Diagnostics | known + unknown / gallery | Intra/inter gap, norms, alignment, uniformity, k-NN accuracy |
 
-Metrics operate on embeddings shaped:
+## Metric Groups
+
+Known metrics show whether the model retrieves known animals correctly. mAP
+measures full ranking quality, Top-k metrics show whether the correct identity is
+near the top, BAKS protects against long-tail identity imbalance, and CMC reports
+retrieval quality at ranks such as 1, 5, 10, 20, and 50.
+
+Unknown metrics show whether unseen individuals form meaningful clusters. ARI,
+AMI, and V-measure compare predicted unknown clusters with true unknown labels.
+BAUS measures whether unknown individuals are rejected instead of forced into
+known train identities.
+
+Rejection metrics measure known-vs-unknown separation using each validation
+image's best similarity to the train gallery as the knownness score. AUROC is
+threshold-free, FAR measures how often unknown animals are wrongly accepted as
+known, and FPR95 measures false accepts when known recall is forced to stay high.
+
+Mixed metrics evaluate the final open-set system. Mixed ARI measures final
+identity grouping across known and unknown samples. F1 measures known-vs-unknown
+decision balance. NormAcc is `sqrt(BAKS * BAUS)`, which discourages trivial
+always-known or always-unknown behavior. OSCR AUC jointly evaluates known
+identification and unknown rejection. DIR@FAR reports identification quality
+under strict false-accept limits.
+
+Diagnostics run every 5 epochs by default to reduce validation cost. The
+intra/inter gap checks whether same identities are closer than different
+identities. Embedding norms detect collapse or instability. Alignment measures
+whether positive pairs are close. Uniformity detects whether embeddings are well
+distributed on the hypersphere. k-NN accuracy tests whether frozen embeddings are
+directly useful for retrieval.
+
+## W&B Metric Names
+
+Known:
 
 ```text
-(num_samples, embedding_dim)
+known/mAP
+known/top1
+known/top5
+known/top10
+known/BAKS
+known/cmc_rank1
+known/cmc_rank5
+known/cmc_rank10
+known/cmc_rank20
+known/cmc_rank50
 ```
 
-and labels shaped:
+Unknown:
 
 ```text
-(num_samples,)
+unknown/ARI
+unknown/AMI
+unknown/v_measure
+unknown/BAUS
 ```
 
-Embeddings are L2-normalized before cosine-similarity ranking. Optional
-`ignore_index` values are filtered before retrieval metrics are computed.
-Metrics are computed in query chunks so full validation can run without
-allocating a full `num_samples x num_samples` matrix.
+Rejection:
+
+```text
+rejection/AUROC
+rejection/FAR
+rejection/FPR95
+rejection/threshold_at_95_tpr
+rejection/known_tpr_at_threshold
+rejection/unknown_recall_at_threshold
+```
+
+Mixed:
+
+```text
+mixed/ARI
+mixed/F1
+mixed/NormAcc
+mixed/BAKS
+mixed/BAUS
+mixed/OSCR_AUC
+mixed/DIR_at_1FAR
+mixed/DIR_at_0_1FAR
+mixed/known_unknown_threshold
+```
+
+Diagnostics:
+
+```text
+validation/diagnostics_ran
+diagnostics/intra_similarity
+diagnostics/inter_similarity
+diagnostics/intra_inter_gap
+diagnostics/embedding_norm_mean
+diagnostics/embedding_norm_std
+diagnostics/embedding_norm_min
+diagnostics/embedding_norm_max
+diagnostics/alignment
+diagnostics/uniformity
+diagnostics/knn_top1
+diagnostics/knn_top5
+```
+
+Legacy aliases are kept for history and older callbacks: `val_mAP` maps to
+`known/mAP`, `val_top1` maps to `known/top1`, `val_top5` maps to `known/top5`,
+and `val_micro_f1` maps to `mixed/F1`.
 
 ## Common Commands
 
-Run metric tests:
+Run evaluation tests:
 
 ```bash
 pytest tests/evaluation
 ```
 
-Use metrics directly:
+Use the open-set evaluator directly:
 
 ```python
-from apexid.evaluation import compute_reid_metrics
+from apexid.evaluation import evaluate_all_validation_splits
 
-metrics = compute_reid_metrics(
-    embeddings,
-    labels,
-    ignore_index=None,
-    chunk_size=1024,
+metrics = evaluate_all_validation_splits(
+    gallery_embeddings,
+    gallery_labels,
+    known_embeddings,
+    known_labels,
+    unknown_embeddings,
+    unknown_labels,
+    mixed_embeddings,
+    mixed_labels,
+    mixed_cls_labels=mixed_cls_labels,
+    config=evaluation_cfg,
+    epoch_index=4,
 )
 ```
-
-## Contributor Notes
-
-- Return `nan` rather than misleading scores when a metric has no valid queries.
-- Keep metric names stable because training history, early stopping, and W&B
-  logging use those keys.
-- Add tests for edge cases such as single-sample inputs, ignored labels, and
-  identities without positive gallery matches.

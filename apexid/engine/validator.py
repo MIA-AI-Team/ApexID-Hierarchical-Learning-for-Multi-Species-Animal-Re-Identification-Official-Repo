@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from tqdm.auto import tqdm
 
-from apexid.evaluation import compute_reid_metrics
+from apexid.evaluation import compute_reid_metrics, evaluate_all_validation_splits
 
 
 def _format_metric(value):
@@ -141,6 +141,83 @@ def _compute_loss_and_logits(head, criterion, embeddings, labels):
     return criterion(head_output, labels), head_output
 
 
+def _loader_metadata(loader, num_samples):
+    """Return optional path/source metadata when the loader exposes dataset rows."""
+    dataset = getattr(loader, "dataset", None)
+    data_csv = getattr(dataset, "data_csv", None)
+    if data_csv is None or len(data_csv) != int(num_samples):
+        return {}
+
+    metadata = {}
+    for attr, key in (
+        (getattr(dataset, "path_column", "path"), "paths"),
+        ("species", "species"),
+        ("dataset", "dataset"),
+    ):
+        if attr in data_csv.columns:
+            metadata[key] = data_csv[attr].astype(str).to_numpy(copy=True)
+    return metadata
+
+
+def extract_embeddings(backbone, dataloader, device=None, progress=True, desc="Embeddings"):
+    """Extract CPU embeddings, classifier labels, metric labels, and metadata.
+
+    Args:
+        backbone (torch.nn.Module): Embedding model.
+        dataloader (torch.utils.data.DataLoader): Loader yielding batches shaped
+            like ``(images, cls_labels, metric_labels)``.
+        device (str or torch.device, optional): Device used for model inference.
+        progress (bool): Whether to show a tqdm progress bar.
+        desc (str): Progress-bar description.
+
+    Returns:
+        dict: ``embeddings``, ``cls_labels``, ``metric_labels``, and optional
+        ``paths``, ``species``, or ``dataset`` arrays when the loader exposes
+        dataset metadata in the same order.
+    """
+    device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    backbone.eval()
+
+    all_embeddings = []
+    all_cls_labels = []
+    all_metric_labels = []
+    total_samples = 0
+
+    iterator = tqdm(
+        dataloader,
+        desc=desc,
+        leave=False,
+        dynamic_ncols=True,
+        disable=not progress,
+    )
+    with torch.no_grad():
+        for batch in iterator:
+            images, cls_labels, metric_labels = _unpack_batch(batch)
+            images = images.to(device, non_blocking=True)
+            embeddings = backbone(images)
+            all_embeddings.append(embeddings.detach().cpu())
+            all_cls_labels.append(cls_labels.detach().cpu())
+            all_metric_labels.append(metric_labels.detach().cpu())
+            total_samples += int(images.size(0))
+
+    result = {
+        "embeddings": torch.cat(all_embeddings, dim=0) if all_embeddings else torch.empty(0),
+        "cls_labels": (
+            torch.cat(all_cls_labels, dim=0)
+            if all_cls_labels
+            else torch.empty(0, dtype=torch.long)
+        ),
+        "metric_labels": (
+            torch.cat(all_metric_labels, dim=0)
+            if all_metric_labels
+            else torch.empty(0, dtype=torch.long)
+        ),
+        "num_samples": int(total_samples),
+    }
+    result.update(_loader_metadata(dataloader, total_samples))
+    return result
+
+
 class Validator:
     """Validation loop for ApexID re-identification experiments."""
 
@@ -193,6 +270,158 @@ class Validator:
         if self.classification_ignore_index is None:
             return torch.ones_like(cls_labels, dtype=torch.bool)
         return cls_labels != self.classification_ignore_index
+
+    def _classification_metrics_from_embeddings(self, embeddings, cls_labels):
+        """Compute validation loss/accuracy for known classifier labels only."""
+        if not torch.is_tensor(embeddings):
+            embeddings = torch.as_tensor(embeddings)
+        if not torch.is_tensor(cls_labels):
+            cls_labels = torch.as_tensor(cls_labels)
+
+        cls_labels = cls_labels.long()
+        known_mask = self._known_mask(cls_labels)
+        if embeddings.numel() == 0 or not known_mask.any():
+            return {
+                "loss": float("nan"),
+                "acc": float("nan"),
+                "num_known": 0,
+            }
+
+        known_embeddings = embeddings[known_mask]
+        known_labels = cls_labels[known_mask]
+        total_loss = 0.0
+        total_correct = 0
+        total_known = int(known_labels.numel())
+        chunk_size = max(1, int(self.metric_chunk_size))
+
+        self.head.eval()
+        with torch.no_grad():
+            for start in range(0, total_known, chunk_size):
+                stop = min(start + chunk_size, total_known)
+                emb_chunk = known_embeddings[start:stop].to(self.device, non_blocking=True)
+                label_chunk = known_labels[start:stop].to(self.device, non_blocking=True)
+                loss, logits = _compute_loss_and_logits(
+                    self.head,
+                    self.loss,
+                    emb_chunk,
+                    label_chunk,
+                )
+                batch_size = int(label_chunk.numel())
+                total_loss += float(loss.item()) * batch_size
+                total_correct += int((torch.argmax(logits, dim=1) == label_chunk).sum().item())
+
+        return {
+            "loss": float(total_loss / total_known),
+            "acc": float(total_correct / total_known),
+            "num_known": int(total_known),
+        }
+
+    def validate_open_set(
+        self,
+        gallery_loader,
+        known_loader,
+        unknown_loader,
+        mixed_loader,
+        evaluation_config=None,
+        epoch=None,
+        epochs=None,
+        return_embeddings=False,
+    ):
+        """Run three-split open-set validation using train embeddings as gallery.
+
+        Args:
+            gallery_loader: Evaluation-transform DataLoader over ``train.csv``.
+            known_loader: DataLoader over ``val_known.csv``.
+            unknown_loader: DataLoader over ``val_unknown.csv``.
+            mixed_loader: DataLoader over mixed ``val.csv``.
+            evaluation_config (dict, optional): Evaluation metric configuration.
+            epoch (int, optional): Zero-based epoch index.
+            epochs (int, optional): Total epoch count.
+            return_embeddings (bool): Whether to include mixed embeddings and
+                metric labels for downstream visualization.
+
+        Returns:
+            dict: Flat metric dictionary containing open-set W&B metric names and
+            legacy ``val_*`` aliases used by existing history/checkpoint code.
+        """
+        self.backbone.eval()
+        self.head.eval()
+
+        if epoch is not None and epochs is not None:
+            suffix = f" [{epoch + 1}/{epochs}]"
+        else:
+            suffix = ""
+
+        gallery = extract_embeddings(
+            self.backbone,
+            gallery_loader,
+            device=self.device,
+            progress=self.progress,
+            desc=f"Val gallery{suffix}",
+        )
+        known = extract_embeddings(
+            self.backbone,
+            known_loader,
+            device=self.device,
+            progress=self.progress,
+            desc=f"Val known{suffix}",
+        )
+        unknown = extract_embeddings(
+            self.backbone,
+            unknown_loader,
+            device=self.device,
+            progress=self.progress,
+            desc=f"Val unknown{suffix}",
+        )
+        mixed = extract_embeddings(
+            self.backbone,
+            mixed_loader,
+            device=self.device,
+            progress=self.progress,
+            desc=f"Val mixed{suffix}",
+        )
+
+        known_classification = self._classification_metrics_from_embeddings(
+            known["embeddings"],
+            known["cls_labels"],
+        )
+        metric_config = dict(evaluation_config or {})
+        metric_config.setdefault("diagnostics_every_n_epochs", 5)
+        metric_config.setdefault("diagnostics", {"enabled": True, "max_pairs": 100000})
+
+        open_set_metrics = evaluate_all_validation_splits(
+            gallery["embeddings"],
+            gallery["metric_labels"],
+            known["embeddings"],
+            known["metric_labels"],
+            unknown["embeddings"],
+            unknown["metric_labels"],
+            mixed["embeddings"],
+            mixed["metric_labels"],
+            known_cls_labels=known["cls_labels"],
+            unknown_cls_labels=unknown["cls_labels"],
+            mixed_cls_labels=mixed["cls_labels"],
+            config=metric_config,
+            epoch_index=epoch,
+            classification_ignore_index=self.classification_ignore_index,
+            chunk_size=self.metric_chunk_size,
+        )
+
+        result = {
+            "loss": float(known_classification["loss"]),
+            "acc": float(known_classification["acc"]),
+            "top1": float(open_set_metrics.get("known/top1", np.nan)),
+            "top5": float(open_set_metrics.get("known/top5", np.nan)),
+            "mAP": float(open_set_metrics.get("known/mAP", np.nan)),
+            "micro_f1": float(open_set_metrics.get("mixed/F1", np.nan)),
+            "num_known": int(known_classification["num_known"]),
+            "num_samples": int(mixed["num_samples"]),
+        }
+        result.update(open_set_metrics)
+        if return_embeddings:
+            result["embeddings"] = mixed["embeddings"]
+            result["metric_labels"] = mixed["metric_labels"]
+        return result
 
     def validate(self, val_loader, epoch=None, epochs=None, return_embeddings=False):
         """Run validation and compute canonical re-ID metrics.
@@ -308,6 +537,7 @@ class Validator:
 
 __all__ = [
     "Validator",
+    "extract_embeddings",
     "_compute_loss_and_logits",
     "_format_metric",
     "_head_num_classes",

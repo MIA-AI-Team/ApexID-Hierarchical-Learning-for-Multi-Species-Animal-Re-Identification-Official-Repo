@@ -226,7 +226,11 @@ def run_debug(config_path, max_examples=20, skip_batch=False):
     print("\n[constructed datasets]")
     print(f"num_classes: {num_classes}")
     print(f"train dataset rows: {len(train_dataset)}")
-    print(f"val dataset rows: {len(val_dataset)}")
+    if isinstance(val_dataset, dict):
+        for split_name, split_dataset in val_dataset.items():
+            print(f"{split_name} dataset rows: {len(split_dataset)}")
+    else:
+        print(f"val dataset rows: {len(val_dataset)}")
     print(f"PK sampler identities available: {len(train_dataset.identity_to_indices)}")
     _batch_report(cfg, train_dataset, val_dataset, num_classes, max_examples=max_examples)
 

@@ -39,13 +39,19 @@ def _make_csv(path, image_dir, identities):
 def _base_cfg(tmp_path):
     image_dir = tmp_path / "images"
     train_csv = tmp_path / "train.csv"
+    val_known_csv = tmp_path / "val_known.csv"
+    val_unknown_csv = tmp_path / "val_unknown.csv"
     val_csv = tmp_path / "val.csv"
     _make_csv(train_csv, image_dir, ["a", "a", "b", "b"])
-    _make_csv(val_csv, image_dir, ["a", "b", "c"])
+    _make_csv(val_known_csv, image_dir, ["a", "b"])
+    _make_csv(val_unknown_csv, image_dir, ["c", "c"])
+    _make_csv(val_csv, image_dir, ["a", "b", "c", "c"])
     return {
         "seed": 42,
         "data": {
             "train_path": str(train_csv),
+            "val_known_path": str(val_known_csv),
+            "val_unknown_path": str(val_unknown_csv),
             "val_path": str(val_csv),
             "root_dir": str(image_dir),
             "image_size": [32, 32],
@@ -86,6 +92,10 @@ def _base_cfg(tmp_path):
             "metric_ignore_index": None,
         },
         "validation": {"every_n_epochs": 1, "metrics": ["top1", "top5", "mAP", "micro_f1"]},
+        "evaluation": {
+            "diagnostics_every_n_epochs": 5,
+            "diagnostics": {"enabled": True, "max_pairs": 100},
+        },
         "checkpoint": {
             "output_dir": str(tmp_path / "checkpoints"),
             "every_n_epochs": 1,
@@ -95,7 +105,7 @@ def _base_cfg(tmp_path):
         },
         "early_stopping": {
             "enabled": False,
-            "monitor": "val_mAP",
+            "monitor": "mixed/NormAcc",
             "mode": "max",
             "patience": 2,
             "min_delta": 0.0,
@@ -137,23 +147,29 @@ def test_train_script_builds_datasets_and_loaders_from_train_val_paths(tmp_path)
     train_script = _load_train_script()
     cfg = _base_cfg(tmp_path)
 
-    train_dataset, val_dataset, num_classes = train_script.build_datasets(cfg)
-    train_loader, val_loader = train_script.build_dataloaders(
+    train_dataset, validation_datasets, num_classes = train_script.build_datasets(cfg)
+    train_loader, validation_loaders = train_script.build_dataloaders(
         cfg,
         train_dataset,
-        val_dataset,
+        validation_datasets,
         torch.device("cpu"),
     )
 
     assert num_classes == 2
     assert len(train_dataset) == 4
-    assert len(val_dataset) == 3
+    assert len(validation_datasets["gallery"]) == 4
+    assert len(validation_datasets["known"]) == 2
+    assert len(validation_datasets["unknown"]) == 2
+    assert len(validation_datasets["mixed"]) == 4
     assert train_dataset.label_to_idx == {"a": 0, "b": 1}
-    assert set(val_dataset.metrics_label_map.keys()) == {"a", "b", "c"}
+    assert set(validation_datasets["mixed"].metrics_label_map.keys()) == {"a", "b", "c"}
     train_batch = next(iter(train_loader))
-    val_batch = next(iter(val_loader))
+    val_batch = next(iter(validation_loaders["mixed"]))
+    unknown_batch = next(iter(validation_loaders["unknown"]))
     assert tuple(train_batch[0].shape[1:]) == (3, 32, 32)
     assert tuple(val_batch[0].shape[1:]) == (3, 32, 32)
+    assert set(validation_loaders) == {"gallery", "known", "unknown", "mixed"}
+    assert unknown_batch[1].tolist() == [-100, -100]
 
 
 def test_train_script_builds_optimizer_and_scheduler(tmp_path):

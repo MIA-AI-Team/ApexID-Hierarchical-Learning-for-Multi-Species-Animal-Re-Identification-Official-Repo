@@ -7,8 +7,12 @@ device:
   gpu_index: 0
 data:
   train_path: ApexID_Dataset/open_set_splits/train.csv
+  val_known_path: ApexID_Dataset/open_set_splits/val_known.csv
+  val_unknown_path: ApexID_Dataset/open_set_splits/val_unknown.csv
   val_path: ApexID_Dataset/open_set_splits/val.csv
   train_csv: null
+  val_known_csv: null
+  val_unknown_csv: null
   val_csv: null
   root_dir: ApexID_Dataset
   image_size:
@@ -89,6 +93,35 @@ validation:
   - top5
   - mAP
   - micro_f1
+evaluation:
+  compute_known: true
+  compute_unknown: true
+  compute_rejection: true
+  compute_mixed: true
+  diagnostics_every_n_epochs: 5
+  diagnostics:
+    enabled: true
+    max_pairs: 100000
+  cmc_ranks:
+  - 1
+  - 5
+  - 10
+  - 20
+  - 50
+  top_k:
+  - 1
+  - 5
+  - 10
+  known_unknown_threshold: null
+  clustering:
+    method: threshold_connected_components
+    threshold: 0.5
+  rejection:
+    fpr95_target_tpr: 0.95
+  dir:
+    far_levels:
+    - 0.01
+    - 0.001
 embedding_plot:
   enabled: false
   split: val
@@ -112,7 +145,7 @@ checkpoint:
   resume_path: null
 early_stopping:
   enabled: true
-  monitor: val_mAP
+  monitor: mixed/NormAcc
   mode: max
   patience: 10
   min_delta: 0.0

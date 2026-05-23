@@ -1,4 +1,5 @@
 import math
+from collections.abc import Mapping
 
 import torch
 from torch import nn
@@ -17,6 +18,73 @@ from apexid.utils.seed import DEFAULT_SEED, seed_everything
 
 
 seed_everything(DEFAULT_SEED)
+
+
+OPEN_SET_SUMMARY_ORDER = (
+    "known/mAP",
+    "known/top1",
+    "known/top5",
+    "known/top10",
+    "known/BAKS",
+    "known/cmc_rank1",
+    "known/cmc_rank5",
+    "known/cmc_rank10",
+    "known/cmc_rank20",
+    "known/cmc_rank50",
+    "unknown/ARI",
+    "unknown/AMI",
+    "unknown/v_measure",
+    "unknown/BAUS",
+    "rejection/AUROC",
+    "rejection/FAR",
+    "rejection/FPR95",
+    "rejection/threshold_at_95_tpr",
+    "rejection/known_tpr_at_threshold",
+    "rejection/unknown_recall_at_threshold",
+    "mixed/ARI",
+    "mixed/F1",
+    "mixed/NormAcc",
+    "mixed/BAKS",
+    "mixed/BAUS",
+    "mixed/OSCR_AUC",
+    "mixed/DIR_at_1FAR",
+    "mixed/DIR_at_0_1FAR",
+    "mixed/known_unknown_threshold",
+    "validation/diagnostics_ran",
+    "diagnostics/intra_similarity",
+    "diagnostics/inter_similarity",
+    "diagnostics/intra_inter_gap",
+    "diagnostics/embedding_norm_mean",
+    "diagnostics/embedding_norm_std",
+    "diagnostics/embedding_norm_min",
+    "diagnostics/embedding_norm_max",
+    "diagnostics/alignment",
+    "diagnostics/uniformity",
+    "diagnostics/knn_top1",
+    "diagnostics/knn_top5",
+)
+
+OPEN_SET_SUMMARY_GROUP_ORDER = (
+    "known",
+    "unknown",
+    "rejection",
+    "mixed",
+    "validation",
+    "diagnostics",
+)
+
+INTERNAL_VALIDATION_KEYS = {
+    "embeddings",
+    "metric_labels",
+    "loss",
+    "acc",
+    "top1",
+    "top5",
+    "mAP",
+    "micro_f1",
+    "num_known",
+    "num_samples",
+}
 
 
 class Trainer:
@@ -44,7 +112,7 @@ class Trainer:
         checkpoint_filename="last_checkpoint.pt",
         checkpoint_delete_previous=True,
         early_stopping_enabled=True,
-        early_stopping_monitor="val_mAP",
+        early_stopping_monitor="mixed/NormAcc",
         early_stopping_mode="max",
         early_stopping_patience=7,
         early_stopping_delta=0.0,
@@ -57,6 +125,7 @@ class Trainer:
         metrics_base_seed=DEFAULT_SEED,
         experiment_logger=None,
         embedding_plotter=None,
+        evaluation_config=None,
     ):
         """Initialize the training helper.
 
@@ -95,7 +164,7 @@ class Trainer:
                 checkpoint file.
             early_stopping_enabled (bool): Whether to monitor validation metrics.
             early_stopping_monitor (str): Metric key to monitor. Defaults to
-                ``val_mAP``.
+                ``mixed/NormAcc``.
             early_stopping_mode (str): ``max`` for mAP/top-k metrics, ``min`` for
                 losses.
             early_stopping_patience (int): Non-improving validations tolerated.
@@ -113,6 +182,8 @@ class Trainer:
                 epoch metrics and selected artifacts.
             embedding_plotter (optional): Object with ``plot_epoch`` and
                 ``save_best`` methods used to visualize validation embeddings.
+            evaluation_config (dict, optional): Open-set evaluation settings
+                passed to validators that support three-split validation.
 
         Returns:
             None
@@ -135,6 +206,7 @@ class Trainer:
         self.metrics_base_seed = int(metrics_base_seed)
         self.experiment_logger = experiment_logger or NullLogger()
         self.embedding_plotter = embedding_plotter
+        self.evaluation_config = dict(evaluation_config or {})
 
         if self.validation_every_n_epochs <= 0:
             raise ValueError("validation_every_n_epochs must be > 0.")
@@ -187,14 +259,51 @@ class Trainer:
         """Return an empty training history dictionary."""
         return {
             "train_loss": [],
-            "train_acc": [],
             "val_loss": [],
-            "val_acc": [],
             "val_top1": [],
             "val_top5": [],
             "val_mAP": [],
             "val_micro_f1": [],
         }
+
+    @staticmethod
+    def _is_scalar_metric(value):
+        """Return whether a metric value is a scalar suitable for logs/prints."""
+        if torch.is_tensor(value):
+            return value.numel() == 1
+        return isinstance(value, (int, float, bool))
+
+    @classmethod
+    def _ordered_open_set_metric_keys(cls, metrics):
+        """Return slash-named open-set metrics in a stable display order."""
+        ordered = [key for key in OPEN_SET_SUMMARY_ORDER if key in metrics]
+        extras = sorted(
+            key
+            for key, value in metrics.items()
+            if key not in ordered
+            and key not in INTERNAL_VALIDATION_KEYS
+            and "/" in str(key)
+            and cls._is_scalar_metric(value)
+        )
+        return ordered + extras
+
+    @classmethod
+    def _grouped_open_set_metric_keys(cls, metrics):
+        """Return ordered slash-named metrics grouped by their namespace."""
+        grouped = {name: [] for name in OPEN_SET_SUMMARY_GROUP_ORDER}
+        for key in cls._ordered_open_set_metric_keys(metrics):
+            namespace = str(key).split("/", 1)[0]
+            grouped.setdefault(namespace, []).append(key)
+        return [(name, keys) for name, keys in grouped.items() if keys]
+
+    @staticmethod
+    def _summary_metric_name(key, group_name):
+        """Return a compact display name for a grouped metric key."""
+        prefix = f"{group_name}/"
+        key = str(key)
+        if key.startswith(prefix):
+            return key[len(prefix):]
+        return key
 
     def _known_mask(self, labels):
         """Return training samples that are valid known identities."""
@@ -219,29 +328,28 @@ class Trainer:
                 set_epoch(int(epoch))
 
     def _print_epoch_summary(self, epoch, epochs, train_metrics, val_metrics):
-        """Print a stable, one-line epoch summary when verbose output is enabled."""
+        """Print a stable grouped epoch summary when verbose output is enabled."""
         if not self.verbose:
             return
 
-        parts = [
+        header_parts = [
             f"Epoch {int(epoch) + 1}/{int(epochs)}",
             f"train_loss={_format_metric(train_metrics['loss'])}",
-            f"train_acc={_format_metric(train_metrics['acc'])}",
         ]
         if val_metrics is not None:
-            parts.extend(
-                [
-                    f"val_loss={_format_metric(val_metrics['loss'])}",
-                    f"val_acc={_format_metric(val_metrics['acc'])}",
-                    f"top1={_format_metric(val_metrics['top1'])}",
-                    f"top5={_format_metric(val_metrics['top5'])}",
-                    f"mAP={_format_metric(val_metrics['mAP'])}",
-                    f"micro_f1={_format_metric(val_metrics['micro_f1'])}",
-                ]
-            )
-        parts.append(f"lr={self.optimizer.param_groups[0]['lr']:.2e}")
+            header_parts.append(f"val_loss={_format_metric(val_metrics['loss'])}")
+        header_parts.append(f"lr={self.optimizer.param_groups[0]['lr']:.2e}")
 
-        message = " | ".join(parts)
+        lines = [" | ".join(header_parts)]
+        if val_metrics is not None:
+            for group_name, keys in self._grouped_open_set_metric_keys(val_metrics):
+                metric_parts = [
+                    f"{self._summary_metric_name(key, group_name)}={_format_metric(val_metrics[key])}"
+                    for key in keys
+                ]
+                lines.append(f"  {group_name}: " + " | ".join(metric_parts))
+
+        message = "\n".join(lines)
         if self.progress:
             tqdm.write(message)
         else:
@@ -257,13 +365,12 @@ class Trainer:
             epochs (int): Total number of epochs.
 
         Returns:
-            dict: Training metrics with keys ``loss`` and ``acc``.
+            dict: Training metrics with key ``loss``.
         """
         self.backbone.train()
         self.head.train()
 
         total_loss = 0.0
-        total_correct = 0
         total_samples = 0
 
         iterator = tqdm(
@@ -300,23 +407,18 @@ class Trainer:
             batch_size = int(images.size(0))
             total_loss += float(loss.item()) * batch_size
             total_samples += batch_size
-            preds = torch.argmax(logits, dim=1)
-            total_correct += int((preds == labels).sum().item())
 
             avg_loss = total_loss / max(total_samples, 1)
-            avg_acc = total_correct / max(total_samples, 1)
             lr = self.optimizer.param_groups[0]["lr"]
             iterator.set_postfix(
                 {
                     "loss": _format_metric(avg_loss),
-                    "acc": _format_metric(avg_acc),
                     "lr": f"{lr:.2e}",
                 }
             )
 
         return {
             "loss": total_loss / max(total_samples, 1),
-            "acc": total_correct / max(total_samples, 1),
         }
 
     def _step_scheduler(self, epoch_metrics):
@@ -335,43 +437,107 @@ class Trainer:
 
     def _append_history(self, history, train_metrics, val_metrics):
         """Append one epoch of train/validation metrics to history."""
+        previous_len = len(history.get("train_loss", []))
         history["train_loss"].append(float(train_metrics["loss"]))
-        history["train_acc"].append(float(train_metrics["acc"]))
+
+        values = {}
         if val_metrics is None:
-            history["val_loss"].append(float("nan"))
-            history["val_acc"].append(float("nan"))
-            history["val_top1"].append(float("nan"))
-            history["val_top5"].append(float("nan"))
-            history["val_mAP"].append(float("nan"))
-            history["val_micro_f1"].append(float("nan"))
-            return
-
-        history["val_loss"].append(float(val_metrics["loss"]))
-        history["val_acc"].append(float(val_metrics["acc"]))
-        history["val_top1"].append(float(val_metrics["top1"]))
-        history["val_top5"].append(float(val_metrics["top5"]))
-        history["val_mAP"].append(float(val_metrics["mAP"]))
-        history["val_micro_f1"].append(float(val_metrics["micro_f1"]))
-
-    @staticmethod
-    def _prefixed_epoch_metrics(train_metrics, val_metrics):
-        """Build a flat metric dictionary for checkpointing and early stopping."""
-        metrics = {
-            "train_loss": float(train_metrics["loss"]),
-            "train_acc": float(train_metrics["acc"]),
-        }
-        if val_metrics is not None:
-            metrics.update(
+            values.update(
+                {
+                    "val_loss": float("nan"),
+                    "val_top1": float("nan"),
+                    "val_top5": float("nan"),
+                    "val_mAP": float("nan"),
+                    "val_micro_f1": float("nan"),
+                }
+            )
+        else:
+            values.update(
                 {
                     "val_loss": float(val_metrics["loss"]),
-                    "val_acc": float(val_metrics["acc"]),
                     "val_top1": float(val_metrics["top1"]),
                     "val_top5": float(val_metrics["top5"]),
                     "val_mAP": float(val_metrics["mAP"]),
                     "val_micro_f1": float(val_metrics["micro_f1"]),
                 }
             )
+            for key, value in val_metrics.items():
+                if key in INTERNAL_VALIDATION_KEYS:
+                    continue
+                if torch.is_tensor(value):
+                    if value.numel() != 1:
+                        continue
+                    value = value.detach().cpu().item()
+                if isinstance(value, (int, float, bool)):
+                    values[str(key)] = float(value)
+
+        for key in values:
+            if key not in history:
+                history[key] = [float("nan")] * previous_len
+        for key in list(history.keys()):
+            if key == "train_loss":
+                continue
+            history[key].append(float(values.get(key, float("nan"))))
+
+    @staticmethod
+    def _prefixed_epoch_metrics(train_metrics, val_metrics):
+        """Build a flat metric dictionary for checkpointing and early stopping."""
+        metrics = {
+            "train_loss": float(train_metrics["loss"]),
+        }
+        if val_metrics is not None:
+            metrics.update(
+                {
+                    "val_loss": float(val_metrics["loss"]),
+                    "val_top1": float(val_metrics["top1"]),
+                    "val_top5": float(val_metrics["top5"]),
+                    "val_mAP": float(val_metrics["mAP"]),
+                    "val_micro_f1": float(val_metrics["micro_f1"]),
+                }
+            )
+            for key, value in val_metrics.items():
+                if key in INTERNAL_VALIDATION_KEYS:
+                    continue
+                if torch.is_tensor(value):
+                    if value.numel() != 1:
+                        continue
+                    value = value.detach().cpu().item()
+                if isinstance(value, (int, float, bool)):
+                    metrics[str(key)] = float(value)
         return metrics
+
+    @staticmethod
+    def _is_open_set_loader_bundle(val_loader):
+        """Return whether ``val_loader`` is the three-split open-set bundle."""
+        if not isinstance(val_loader, Mapping):
+            return False
+        required = {"gallery", "known", "unknown", "mixed"}
+        return required.issubset(set(val_loader.keys()))
+
+    def _run_validation(self, val_loader, epoch, epochs, return_embeddings=False):
+        """Dispatch to the compatible single-loader or open-set validator path."""
+        if self._is_open_set_loader_bundle(val_loader):
+            validate_open_set = getattr(self.validator, "validate_open_set", None)
+            if validate_open_set is None:
+                raise ValueError("Open-set validation loaders require a validator with validate_open_set(...).")
+            return validate_open_set(
+                gallery_loader=val_loader["gallery"],
+                known_loader=val_loader["known"],
+                unknown_loader=val_loader["unknown"],
+                mixed_loader=val_loader["mixed"],
+                evaluation_config=self.evaluation_config,
+                epoch=epoch,
+                epochs=epochs,
+                return_embeddings=return_embeddings,
+            )
+        if return_embeddings:
+            return self.validator.validate(
+                val_loader,
+                epoch=epoch,
+                epochs=epochs,
+                return_embeddings=True,
+            )
+        return self.validator.validate(val_loader, epoch=epoch, epochs=epochs)
 
     def _epoch_log_metrics(self, epoch, epochs, epoch_metrics, val_metrics, early_stopping_improved=False):
         """Build the metric payload sent to experiment loggers."""
@@ -453,15 +619,13 @@ class Trainer:
                 train_metrics = self.train_one_epoch(train_loader, epoch, epochs)
                 run_validation = ((epoch + 1) % self.validation_every_n_epochs == 0) or (epoch == epochs - 1)
                 return_embeddings = bool(self.embedding_plotter) and run_validation
-                if run_validation and return_embeddings:
-                    val_metrics = self.validator.validate(
+                if run_validation:
+                    val_metrics = self._run_validation(
                         val_loader,
                         epoch=epoch,
                         epochs=epochs,
-                        return_embeddings=True,
+                        return_embeddings=return_embeddings,
                     )
-                elif run_validation:
-                    val_metrics = self.validator.validate(val_loader, epoch=epoch, epochs=epochs)
                 else:
                     val_metrics = None
                 embedding_plot_artifacts = None

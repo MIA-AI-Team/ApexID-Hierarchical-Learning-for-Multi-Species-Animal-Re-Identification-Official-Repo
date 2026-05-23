@@ -85,6 +85,62 @@ class EmbeddingValidator:
         return result
 
 
+class OpenSetValidator:
+    def __init__(self):
+        self.calls = []
+
+    def validate(self, *args, **kwargs):
+        raise AssertionError("Expected open-set validation path.")
+
+    def validate_open_set(
+        self,
+        gallery_loader,
+        known_loader,
+        unknown_loader,
+        mixed_loader,
+        evaluation_config=None,
+        epoch=None,
+        epochs=None,
+        return_embeddings=False,
+    ):
+        self.calls.append(
+            {
+                "gallery": gallery_loader,
+                "known": known_loader,
+                "unknown": unknown_loader,
+                "mixed": mixed_loader,
+                "evaluation_config": dict(evaluation_config or {}),
+                "epoch": epoch,
+                "return_embeddings": bool(return_embeddings),
+            }
+        )
+        result = {
+            "loss": 0.25,
+            "acc": 1.0,
+            "top1": 1.0,
+            "top5": 1.0,
+            "mAP": 0.9,
+            "micro_f1": 0.8,
+            "num_known": 2,
+            "num_samples": 4,
+            "known/mAP": 0.9,
+            "known/top1": 1.0,
+            "known/top5": 1.0,
+            "known/top10": 1.0,
+            "unknown/ARI": 0.4,
+            "mixed/F1": 0.8,
+            "mixed/NormAcc": 0.7 + (0.01 * int(epoch or 0)),
+            "rejection/AUROC": 0.6,
+            "validation/diagnostics_ran": 1 if int(epoch or 0) == 4 else 0,
+        }
+        if int(epoch or 0) == 4:
+            result["diagnostics/embedding_norm_mean"] = 1.0
+        if return_embeddings:
+            result["embeddings"] = torch.randn(4, 2)
+            result["metric_labels"] = torch.tensor([0, 1, 2, 3])
+        return result
+
+
 class RecordingEmbeddingPlotter:
     def __init__(self, output_dir):
         self.output_dir = Path(output_dir)
@@ -209,9 +265,7 @@ def test_trainer_uses_validator_history_checkpoint_and_val_map_early_stopping(tm
     assert trainer.early_stopping.best_metric == history["val_mAP"][-1]
     assert set(history.keys()) == {
         "train_loss",
-        "train_acc",
         "val_loss",
-        "val_acc",
         "val_top1",
         "val_top5",
         "val_mAP",
@@ -263,9 +317,7 @@ def test_trainer_logs_epoch_metrics_and_best_artifacts(tmp_path):
     assert metrics["epochs"] == 1
     assert metrics["lr"] == 0.01
     assert metrics["train_loss"] > 0.0
-    assert metrics["train_acc"] >= 0.0
     assert metrics["val_loss"] == 1.0
-    assert metrics["val_acc"] == 0.5
     assert metrics["val_top1"] == 0.25
     assert metrics["val_top5"] == 0.75
     assert metrics["val_mAP"] == 0.5
@@ -331,6 +383,95 @@ def test_trainer_does_not_request_embeddings_when_plotting_disabled(tmp_path):
     trainer.train(_loader(), _loader(), epochs=1)
 
     assert validator.return_embeddings_flags == [False]
+
+
+def test_trainer_dispatches_open_set_loaders_and_logs_slash_metrics(tmp_path):
+    torch.manual_seed(42)
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.01)
+    validator = OpenSetValidator()
+    logger = RecordingLogger()
+    val_loaders = {
+        "gallery": object(),
+        "known": object(),
+        "unknown": object(),
+        "mixed": object(),
+    }
+
+    trainer = Trainer(
+        backbone,
+        head,
+        loss=nn.CrossEntropyLoss(),
+        optimizer=optimizer,
+        validator=validator,
+        device="cpu",
+        progress=False,
+        verbose=False,
+        checkpoint_dir=tmp_path,
+        early_stopping_enabled=True,
+        early_stopping_dir=tmp_path,
+        experiment_logger=logger,
+        evaluation_config={"diagnostics_every_n_epochs": 5},
+    )
+
+    trainer.train(_loader(), val_loaders, epochs=5)
+
+    assert trainer.early_stopping.monitor == "mixed/NormAcc"
+    assert len(validator.calls) == 5
+    assert validator.calls[0]["evaluation_config"] == {"diagnostics_every_n_epochs": 5}
+    assert len(logger.metrics) == 5
+    first_metrics, first_step = logger.metrics[0]
+    last_metrics, last_step = logger.metrics[-1]
+    assert first_step == 1
+    assert last_step == 5
+    assert "train_acc" not in first_metrics
+    assert "val_acc" not in first_metrics
+    assert first_metrics["mixed/NormAcc"] == 0.7
+    assert first_metrics["validation/diagnostics_ran"] == 0
+    assert "diagnostics/embedding_norm_mean" not in first_metrics
+    assert last_metrics["mixed/NormAcc"] == 0.74
+    assert last_metrics["validation/diagnostics_ran"] == 1
+    assert last_metrics["diagnostics/embedding_norm_mean"] == 1.0
+    assert last_metrics["early_stopping_best_metric"] == 0.74
+
+
+def test_trainer_prints_open_set_metrics_without_classifier_accuracy(tmp_path, capsys):
+    torch.manual_seed(42)
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.01)
+    val_loaders = {
+        "gallery": object(),
+        "known": object(),
+        "unknown": object(),
+        "mixed": object(),
+    }
+
+    trainer = Trainer(
+        backbone,
+        head,
+        loss=nn.CrossEntropyLoss(),
+        optimizer=optimizer,
+        validator=OpenSetValidator(),
+        device="cpu",
+        progress=False,
+        verbose=True,
+        checkpoint_dir=tmp_path,
+        early_stopping_enabled=False,
+    )
+
+    trainer.train(_loader(), val_loaders, epochs=1)
+
+    captured = capsys.readouterr()
+    assert "train_acc=" not in captured.out
+    assert "val_acc=" not in captured.out
+    assert "  known: mAP=0.9000" in captured.out
+    assert "top10=1.0000" in captured.out
+    assert "  unknown: ARI=0.4000" in captured.out
+    assert "  mixed: F1=0.8000 | NormAcc=0.7000" in captured.out
+    assert "  rejection: AUROC=0.6000" in captured.out
+    assert "  validation: diagnostics_ran=0.0000" in captured.out
 
 
 def test_trainer_steps_cyclic_lr_once_per_optimizer_update(tmp_path):
@@ -415,7 +556,7 @@ def test_trainer_trains_one_epoch_with_sphereface2_internal_loss(tmp_path):
 
     assert metrics["loss"] > 0.0
     assert torch.isfinite(torch.tensor(metrics["loss"]))
-    assert 0.0 <= metrics["acc"] <= 1.0
+    assert "acc" not in metrics
 
 
 def test_trainer_prints_stable_epoch_summaries(tmp_path, capsys):
@@ -428,7 +569,8 @@ def test_trainer_prints_stable_epoch_summaries(tmp_path, capsys):
     assert "Epoch 2/2" in captured.out
     assert "train_loss=" in captured.out
     assert "val_loss=" in captured.out
-    assert "mAP=" in captured.out
+    assert "train_acc=" not in captured.out
+    assert "val_acc=" not in captured.out
     assert "lr=1.00e-02" in captured.out
 
 

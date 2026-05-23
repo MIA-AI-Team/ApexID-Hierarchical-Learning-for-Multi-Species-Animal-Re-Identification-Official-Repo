@@ -48,6 +48,8 @@ The default configuration expects these dataset paths:
 ```yaml
 data:
   train_path: ApexID_Dataset/open_set_splits/train.csv
+  val_known_path: ApexID_Dataset/open_set_splits/val_known.csv
+  val_unknown_path: ApexID_Dataset/open_set_splits/val_unknown.csv
   val_path: ApexID_Dataset/open_set_splits/val.csv
   root_dir: ApexID_Dataset
 ```
@@ -147,9 +149,11 @@ Tips:
 - `log_artifacts: best` uploads the best model files saved by early stopping,
   not every epoch checkpoint.
 
-The trainer logs epoch-level metrics such as `train_loss`, `train_acc`,
-`val_loss`, `val_acc`, `val_top1`, `val_top5`, `val_mAP`, `val_micro_f1`, `lr`,
-validation sample counts, and early-stopping state.
+The trainer logs epoch-level metrics such as `train_loss`, `val_loss`,
+`val_top1`, `val_top5`, `val_mAP`, `val_micro_f1`, `lr`,
+open-set metrics such as `known/mAP`, `unknown/ARI`, `rejection/AUROC`,
+`mixed/NormAcc`, diagnostics cadence state, validation sample counts, and
+early-stopping state.
 
 ## Test
 

@@ -6,6 +6,8 @@ import sys
 import warnings
 from pathlib import Path
 
+import pandas as pd
+
 
 def _suppress_library_warnings():
     """Silence noisy third-party warnings/logs for training runs."""
@@ -72,27 +74,70 @@ def _data_path(data_cfg, primary_key, legacy_key):
     return value
 
 
+def _optional_data_path(data_cfg, primary_key, legacy_key, fallback=None):
+    """Read an optional data path from preferred, legacy, or fallback config."""
+    value = data_cfg.get(primary_key)
+    if value is None:
+        value = data_cfg.get(legacy_key)
+    if value in {None, ""}:
+        return fallback
+    return value
+
+
+def _sibling_split_path(val_path, filename):
+    """Return a sibling split path when the mixed validation CSV is configured."""
+    if val_path in {None, ""}:
+        return None
+    return str(Path(val_path).with_name(filename))
+
+
+def _build_metrics_label_map(*paths):
+    """Build one metric label map across train and all validation CSVs."""
+    frames = [ApexID_Dataset._standardize_columns(path) for path in paths if path not in {None, ""}]
+    if not frames:
+        raise ValueError("At least one CSV path is required to build metric labels.")
+    return ApexID_Dataset.build_label_mapping(pd.concat(frames, ignore_index=True))
+
+
 def build_datasets(cfg):
-    """Build train/validation datasets from configured CSV files.
+    """Build train, gallery, and three validation datasets from configured CSV files.
 
     Args:
-        cfg (dict): Loaded experiment config. Requires ``data.train_path`` and
-            ``data.val_path`` or their legacy aliases ``train_csv`` and
-            ``val_csv``.
+        cfg (dict): Loaded experiment config. Requires ``data.train_path``,
+            ``data.val_known_path``, ``data.val_unknown_path``, and
+            ``data.val_path`` or their legacy aliases.
 
     Returns:
-        tuple: ``(train_dataset, val_dataset, num_classes)``.
+        tuple: ``(train_dataset, validation_datasets, num_classes)`` where
+        ``validation_datasets`` contains ``gallery``, ``known``, ``unknown``,
+        and ``mixed`` datasets.
     """
     data_cfg = _as_dict(cfg.get("data", {}))
     train_path = _data_path(data_cfg, "train_path", "train_csv")
     val_path = _data_path(data_cfg, "val_path", "val_csv")
+    val_known_path = _optional_data_path(
+        data_cfg,
+        "val_known_path",
+        "val_known_csv",
+        fallback=_sibling_split_path(val_path, "val_known.csv"),
+    )
+    val_unknown_path = _optional_data_path(
+        data_cfg,
+        "val_unknown_path",
+        "val_unknown_csv",
+        fallback=_sibling_split_path(val_path, "val_unknown.csv"),
+    )
+    if val_known_path in {None, ""}:
+        raise ValueError("Missing data.val_known_path. Set it to val_known.csv.")
+    if val_unknown_path in {None, ""}:
+        raise ValueError("Missing data.val_unknown_path. Set it to val_unknown.csv.")
     root_dir = data_cfg.get("root_dir")
 
     train_transforms = build_train_transforms(config=cfg)
     eval_transforms = build_eval_transforms(config=cfg)
 
     label_to_idx = ApexID_Dataset.build_label_mapping(train_path)
-    metrics_label_map = ApexID_Dataset.build_label_mapping_union(train_path, val_path)
+    metrics_label_map = _build_metrics_label_map(train_path, val_known_path, val_unknown_path, val_path)
     unknown_label = _as_dict(cfg.get("training", {})).get("classification_ignore_index", -100)
 
     train_dataset = ApexID_Dataset(
@@ -104,7 +149,34 @@ def build_datasets(cfg):
         unknown_label=unknown_label,
         metrics_label_map=metrics_label_map,
     )
-    val_dataset = ApexID_Dataset(
+    gallery_dataset = ApexID_Dataset(
+        train_path,
+        transform=eval_transforms,
+        label_to_idx=label_to_idx,
+        root_dir=root_dir,
+        allow_unknown_identity=False,
+        unknown_label=unknown_label,
+        metrics_label_map=metrics_label_map,
+    )
+    val_known_dataset = ApexID_Dataset(
+        val_known_path,
+        transform=eval_transforms,
+        label_to_idx=label_to_idx,
+        root_dir=root_dir,
+        allow_unknown_identity=True,
+        unknown_label=unknown_label,
+        metrics_label_map=metrics_label_map,
+    )
+    val_unknown_dataset = ApexID_Dataset(
+        val_unknown_path,
+        transform=eval_transforms,
+        label_to_idx=label_to_idx,
+        root_dir=root_dir,
+        allow_unknown_identity=True,
+        unknown_label=unknown_label,
+        metrics_label_map=metrics_label_map,
+    )
+    val_mixed_dataset = ApexID_Dataset(
         val_path,
         transform=eval_transforms,
         label_to_idx=label_to_idx,
@@ -113,20 +185,26 @@ def build_datasets(cfg):
         unknown_label=unknown_label,
         metrics_label_map=metrics_label_map,
     )
-    return train_dataset, val_dataset, len(label_to_idx)
+    validation_datasets = {
+        "gallery": gallery_dataset,
+        "known": val_known_dataset,
+        "unknown": val_unknown_dataset,
+        "mixed": val_mixed_dataset,
+    }
+    return train_dataset, validation_datasets, len(label_to_idx)
 
 
-def build_dataloaders(cfg, train_dataset, val_dataset, device):
-    """Build train and validation DataLoaders.
+def build_dataloaders(cfg, train_dataset, validation_datasets, device):
+    """Build train and three-split validation DataLoaders.
 
     Args:
         cfg (dict): Loaded experiment config.
         train_dataset (torch.utils.data.Dataset): Training dataset.
-        val_dataset (torch.utils.data.Dataset): Validation dataset.
+        validation_datasets (Mapping): Gallery/known/unknown/mixed datasets.
         device (torch.device): Selected training device.
 
     Returns:
-        tuple: ``(train_loader, val_loader)``.
+        tuple: ``(train_loader, validation_loaders)``.
     """
     seed = int(cfg.get("seed", DEFAULT_SEED) or DEFAULT_SEED)
     loader_cfg = _as_dict(cfg.get("dataloader", {}))
@@ -173,15 +251,17 @@ def build_dataloaders(cfg, train_dataset, val_dataset, device):
     else:
         raise ValueError("Unknown dataloader.sampler.name '{}'. Use 'pk' or 'none'.".format(sampler_name))
 
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=val_batch_size,
-        shuffle=False,
-        drop_last=False,
-        generator=make_torch_generator(seed),
-        **common_kwargs,
-    )
-    return train_loader, val_loader
+    validation_loaders = {}
+    for split_name, dataset in validation_datasets.items():
+        validation_loaders[split_name] = DataLoader(
+            dataset,
+            batch_size=val_batch_size,
+            shuffle=False,
+            drop_last=False,
+            generator=make_torch_generator(seed),
+            **common_kwargs,
+        )
+    return train_loader, validation_loaders
 
 
 def build_optimizer(cfg, model, head):
@@ -364,7 +444,7 @@ def build_trainer(
         checkpoint_filename=checkpoint_cfg.get("filename", "last_checkpoint.pt"),
         checkpoint_delete_previous=bool(checkpoint_cfg.get("delete_previous", True)),
         early_stopping_enabled=bool(early_cfg.get("enabled", True)),
-        early_stopping_monitor=early_cfg.get("monitor", "val_mAP"),
+        early_stopping_monitor=early_cfg.get("monitor", "mixed/NormAcc"),
         early_stopping_mode=early_cfg.get("mode", "max"),
         early_stopping_patience=int(early_cfg.get("patience", 7)),
         early_stopping_min_delta=float(early_cfg.get("min_delta", 0.0)),
@@ -375,6 +455,7 @@ def build_trainer(
         metrics_base_seed=int(cfg.get("seed", DEFAULT_SEED) or DEFAULT_SEED),
         experiment_logger=experiment_logger,
         embedding_plotter=embedding_plotter,
+        evaluation_config=_as_dict(cfg.get("evaluation", {})),
     )
 
 
@@ -399,15 +480,18 @@ def train_from_config(cfg):
     output_dir = Path(_as_dict(cfg.get("experiment", {})).get("output_dir", "outputs/apexid_run"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    train_dataset, val_dataset, num_classes = build_datasets(cfg)
-    train_loader, val_loader = build_dataloaders(cfg, train_dataset, val_dataset, device)
+    train_dataset, validation_datasets, num_classes = build_datasets(cfg)
+    train_loader, validation_loaders = build_dataloaders(cfg, train_dataset, validation_datasets, device)
 
     checkpoint_cfg = _as_dict(cfg.get("checkpoint", {}))
     resume_path = checkpoint_cfg.get("resume_path")
     tracking_metadata = {
         "num_classes": int(num_classes),
         "train_dataset_size": int(len(train_dataset)),
-        "val_dataset_size": int(len(val_dataset)),
+        "gallery_dataset_size": int(len(validation_datasets["gallery"])),
+        "val_known_dataset_size": int(len(validation_datasets["known"])),
+        "val_unknown_dataset_size": int(len(validation_datasets["unknown"])),
+        "val_dataset_size": int(len(validation_datasets["mixed"])),
         "device": str(device),
         "resume_path": resume_path,
     }
@@ -449,7 +533,7 @@ def train_from_config(cfg):
 
     history = trainer.train(
         train_loader,
-        val_loader,
+        validation_loaders,
         epochs=int(_as_dict(cfg.get("training", {})).get("epochs", 100)),
         start_epoch=start_epoch,
         resume_history=resume_history,

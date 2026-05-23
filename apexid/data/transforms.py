@@ -133,7 +133,7 @@ def _clahe_transform():
     return A.CLAHE(
         clip_limit=CLAHE_CLIP_LIMIT,
         tile_grid_size=CLAHE_TILE_GRID_SIZE,
-        p=0.25,
+        p=1.0,
     )
 
 
@@ -153,7 +153,12 @@ def _apply_clahe(image):
         transforms so normalization statistics are computed from the exact
         preprocessing path used during training and evaluation.
     """
-    return _clahe_transform()(image=image)["image"]
+    clahe = A.CLAHE(
+        clip_limit=CLAHE_CLIP_LIMIT,
+        tile_grid_size=CLAHE_TILE_GRID_SIZE,
+        p=1.0,
+    )
+    return clahe(image=image)["image"]
 
 
 def _image_to_float01(image, **kwargs):
@@ -273,7 +278,7 @@ def build_train_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
     return A.Compose(
         [
             A.Resize(height=height, width=width),
-            _clahe_transform(),
+            # _clahe_transform(),
             A.Affine(
                 scale=(0.95, 1.05),
                 translate_percent=(-0.03, 0.03),
@@ -339,6 +344,7 @@ def build_eval_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
     return A.Compose(
         [
             A.Resize(height=height, width=width),
+            # _clahe_transform(),
             to_float,
             _normalization(settings["mean"], settings["std"]),
             ToTensorV2(),

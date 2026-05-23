@@ -20,13 +20,14 @@ the default values remain internally consistent.
 Important sections:
 
 - `experiment`: run name and output directory.
-- `data`: train/validation CSVs, image root, image size, wavelet mode, mean/std.
+- `data`: train, known-validation, unknown-validation, mixed-validation CSVs,
+  image root, image size, wavelet mode, mean/std.
 - `dataloader`: batch size, workers, and P x K sampler parameters.
 - `model`: ApexID embedding dimensions, input channels, and backbone selection.
 - `head` and `loss`: margin head and external objective configuration.
 - `optimizer`, `scheduler`, and `lr_range_test`: learning-rate behavior.
-- `training` and `validation`: epoch loop, label ignore indices, metrics, and
-  validation metric chunk size.
+- `training`, `validation`, and `evaluation`: epoch loop, label ignore indices,
+  metric cadence, open-set metric toggles, thresholds, and validation chunk size.
 - `checkpoint` and `early_stopping`: resumable latest checkpoint and best-model
   artifacts.
 - `tracking`: W&B logging settings.
