@@ -246,7 +246,9 @@ def parse_args():
     )
     parser.add_argument(
         "--skip-batch",
+        "--skip-batches",
         action="store_true",
+        dest="skip_batch",
         help="Skip loading one transformed DataLoader batch.",
     )
     return parser.parse_args()

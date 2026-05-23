@@ -8,13 +8,15 @@ This folder tests data loading, preprocessing, and data statistics behavior.
   unknown validation identities, and sample return contracts.
 - `test_dwt_timing.py`: wavelet channel generation behavior and timing-related
   expectations.
+- `test_make_open_set_splits.py`: clean open-set split routing, identity
+  disjointness, output cleanup, and row-accounting invariants.
 - `test_mean_std.py`: dataset mean/std calculation behavior.
 
 ## How It Connects
 
 These tests protect `apexid.data`, especially `ApexID_Dataset`, transform
 helpers, wavelet channels, and normalization-statistics logic used by training
-and the mean/std CLI.
+and the mean/std and split-generation CLIs.
 
 ## Common Commands
 

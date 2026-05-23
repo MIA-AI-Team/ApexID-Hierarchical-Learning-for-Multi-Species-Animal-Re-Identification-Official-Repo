@@ -17,13 +17,13 @@ data:
   wavelet: false
   transforms:
     mean:
-    - 0.177705
-    - 0.174851
-    - 0.171054
+    - 0.158895
+    - 0.156707
+    - 0.15302
     std:
-    - 0.249854
-    - 0.242255
-    - 0.238203
+    - 0.248437
+    - 0.242192
+    - 0.237389
 dataloader:
   batch_size: 32
   num_workers: 4
@@ -89,7 +89,7 @@ validation:
   - mAP
   - micro_f1
 embedding_plot:
-  enabled: true
+  enabled: false
   split: val
   output_dir: null
   best_output_dir: null

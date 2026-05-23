@@ -15,6 +15,7 @@ open_set_splits/train.csv
 open_set_splits/val_known.csv
 open_set_splits/val_unknown.csv
 open_set_splits/val_unknown_extra.csv
+open_set_splits/unlabeled_ood.csv
 open_set_splits/val.csv
 ```
 
@@ -50,7 +51,7 @@ The dataset was built through these steps:
 7. Saved the final readable master metadata as `metadata.csv`.
 8. Generated open-set ReID splits with `make_open_set_splits.py`.
 
-The previous special identity `new_whale` from `humpback-whale-identification` is treated as unknown data, not as a real individual whale identity.
+The previous special identity `new_whale` from `humpback-whale-identification` is not treated as a real individual whale identity. It is excluded from supervised training and main validation, and is kept only in `unlabeled_ood.csv`.
 
 ## Open-Set Split Policy
 
@@ -66,17 +67,18 @@ Split behavior:
 
 Balancing rules:
 
-- About `20%` of images from train-seen identities are held out into `val_known`.
-- About `10%` of eligible identities per dataset are held out into `val_unknown`.
-- Normal unknown identities are capped at `50` images each in `val_unknown`.
-- `new_whale` is excluded from train and val_known.
-- `new_whale` contributes `1000` rows to `val_unknown`.
-- The remaining `8664` `new_whale` rows are stored in `val_unknown_extra.csv`.
+- Singleton identities are excluded from supervised training and main validation.
+- `new_whale` is excluded from supervised training and main validation.
+- About `22.5%` of images from train-seen identities are held out into `val_known`, only when at least `2` train images and `2` validation images can be kept for that identity.
+- About `12.5%` of eligible non-singleton identities per dataset are held out into `val_unknown`.
+- Unknown identities are capped at `100` images each in `val_unknown`.
+- Overflow rows from capped unknown validation identities are stored in `val_unknown_extra.csv`.
+- Singleton identities and all `new_whale` rows are stored in `unlabeled_ood.csv`.
 
 Recreate the split files:
 
 ```bash
-python make_open_set_splits.py
+python data/make_open_set_splits.py
 ```
 
 ## Split Integrity
@@ -89,11 +91,14 @@ The generated split files passed these checks:
 | Train and val_unknown_extra identity overlap | `0` |
 | val_known identities missing from train | `0` |
 | val_known and val_unknown identity overlap | `0` |
+| val_unknown_extra identities missing from val_unknown | `0` |
 | `val.csv == val_known.csv + val_unknown.csv` | `true` |
 | `new_whale` rows in train | `0` |
 | `new_whale` rows in val_known | `0` |
-| `new_whale` rows in val_unknown | `1000` |
-| `new_whale` rows in val_unknown_extra | `8664` |
+| `new_whale` rows in val_unknown | `0` |
+| `new_whale` rows in val_unknown_extra | `0` |
+| `new_whale` rows in unlabeled_ood | `9664` |
+| Component rows accounted for | `158293` |
 
 ## Main Dataset Statistics
 
@@ -219,203 +224,244 @@ Image extensions:
 
 ## Open-Set Split Statistics
 
+The main training split uses `train.csv` and `val.csv`, where `val.csv` is exactly `val_known.csv + val_unknown.csv`. The main split ratio is `70.25%` train and `29.75%` validation.
+
+| File | Rows | Dataset-scoped identities | Purpose |
+|---|---:|---:|---|
+| `train.csv` | `93101` | `11677` | supervised training |
+| `val_known.csv` | `25890` | `5342` | validation identities also present in train |
+| `val_unknown.csv` | `13542` | `1671` | open-set validation identities absent from train |
+| `val.csv` | `39432` | `7013` | main validation: `val_known + val_unknown` |
+| `val_unknown_extra.csv` | `2977` | `23` | overflow unknown rows for stress testing |
+| `unlabeled_ood.csv` | `22783` | `13120` | singleton identities plus all `new_whale` rows |
+
 ### `open_set_splits/train.csv`
 
 | Metric | Value |
 |---|---:|
-| Rows | `107774` |
-| Dataset-scoped identities | `25131` |
-| Singleton identities | `17758` |
-| Mean images per identity | `4.288` |
-| Median images per identity | `1` |
-| P90 images per identity | `6` |
-| P99 images per identity | `50` |
-| Max images per identity | `2596` |
+| Rows | `93101` |
+| Dataset-scoped identities | `11677` |
+| Singleton identities | `0` |
+| Mean images per identity | `7.973` |
+| Median images per identity | `3.0` |
+| P90 images per identity | `12.0` |
+| P99 images per identity | `96.5` |
+| Max images per identity | `2515` |
 | Missing image paths | `0` |
 | Duplicate image paths | `0` |
-| Total image size | `10.848 GiB` |
+| Total image size | `9.631 GiB` |
+| `new_whale` rows | `0` |
 
 Dataset counts:
 
 | Dataset | Rows |
 |---|---:|
-| HappyWhale | `37290` |
-| CzechLynx | `29901` |
-| humpback-whale-identification | `10974` |
-| WhaleSharkID | `4219` |
-| GiraffeZebraID | `3772` |
-| LeopardID2022 | `3722` |
-| IPanda50 | `3719` |
-| BalearicLizard | `3228` |
-| CTai | `2777` |
-| HyenaID2022 | `1746` |
-| NDD20 | `1500` |
-| NyalaData | `1088` |
-| SealID | `1054` |
-| SalamanderID2025 | `1012` |
-| Jaguar_data | `854` |
-| Giraffes | `624` |
-| ReunionTurtles | `142` |
-| AmvrakikosTurtles | `84` |
-| ZakynthosTurtles | `68` |
+| HappyWhale | `28608` |
+| CzechLynx | `27839` |
+| humpback-whale-identification | `9617` |
+| WhaleSharkID | `3889` |
+| IPanda50 | `3604` |
+| LeopardID2022 | `3528` |
+| GiraffeZebraID | `2998` |
+| BalearicLizard | `2952` |
+| CTai | `2444` |
+| HyenaID2022 | `1546` |
+| NDD20 | `1488` |
+| SealID | `1101` |
+| NyalaData | `957` |
+| Jaguar_data | `794` |
+| SalamanderID2025 | `722` |
+| Giraffes | `585` |
+| ReunionTurtles | `207` |
+| AmvrakikosTurtles | `123` |
+| ZakynthosTurtles | `99` |
 
 ### `open_set_splits/val_known.csv`
 
 | Metric | Value |
 |---|---:|
-| Rows | `28299` |
-| Dataset-scoped identities | `12012` |
-| Singleton identities | `9320` |
-| Mean images per identity | `2.356` |
-| Median images per identity | `1` |
-| P90 images per identity | `3` |
-| P99 images per identity | `25` |
-| Max images per identity | `649` |
+| Rows | `25890` |
+| Dataset-scoped identities | `5342` |
+| Singleton identities | `0` |
+| Mean images per identity | `4.846` |
+| Median images per identity | `2.0` |
+| P90 images per identity | `8.0` |
+| P99 images per identity | `44.0` |
+| Max images per identity | `730` |
 | Missing image paths | `0` |
 | Duplicate image paths | `0` |
-| Total image size | `2.915 GiB` |
+| Total image size | `2.676 GiB` |
+| `new_whale` rows | `0` |
 
 Dataset counts:
 
 | Dataset | Rows |
 |---|---:|
-| HappyWhale | `9597` |
-| CzechLynx | `7476` |
-| humpback-whale-identification | `3370` |
-| WhaleSharkID | `1100` |
-| GiraffeZebraID | `1063` |
-| LeopardID2022 | `966` |
-| BalearicLizard | `931` |
-| IPanda50 | `930` |
-| CTai | `697` |
-| HyenaID2022 | `450` |
-| NDD20 | `378` |
-| NyalaData | `273` |
-| SalamanderID2025 | `267` |
-| SealID | `260` |
-| Jaguar_data | `216` |
-| Giraffes | `178` |
-| ReunionTurtles | `71` |
-| AmvrakikosTurtles | `42` |
-| ZakynthosTurtles | `34` |
+| CzechLynx | `8109` |
+| HappyWhale | `7544` |
+| humpback-whale-identification | `2357` |
+| WhaleSharkID | `1139` |
+| IPanda50 | `1047` |
+| LeopardID2022 | `1026` |
+| BalearicLizard | `887` |
+| GiraffeZebraID | `833` |
+| CTai | `709` |
+| HyenaID2022 | `536` |
+| NDD20 | `430` |
+| SealID | `321` |
+| NyalaData | `291` |
+| Jaguar_data | `229` |
+| SalamanderID2025 | `219` |
+| Giraffes | `213` |
 
 ### `open_set_splits/val_unknown.csv`
 
 | Metric | Value |
 |---|---:|
-| Rows | `10511` |
-| Dataset-scoped identities | `1337` |
+| Rows | `13542` |
+| Dataset-scoped identities | `1671` |
 | Singleton identities | `0` |
-| Mean images per identity | `7.862` |
-| Median images per identity | `3` |
-| P90 images per identity | `15` |
-| P99 images per identity | `50` |
-| Max images per identity | `1000` |
+| Mean images per identity | `8.104` |
+| Median images per identity | `3.0` |
+| P90 images per identity | `15.0` |
+| P99 images per identity | `100.0` |
+| Max images per identity | `100` |
 | Missing image paths | `0` |
 | Duplicate image paths | `0` |
-| Total image size | `1.195 GiB` |
-| `new_whale` rows | `1000` |
+| Total image size | `1.581 GiB` |
+| `new_whale` rows | `0` |
 
 Dataset counts:
 
 | Dataset | Rows |
 |---|---:|
-| HappyWhale | `3670` |
-| humpback-whale-identification | `2353` |
-| CzechLynx | `1044` |
-| WhaleSharkID | `538` |
-| BalearicLizard | `459` |
-| GiraffeZebraID | `438` |
-| LeopardID2022 | `360` |
-| IPanda50 | `250` |
-| SealID | `249` |
-| HyenaID2022 | `232` |
-| NDD20 | `228` |
-| CTai | `187` |
-| NyalaData | `136` |
-| SalamanderID2025 | `109` |
-| Giraffes | `104` |
-| Jaguar_data | `103` |
-| ReunionTurtles | `24` |
-| AmvrakikosTurtles | `15` |
-| ZakynthosTurtles | `12` |
+| HappyWhale | `5255` |
+| CzechLynx | `1881` |
+| humpback-whale-identification | `1650` |
+| WhaleSharkID | `930` |
+| BalearicLizard | `520` |
+| IPanda50 | `516` |
+| GiraffeZebraID | `502` |
+| CTai | `456` |
+| LeopardID2022 | `399` |
+| HyenaID2022 | `340` |
+| SealID | `246` |
+| NDD20 | `204` |
+| NyalaData | `194` |
+| Jaguar_data | `155` |
+| SalamanderID2025 | `137` |
+| Giraffes | `94` |
+| ReunionTurtles | `30` |
+| AmvrakikosTurtles | `18` |
+| ZakynthosTurtles | `15` |
 
 ### `open_set_splits/val_unknown_extra.csv`
 
-This file contains the unknown rows that were excluded from the balanced validation set due to caps. It is useful as a larger, imbalanced unknown stress test or as unlabeled data.
+This file contains overflow rows from unknown validation identities after the `100` image cap. It is useful as an imbalanced unknown stress test, but it is intentionally excluded from the main validation score.
 
 | Metric | Value |
 |---|---:|
-| Rows | `11709` |
-| Dataset-scoped identities | `48` |
-| Singleton identities | `0` |
-| Mean images per identity | `243.938` |
-| Median images per identity | `38.5` |
-| P90 images per identity | `176` |
-| P99 images per identity | `8664` |
-| Max images per identity | `8664` |
+| Rows | `2977` |
+| Dataset-scoped identities | `23` |
+| Singleton identities | `1` |
+| Mean images per identity | `129.435` |
+| Median images per identity | `37.0` |
+| P90 images per identity | `392.0` |
+| P99 images per identity | `679.7` |
+| Max images per identity | `727` |
 | Missing image paths | `0` |
 | Duplicate image paths | `0` |
-| Total image size | `0.440 GiB` |
-| `new_whale` rows | `8664` |
+| Total image size | `0.151 GiB` |
+| `new_whale` rows | `0` |
 
 Dataset counts:
 
 | Dataset | Rows |
 |---|---:|
-| humpback-whale-identification | `8664` |
-| CzechLynx | `1339` |
-| IPanda50 | `600` |
-| HappyWhale | `476` |
-| LeopardID2022 | `268` |
-| WhaleSharkID | `190` |
-| SealID | `105` |
-| CTai | `46` |
-| NDD20 | `16` |
-| Jaguar_data | `5` |
+| CzechLynx | `1931` |
+| HappyWhale | `368` |
+| IPanda50 | `332` |
+| LeopardID2022 | `237` |
+| CTai | `95` |
+| WhaleSharkID | `14` |
+
+### `open_set_splits/unlabeled_ood.csv`
+
+This file contains rows that should not be used as supervised identity labels: all true singleton identities and all `new_whale` rows.
+
+| Metric | Value |
+|---|---:|
+| Rows | `22783` |
+| Dataset-scoped identities | `13120` |
+| Singleton identities | `13119` |
+| Mean images per identity | `1.737` |
+| Median images per identity | `1.0` |
+| P90 images per identity | `1.0` |
+| P99 images per identity | `1.0` |
+| Max images per identity | `9664` |
+| Missing image paths | `0` |
+| Duplicate image paths | `0` |
+| Total image size | `1.359 GiB` |
+| `new_whale` rows | `9664` |
+
+Dataset counts:
+
+| Dataset | Rows |
+|---|---:|
+| humpback-whale-identification | `11737` |
+| HappyWhale | `9258` |
+| GiraffeZebraID | `940` |
+| SalamanderID2025 | `310` |
+| BalearicLizard | `259` |
+| LeopardID2022 | `126` |
+| WhaleSharkID | `75` |
+| NyalaData | `55` |
+| Giraffes | `14` |
+| HyenaID2022 | `6` |
+| CTai | `3` |
 
 ### `open_set_splits/val.csv`
 
-This file is the union of `val_known.csv` and `val_unknown.csv`. It does not include `val_unknown_extra.csv`.
+This file is the union of `val_known.csv` and `val_unknown.csv`. It does not include `val_unknown_extra.csv` or `unlabeled_ood.csv`.
 
 | Metric | Value |
 |---|---:|
-| Rows | `38810` |
-| Dataset-scoped identities | `13349` |
-| Singleton identities | `9320` |
-| Mean images per identity | `2.907` |
-| Median images per identity | `1` |
-| P90 images per identity | `4` |
-| P99 images per identity | `34` |
-| Max images per identity | `1000` |
+| Rows | `39432` |
+| Dataset-scoped identities | `7013` |
+| Singleton identities | `0` |
+| Mean images per identity | `5.623` |
+| Median images per identity | `2.0` |
+| P90 images per identity | `9.0` |
+| P99 images per identity | `64.0` |
+| Max images per identity | `730` |
 | Missing image paths | `0` |
 | Duplicate image paths | `0` |
-| Total image size | `4.110 GiB` |
-| `new_whale` rows | `1000` |
+| Total image size | `4.257 GiB` |
+| `new_whale` rows | `0` |
 
 Dataset counts:
 
 | Dataset | Rows |
 |---|---:|
-| HappyWhale | `13267` |
-| CzechLynx | `8520` |
-| humpback-whale-identification | `5723` |
-| WhaleSharkID | `1638` |
-| GiraffeZebraID | `1501` |
-| BalearicLizard | `1390` |
-| LeopardID2022 | `1326` |
-| IPanda50 | `1180` |
-| CTai | `884` |
-| HyenaID2022 | `682` |
-| NDD20 | `606` |
-| SealID | `509` |
-| NyalaData | `409` |
-| SalamanderID2025 | `376` |
-| Jaguar_data | `319` |
-| Giraffes | `282` |
-| ReunionTurtles | `95` |
-| AmvrakikosTurtles | `57` |
-| ZakynthosTurtles | `46` |
+| HappyWhale | `12799` |
+| CzechLynx | `9990` |
+| humpback-whale-identification | `4007` |
+| WhaleSharkID | `2069` |
+| IPanda50 | `1563` |
+| LeopardID2022 | `1425` |
+| BalearicLizard | `1407` |
+| GiraffeZebraID | `1335` |
+| CTai | `1165` |
+| HyenaID2022 | `876` |
+| NDD20 | `634` |
+| SealID | `567` |
+| NyalaData | `485` |
+| Jaguar_data | `384` |
+| SalamanderID2025 | `356` |
+| Giraffes | `307` |
+| ReunionTurtles | `30` |
+| AmvrakikosTurtles | `18` |
+| ZakynthosTurtles | `15` |
 
 ## Jaguar Source CSV Statistics
 
@@ -521,15 +567,20 @@ Known validation: open_set_splits/val_known.csv
 Unknown validation: open_set_splits/val_unknown.csv
 Combined validation: open_set_splits/val.csv
 Extra unknown stress test: open_set_splits/val_unknown_extra.csv
+Unlabeled/OOD pool: open_set_splits/unlabeled_ood.csv
 ```
 
-Use `val_unknown_extra.csv` for stress testing or unlabeled/self-supervised use. Do not combine it into the main validation score unless you explicitly want an imbalanced validation set dominated by `new_whale` and other large unknown identities.
+Use `val.csv` for training validation and early stopping. Use `val_unknown_extra.csv` only for secondary unknown stress testing. Use `unlabeled_ood.csv` for unlabeled/self-supervised pretraining, OOD testing, threshold experiments, or manual inspection.
+
+Do not merge `val_unknown_extra.csv` into the main validation score unless you explicitly want an imbalanced stress test dominated by a small number of large unknown identities.
 
 ## Important Notes
 
-- `new_whale` is not treated as a real individual identity. It is only used as unknown validation data.
+- `new_whale` is not treated as a real individual identity. It is only stored in `unlabeled_ood.csv`.
+- Singleton identities are only stored in `unlabeled_ood.csv`.
 - `val_known.csv` identities are intentionally present in `train.csv`.
-- `val_unknown.csv` and `val_unknown_extra.csv` identities are intentionally absent from `train.csv`.
+- `val_unknown.csv` identities are intentionally absent from `train.csv`.
+- `val_unknown_extra.csv` identities are intentionally absent from `train.csv` and intentionally overlap with `val_unknown.csv` because it stores capped overflow rows.
 - The final files contain only existing, readable images.
 - Blank species values come from upstream datasets whose metadata did not provide species labels.
 - Non-ISO CzechLynx dates were preserved instead of modified.
