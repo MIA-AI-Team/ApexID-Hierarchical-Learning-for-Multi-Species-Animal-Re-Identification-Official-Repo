@@ -32,6 +32,7 @@ def test_default_config_contains_experiment_training_sections():
     assert "val_path" in cfg["data"]
     assert cfg["model"]["name"] == "apexid"
     assert "input_channels" in cfg["model"]
+    assert cfg["validation"]["metric_chunk_size"] == 1024
     assert cfg["validation"]["metrics"] == ["top1", "top5", "mAP", "micro_f1"]
     assert cfg["early_stopping"]["monitor"] == "val_mAP"
     assert cfg["early_stopping"]["mode"] == "max"
@@ -49,7 +50,7 @@ def test_default_config_contains_experiment_training_sections():
     assert cfg["scheduler"]["kwargs"]["base_lr"] == 1e-5
     assert cfg["scheduler"]["kwargs"]["max_lr"] == 3e-4
     assert cfg["scheduler"]["kwargs"]["cycle_momentum"] is False
-    assert cfg["embedding_plot"]["enabled"] is True
+    assert cfg["embedding_plot"]["enabled"] is False
     assert cfg["embedding_plot"]["split"] == "val"
     assert cfg["embedding_plot"]["output_dir"] is None
     assert cfg["embedding_plot"]["best_output_dir"] is None

@@ -152,6 +152,7 @@ class Validator:
         device=None,
         classification_ignore_index=-100,
         metric_ignore_index=None,
+        metric_chunk_size=1024,
         progress=True,
     ):
         """Initialize the validation helper.
@@ -165,6 +166,8 @@ class Validator:
                 ignore for validation loss and accuracy.
             metric_ignore_index (int or None): Metric label to ignore for re-ID
                 metrics. Defaults to ``None`` so metric labels remain distinct.
+            metric_chunk_size (int): Number of query embeddings processed at once
+                when computing pairwise retrieval metrics.
             progress (bool): Whether to show a tqdm validation progress bar.
 
         Returns:
@@ -176,7 +179,11 @@ class Validator:
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.classification_ignore_index = classification_ignore_index
         self.metric_ignore_index = metric_ignore_index
+        self.metric_chunk_size = int(metric_chunk_size)
         self.progress = bool(progress)
+
+        if self.metric_chunk_size <= 0:
+            raise ValueError("metric_chunk_size must be > 0.")
 
         self.backbone.to(self.device)
         self.head.to(self.device)
@@ -280,6 +287,7 @@ class Validator:
                 embeddings,
                 metric_labels,
                 ignore_index=self.metric_ignore_index,
+                chunk_size=self.metric_chunk_size,
             )
 
         result = {

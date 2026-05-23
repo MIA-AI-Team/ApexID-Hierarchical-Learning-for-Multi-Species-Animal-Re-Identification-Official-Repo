@@ -83,6 +83,7 @@ training:
   metric_ignore_index: null
 validation:
   every_n_epochs: 1
+  metric_chunk_size: 1024
   metrics:
   - top1
   - top5

@@ -115,7 +115,117 @@ def _relevance_from_ranked_labels(labels, ranked):
     return (labels[ranked] == labels[:, None]).astype(np.int32)
 
 
-def topk_accuracy(embeddings, labels, k=1, ignore_index=None):
+def _validate_chunk_size(chunk_size):
+    """Return a positive integer metric chunk size."""
+    if chunk_size is None:
+        return None
+    chunk_size = int(chunk_size)
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be > 0.")
+    return chunk_size
+
+
+def _prepare_metric_inputs(embeddings, labels, ignore_index=None):
+    """Normalize embeddings and apply the optional metric ignore mask."""
+    emb = _normalize_embeddings(embeddings)
+    labels = _validate_labels(labels, emb.shape[0])
+    mask = _valid_mask(labels, ignore_index=ignore_index)
+    return emb[mask], labels[mask]
+
+
+def _empty_metric_result(labels):
+    empty = np.array([], dtype=labels.dtype)
+    return {
+        "topk": {},
+        "mAP": float("nan"),
+        "micro_f1": float("nan"),
+        "y_true": empty,
+        "y_pred": empty,
+    }
+
+
+def _compute_chunked_reid_metrics(
+    embeddings,
+    labels,
+    ignore_index=None,
+    topk=(1, 5),
+    chunk_size=1024,
+):
+    """Compute exact leave-one-out retrieval metrics in query chunks."""
+    topk_values = tuple(sorted({int(k) for k in topk}))
+    if any(k <= 0 for k in topk_values):
+        raise ValueError("k must be > 0.")
+
+    emb, labels = _prepare_metric_inputs(
+        embeddings,
+        labels,
+        ignore_index=ignore_index,
+    )
+    num_samples = int(labels.shape[0])
+    chunk_size = _validate_chunk_size(chunk_size)
+    if num_samples < 2:
+        result = _empty_metric_result(labels)
+        result["topk"] = {k: float("nan") for k in topk_values}
+        return result
+
+    if chunk_size is None:
+        chunk_size = num_samples
+    chunk_size = min(chunk_size, num_samples)
+
+    topk_hits = {k: 0 for k in topk_values}
+    valid_query_count = 0
+    ap_sum = 0.0
+    y_pred = np.empty(num_samples, dtype=labels.dtype)
+
+    for start in range(0, num_samples, chunk_size):
+        stop = min(start + chunk_size, num_samples)
+        query_indices = np.arange(start, stop)
+        query_labels = labels[start:stop]
+
+        similarity = emb[start:stop] @ emb.T
+        similarity[np.arange(stop - start), query_indices] = -np.inf
+        ranked = np.argsort(-similarity, axis=1)
+        y_pred[start:stop] = labels[ranked[:, 0]]
+
+        relevance = labels[ranked] == query_labels[:, None]
+        relevance[ranked == query_indices[:, None]] = False
+        positive_counts = relevance.sum(axis=1)
+        valid_queries = positive_counts > 0
+
+        if np.any(valid_queries):
+            valid_query_count += int(valid_queries.sum())
+            for k in topk_values:
+                k_eff = min(k, num_samples - 1)
+                topk_hits[k] += int(relevance[valid_queries, :k_eff].any(axis=1).sum())
+
+            for rel in relevance[valid_queries]:
+                positive_ranks = np.flatnonzero(rel)
+                precision_at_hits = (
+                    np.arange(1, positive_ranks.size + 1, dtype=np.float64)
+                    / (positive_ranks.astype(np.float64) + 1.0)
+                )
+                ap_sum += float(np.mean(precision_at_hits))
+
+    if valid_query_count == 0:
+        topk_scores = {k: float("nan") for k in topk_values}
+        mean_ap = float("nan")
+    else:
+        topk_scores = {
+            k: float(topk_hits[k] / valid_query_count)
+            for k in topk_values
+        }
+        mean_ap = float(ap_sum / valid_query_count)
+
+    return {
+        "topk": topk_scores,
+        "mAP": mean_ap,
+        "micro_f1": micro_f1_score(labels, y_pred),
+        "y_true": labels.copy(),
+        "y_pred": y_pred,
+    }
+
+
+def topk_accuracy(embeddings, labels, k=1, ignore_index=None, chunk_size=1024):
     """Compute leave-one-out re-identification top-k accuracy.
 
     Args:
@@ -127,6 +237,8 @@ def topk_accuracy(embeddings, labels, k=1, ignore_index=None):
             accuracy.
         ignore_index (int or None): Optional label value excluded from
             evaluation before ranking.
+        chunk_size (int): Number of query embeddings scored against the full
+            gallery at once.
 
     Returns:
         float: Fraction of valid queries whose top-k retrieved gallery contains
@@ -141,30 +253,17 @@ def topk_accuracy(embeddings, labels, k=1, ignore_index=None):
     if k <= 0:
         raise ValueError("k must be > 0.")
 
-    emb = _normalize_embeddings(embeddings)
-    labels = _validate_labels(labels, emb.shape[0])
-    mask = _valid_mask(labels, ignore_index=ignore_index)
-    emb = emb[mask]
-    labels = labels[mask]
-
-    if labels.shape[0] < 2:
-        return float("nan")
-
-    similarity = emb @ emb.T
-    ranked = _ranking_from_similarity(similarity)
-    relevance = _relevance_from_ranked_labels(labels, ranked)
-
-    positive_counts = relevance.sum(axis=1)
-    valid_queries = positive_counts > 0
-    if not np.any(valid_queries):
-        return float("nan")
-
-    k = min(int(k), relevance.shape[1])
-    hits = relevance[:, :k].any(axis=1)
-    return float(hits[valid_queries].mean())
+    result = _compute_chunked_reid_metrics(
+        embeddings,
+        labels,
+        ignore_index=ignore_index,
+        topk=(k,),
+        chunk_size=chunk_size,
+    )
+    return result["topk"][int(k)]
 
 
-def top1_accuracy(embeddings, labels, ignore_index=None):
+def top1_accuracy(embeddings, labels, ignore_index=None, chunk_size=1024):
     """Compute leave-one-out re-identification top-1 accuracy.
 
     Args:
@@ -174,14 +273,22 @@ def top1_accuracy(embeddings, labels, ignore_index=None):
             shape ``(num_samples,)``.
         ignore_index (int or None): Optional label value excluded from
             evaluation.
+        chunk_size (int): Number of query embeddings scored against the full
+            gallery at once.
 
     Returns:
         float: Top-1 retrieval accuracy.
     """
-    return topk_accuracy(embeddings, labels, k=1, ignore_index=ignore_index)
+    return topk_accuracy(
+        embeddings,
+        labels,
+        k=1,
+        ignore_index=ignore_index,
+        chunk_size=chunk_size,
+    )
 
 
-def top5_accuracy(embeddings, labels, ignore_index=None):
+def top5_accuracy(embeddings, labels, ignore_index=None, chunk_size=1024):
     """Compute leave-one-out re-identification top-5 accuracy.
 
     Args:
@@ -191,14 +298,22 @@ def top5_accuracy(embeddings, labels, ignore_index=None):
             shape ``(num_samples,)``.
         ignore_index (int or None): Optional label value excluded from
             evaluation.
+        chunk_size (int): Number of query embeddings scored against the full
+            gallery at once.
 
     Returns:
         float: Top-5 retrieval accuracy.
     """
-    return topk_accuracy(embeddings, labels, k=5, ignore_index=ignore_index)
+    return topk_accuracy(
+        embeddings,
+        labels,
+        k=5,
+        ignore_index=ignore_index,
+        chunk_size=chunk_size,
+    )
 
 
-def mean_average_precision(embeddings, labels, ignore_index=None):
+def mean_average_precision(embeddings, labels, ignore_index=None, chunk_size=1024):
     """Compute leave-one-out mean Average Precision (mAP).
 
     Args:
@@ -208,6 +323,8 @@ def mean_average_precision(embeddings, labels, ignore_index=None):
             shape ``(num_samples,)``.
         ignore_index (int or None): Optional label value excluded from
             evaluation before ranking.
+        chunk_size (int): Number of query embeddings scored against the full
+            gallery at once.
 
     Returns:
         float: Mean Average Precision over valid queries. A query is valid when
@@ -219,33 +336,14 @@ def mean_average_precision(embeddings, labels, ignore_index=None):
         precision at every correct-match rank, averages those precisions to get
         AP, then averages AP across valid queries.
     """
-    emb = _normalize_embeddings(embeddings)
-    labels = _validate_labels(labels, emb.shape[0])
-    mask = _valid_mask(labels, ignore_index=ignore_index)
-    emb = emb[mask]
-    labels = labels[mask]
-
-    if labels.shape[0] < 2:
-        return float("nan")
-
-    similarity = emb @ emb.T
-    ranked = _ranking_from_similarity(similarity)
-    relevance = _relevance_from_ranked_labels(labels, ranked)
-
-    ap_values = []
-    for rel in relevance:
-        positive_ranks = np.flatnonzero(rel)
-        if positive_ranks.size == 0:
-            continue
-        precision_at_hits = [
-            (hit_index + 1) / float(rank + 1)
-            for hit_index, rank in enumerate(positive_ranks)
-        ]
-        ap_values.append(float(np.mean(precision_at_hits)))
-
-    if not ap_values:
-        return float("nan")
-    return float(np.mean(ap_values))
+    result = _compute_chunked_reid_metrics(
+        embeddings,
+        labels,
+        ignore_index=ignore_index,
+        topk=(),
+        chunk_size=chunk_size,
+    )
+    return result["mAP"]
 
 
 def micro_f1_score(y_true, y_pred, ignore_index=None):
@@ -300,7 +398,7 @@ def micro_f1_score(y_true, y_pred, ignore_index=None):
     return float((2 * true_positive) / denominator)
 
 
-def nearest_neighbor_predictions(embeddings, labels, ignore_index=None):
+def nearest_neighbor_predictions(embeddings, labels, ignore_index=None, chunk_size=1024):
     """Predict each sample identity using its nearest non-self neighbor.
 
     Args:
@@ -309,6 +407,8 @@ def nearest_neighbor_predictions(embeddings, labels, ignore_index=None):
         labels (torch.Tensor or numpy.ndarray or Sequence): Identity labels with
             shape ``(num_samples,)``.
         ignore_index (int or None): Optional label value excluded before ranking.
+        chunk_size (int): Number of query embeddings scored against the full
+            gallery at once.
 
     Returns:
         tuple[numpy.ndarray, numpy.ndarray]: ``(y_true, y_pred)`` label arrays for
@@ -319,23 +419,17 @@ def nearest_neighbor_predictions(embeddings, labels, ignore_index=None):
         Provides retrieval-based predictions that can be passed directly to
         ``micro_f1_score``.
     """
-    emb = _normalize_embeddings(embeddings)
-    labels = _validate_labels(labels, emb.shape[0])
-    mask = _valid_mask(labels, ignore_index=ignore_index)
-    emb = emb[mask]
-    labels = labels[mask]
-
-    if labels.shape[0] < 2:
-        empty = np.array([], dtype=labels.dtype)
-        return empty, empty
-
-    similarity = emb @ emb.T
-    ranked = _ranking_from_similarity(similarity)
-    y_pred = labels[ranked[:, 0]]
-    return labels.copy(), y_pred
+    result = _compute_chunked_reid_metrics(
+        embeddings,
+        labels,
+        ignore_index=ignore_index,
+        topk=(),
+        chunk_size=chunk_size,
+    )
+    return result["y_true"], result["y_pred"]
 
 
-def compute_reid_metrics(embeddings, labels, ignore_index=None):
+def compute_reid_metrics(embeddings, labels, ignore_index=None, chunk_size=1024):
     """Compute the standard ApexID re-identification metric bundle.
 
     Args:
@@ -345,6 +439,8 @@ def compute_reid_metrics(embeddings, labels, ignore_index=None):
             shape ``(num_samples,)``.
         ignore_index (int or None): Optional label value excluded from all
             metrics.
+        chunk_size (int): Number of query embeddings scored against the full
+            gallery at once.
 
     Returns:
         dict: Metric dictionary with keys ``top1``, ``top5``, ``mAP``, and
@@ -353,18 +449,21 @@ def compute_reid_metrics(embeddings, labels, ignore_index=None):
     Functionality:
         Computes leave-one-out retrieval top-1/top-5 accuracy, mAP, and micro-F1
         from nearest-neighbor identity predictions using the same embedding and
-        label inputs.
+        label inputs. Query chunks keep memory bounded while preserving exact
+        full-gallery metrics.
     """
-    y_true, y_pred = nearest_neighbor_predictions(
+    result = _compute_chunked_reid_metrics(
         embeddings,
         labels,
         ignore_index=ignore_index,
+        topk=(1, 5),
+        chunk_size=chunk_size,
     )
     return {
-        "top1": top1_accuracy(embeddings, labels, ignore_index=ignore_index),
-        "top5": top5_accuracy(embeddings, labels, ignore_index=ignore_index),
-        "mAP": mean_average_precision(embeddings, labels, ignore_index=ignore_index),
-        "micro_f1": micro_f1_score(y_true, y_pred),
+        "top1": result["topk"][1],
+        "top5": result["topk"][5],
+        "mAP": result["mAP"],
+        "micro_f1": result["micro_f1"],
     }
 
 

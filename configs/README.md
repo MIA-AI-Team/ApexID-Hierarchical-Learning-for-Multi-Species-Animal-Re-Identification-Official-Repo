@@ -25,7 +25,8 @@ Important sections:
 - `model`: ApexID embedding dimensions, input channels, and backbone selection.
 - `head` and `loss`: margin head and external objective configuration.
 - `optimizer`, `scheduler`, and `lr_range_test`: learning-rate behavior.
-- `training` and `validation`: epoch loop, label ignore indices, and metrics.
+- `training` and `validation`: epoch loop, label ignore indices, metrics, and
+  validation metric chunk size.
 - `checkpoint` and `early_stopping`: resumable latest checkpoint and best-model
   artifacts.
 - `tracking`: W&B logging settings.

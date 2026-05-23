@@ -38,6 +38,7 @@ class Trainer:
         verbose=True,
         gradient_clip_norm=None,
         validation_every_n_epochs=1,
+        validation_metric_chunk_size=1024,
         checkpoint_dir="checkpoints",
         checkpoint_every_n_epochs=1,
         checkpoint_filename="last_checkpoint.pt",
@@ -84,6 +85,8 @@ class Trainer:
             gradient_clip_norm (float, optional): Max gradient norm. ``None``
                 disables clipping.
             validation_every_n_epochs (int): Run validation every N epochs.
+            validation_metric_chunk_size (int): Query chunk size used by
+                validation retrieval metrics.
             checkpoint_dir (str): Directory for latest resumable checkpoint.
             checkpoint_every_n_epochs (int): Save checkpoint every N epochs.
             checkpoint_filename (str): Latest checkpoint filename or epoch format
@@ -124,6 +127,7 @@ class Trainer:
         self.verbose = bool(verbose)
         self.gradient_clip_norm = gradient_clip_norm
         self.validation_every_n_epochs = int(validation_every_n_epochs)
+        self.validation_metric_chunk_size = int(validation_metric_chunk_size)
         self.checkpoint_dir = checkpoint_dir
         self.checkpoint_every_n_epochs = int(checkpoint_every_n_epochs)
         self.checkpoint_filename = checkpoint_filename
@@ -134,6 +138,8 @@ class Trainer:
 
         if self.validation_every_n_epochs <= 0:
             raise ValueError("validation_every_n_epochs must be > 0.")
+        if self.validation_metric_chunk_size <= 0:
+            raise ValueError("validation_metric_chunk_size must be > 0.")
         if self.checkpoint_every_n_epochs <= 0:
             raise ValueError("checkpoint_every_n_epochs must be > 0.")
 
@@ -156,6 +162,7 @@ class Trainer:
             device=self.device,
             classification_ignore_index=self.classification_ignore_index,
             metric_ignore_index=self.metric_ignore_index,
+            metric_chunk_size=self.validation_metric_chunk_size,
             progress=self.progress,
         )
 

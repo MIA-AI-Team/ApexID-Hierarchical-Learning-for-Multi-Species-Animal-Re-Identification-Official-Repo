@@ -33,6 +33,7 @@ def test_validator_computes_known_loss_accuracy_and_reid_metrics():
         LogitHead(),
         loss=nn.CrossEntropyLoss(),
         device="cpu",
+        metric_chunk_size=2,
         progress=False,
     )
     result = validator.validate(loader, return_embeddings=True)

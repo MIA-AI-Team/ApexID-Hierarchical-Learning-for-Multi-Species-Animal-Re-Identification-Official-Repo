@@ -358,6 +358,7 @@ def build_trainer(
         verbose=bool(training_cfg.get("verbose", training_cfg.get("progress", True))),
         gradient_clip_norm=training_cfg.get("gradient_clip_norm"),
         validation_every_n_epochs=int(validation_cfg.get("every_n_epochs", 1)),
+        validation_metric_chunk_size=int(validation_cfg.get("metric_chunk_size", 1024)),
         checkpoint_dir=checkpoint_cfg.get("output_dir", "checkpoints"),
         checkpoint_every_n_epochs=int(checkpoint_cfg.get("every_n_epochs", 1)),
         checkpoint_filename=checkpoint_cfg.get("filename", "last_checkpoint.pt"),

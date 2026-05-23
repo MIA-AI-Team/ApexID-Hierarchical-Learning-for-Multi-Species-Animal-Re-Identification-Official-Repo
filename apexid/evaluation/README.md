@@ -28,6 +28,8 @@ and labels shaped:
 
 Embeddings are L2-normalized before cosine-similarity ranking. Optional
 `ignore_index` values are filtered before retrieval metrics are computed.
+Metrics are computed in query chunks so full validation can run without
+allocating a full `num_samples x num_samples` matrix.
 
 ## Common Commands
 
@@ -42,7 +44,12 @@ Use metrics directly:
 ```python
 from apexid.evaluation import compute_reid_metrics
 
-metrics = compute_reid_metrics(embeddings, labels, ignore_index=None)
+metrics = compute_reid_metrics(
+    embeddings,
+    labels,
+    ignore_index=None,
+    chunk_size=1024,
+)
 ```
 
 ## Contributor Notes

@@ -24,6 +24,9 @@ the configured interval, feeds validation embeddings into `apexid.evaluation`,
 writes checkpoints under the configured output directory, and optionally logs
 metrics/artifacts through W&B.
 
+Validation retrieval metrics use the configured query chunk size to avoid
+allocating the full all-pairs similarity matrix at once.
+
 ## Common Commands
 
 Run engine tests:
