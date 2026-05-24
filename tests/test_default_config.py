@@ -44,6 +44,8 @@ def test_default_config_contains_experiment_training_sections():
     assert cfg["evaluation"]["sample_limits"]["known"] is None
     assert cfg["evaluation"]["sample_limits"]["unknown"] is None
     assert cfg["evaluation"]["sample_limits"]["mixed"] is None
+    assert cfg["evaluation"]["cmc_ranks"] == [20, 50]
+    assert cfg["evaluation"]["top_k"] == [1, 5, 10]
     assert cfg["evaluation"]["dir"]["far_levels"] == [0.01, 0.001]
     assert cfg["early_stopping"]["monitor"] == "mixed/NormAcc"
     assert cfg["early_stopping"]["mode"] == "max"

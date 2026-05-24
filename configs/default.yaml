@@ -103,9 +103,6 @@ evaluation:
     enabled: true
     max_pairs: 100000
   cmc_ranks:
-  - 1
-  - 5
-  - 10
   - 20
   - 50
   sample_limits:

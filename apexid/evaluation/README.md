@@ -30,7 +30,9 @@ different failure modes:
 Known metrics show whether the model retrieves known animals correctly. mAP
 measures full ranking quality, Top-k metrics show whether the correct identity is
 near the top, BAKS protects against long-tail identity imbalance, and CMC reports
-retrieval quality at ranks such as 1, 5, 10, 20, and 50.
+additional retrieval quality at larger ranks such as 20 and 50. `known/top1`,
+`known/top5`, and `known/top10` already cover CMC ranks 1, 5, and 10, so those
+duplicate CMC keys are not emitted.
 
 Unknown metrics show whether unseen individuals form meaningful clusters. ARI,
 AMI, and V-measure compare predicted unknown clusters with true unknown labels.
@@ -81,9 +83,6 @@ known/top1
 known/top5
 known/top10
 known/BAKS
-known/cmc_rank1
-known/cmc_rank5
-known/cmc_rank10
 known/cmc_rank20
 known/cmc_rank50
 ```

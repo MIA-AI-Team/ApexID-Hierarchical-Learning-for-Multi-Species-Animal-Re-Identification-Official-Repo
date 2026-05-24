@@ -62,6 +62,18 @@ to be `val_known.csv` followed by `val_unknown.csv`; when that is true, the
 validator reuses known+unknown embeddings and avoids a separate mixed forward
 pass.
 
+`evaluation.top_k` logs `known/top1`, `known/top5`, and `known/top10`.
+`evaluation.cmc_ranks` is kept to larger CMC ranks only by default:
+
+```yaml
+evaluation:
+  top_k: [1, 5, 10]
+  cmc_ranks: [20, 50]
+```
+
+Ranks that appear in both lists are de-duplicated in code, so duplicate CMC keys
+are not logged when the matching `known/top*` metrics already exist.
+
 Debug the configured dataset and label flow:
 
 ```bash

@@ -94,6 +94,10 @@ depend on gallery or validation-set size. For faster approximate validation, set
 positive `evaluation.sample_limits` values in `configs/default.yaml`; leave them
 as `null` to keep full-split validation.
 
+Known retrieval logs `known/top1`, `known/top5`, and `known/top10` for the common
+small ranks. CMC logging is reserved for additional larger ranks by default
+(`known/cmc_rank20` and `known/cmc_rank50`) to avoid duplicate top-k columns.
+
 ## Validate The Data Pipeline
 
 Before a long run, inspect the CSV-to-label flow and one DataLoader batch:

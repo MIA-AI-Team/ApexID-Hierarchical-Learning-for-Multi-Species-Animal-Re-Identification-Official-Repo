@@ -240,7 +240,7 @@ def compute_known_retrieval_metrics(
     gallery_embeddings,
     gallery_labels,
     top_k=(1, 5, 10),
-    cmc_ranks=(1, 5, 10, 20, 50),
+    cmc_ranks=(20, 50),
     chunk_size=1024,
     compute_map=True,
     return_matches=False,
@@ -260,7 +260,7 @@ def compute_known_retrieval_metrics(
         raise ValueError("query and gallery embeddings must have the same embedding dimension.")
 
     top_k = tuple(sorted({int(k) for k in top_k}))
-    cmc_ranks = tuple(sorted({int(k) for k in cmc_ranks}))
+    cmc_ranks = tuple(sorted({int(k) for k in cmc_ranks} - set(top_k)))
     ranks = tuple(sorted(set(top_k) | set(cmc_ranks)))
     if any(k <= 0 for k in ranks):
         raise ValueError("rank values must be > 0.")
@@ -1021,7 +1021,7 @@ def evaluate_all_validation_splits(
     dir_cfg = dict(config.get("dir", {}) or {})
 
     top_k = tuple(config.get("top_k", (1, 5, 10)))
-    cmc_ranks = tuple(config.get("cmc_ranks", (1, 5, 10, 20, 50)))
+    cmc_ranks = tuple(config.get("cmc_ranks", (20, 50)))
     clustering_method = clustering_cfg.get("method", "threshold_connected_components")
     clustering_threshold = float(clustering_cfg.get("threshold", 0.5))
     target_tpr = float(rejection_cfg.get("fpr95_target_tpr", 0.95))

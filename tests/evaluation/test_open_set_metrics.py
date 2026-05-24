@@ -88,7 +88,9 @@ def test_known_retrieval_metrics_use_train_gallery():
     assert metrics["known/top10"] == 1.0
     assert metrics["known/mAP"] == 1.0
     assert metrics["known/BAKS"] == 1.0
-    assert metrics["known/cmc_rank1"] == 1.0
+    for duplicate_rank in (1, 5, 10):
+        assert f"known/cmc_rank{duplicate_rank}" not in metrics
+    assert metrics["known/cmc_rank20"] == 1.0
     assert metrics["known/cmc_rank50"] == 1.0
 
 
@@ -279,7 +281,7 @@ def test_diagnostics_and_metrics_do_not_crash_with_singleton_identities():
         embeddings[1:],
         labels[1:],
         top_k=(1, 5, 10),
-        cmc_ranks=(1,),
+        cmc_ranks=(20,),
     )
 
     assert math.isnan(diagnostics["diagnostics/intra_similarity"])
