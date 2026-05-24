@@ -13,3 +13,4 @@ PyYAML
 wandb
 umap-learn
 matplotlib
+gdown

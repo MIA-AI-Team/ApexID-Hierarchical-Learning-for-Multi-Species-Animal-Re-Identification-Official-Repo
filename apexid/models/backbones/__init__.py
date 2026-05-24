@@ -6,17 +6,35 @@ from .osnet import (
     osnet_x0_75,
     osnet_x1_0,
 )
+from .osnet_pt import (
+    PretrainedOSNet,
+    WaveletStem,
+    init_pretrained_weights,
+    osnet_ibn_x1_0_pt,
+    osnet_x0_25_pt,
+    osnet_x0_5_pt,
+    osnet_x0_75_pt,
+    osnet_x1_0_pt,
+)
 from .registry import BACKBONE_REGISTRY, available_backbones, build_backbone, register_backbone
 
 __all__ = [
     "BACKBONE_REGISTRY",
     "OSNet",
+    "PretrainedOSNet",
+    "WaveletStem",
     "available_backbones",
     "build_backbone",
+    "init_pretrained_weights",
     "osnet_ibn_x1_0",
+    "osnet_ibn_x1_0_pt",
     "osnet_x0_25",
+    "osnet_x0_25_pt",
     "osnet_x0_5",
+    "osnet_x0_5_pt",
     "osnet_x0_75",
+    "osnet_x0_75_pt",
     "osnet_x1_0",
+    "osnet_x1_0_pt",
     "register_backbone",
 ]

@@ -5,6 +5,13 @@ from .osnet import (
     osnet_x0_75,
     osnet_x1_0,
 )
+from .osnet_pt import (
+    osnet_ibn_x1_0_pt,
+    osnet_x0_25_pt,
+    osnet_x0_5_pt,
+    osnet_x0_75_pt,
+    osnet_x1_0_pt,
+)
 
 
 BACKBONE_REGISTRY = {}
@@ -42,3 +49,8 @@ register_backbone("osnet_x0_75")(osnet_x0_75)
 register_backbone("osnet_x0_5")(osnet_x0_5)
 register_backbone("osnet_x0_25")(osnet_x0_25)
 register_backbone("osnet_ibn_x1_0")(osnet_ibn_x1_0)
+register_backbone("osnet_x1_0_pt")(osnet_x1_0_pt)
+register_backbone("osnet_x0_75_pt")(osnet_x0_75_pt)
+register_backbone("osnet_x0_5_pt")(osnet_x0_5_pt)
+register_backbone("osnet_x0_25_pt")(osnet_x0_25_pt)
+register_backbone("osnet_ibn_x1_0_pt")(osnet_ibn_x1_0_pt)
