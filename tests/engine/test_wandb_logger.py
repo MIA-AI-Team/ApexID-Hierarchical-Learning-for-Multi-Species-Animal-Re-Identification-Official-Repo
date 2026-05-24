@@ -22,6 +22,11 @@ class FakeRun:
     def __init__(self):
         self.logged_artifacts = []
         self.finished = False
+        self.define_metric_calls = []
+
+    def define_metric(self, name, **kwargs):
+        self.define_metric_calls.append((name, kwargs))
+        return None
 
     def log_artifact(self, artifact, aliases=None):
         self.logged_artifacts.append((artifact, aliases))
@@ -83,7 +88,7 @@ def test_wandb_logger_uses_fake_wandb_without_network(monkeypatch, tmp_path):
     artifact_path = tmp_path / "best_metadata.json"
     artifact_path.write_text("{}", encoding="utf-8")
 
-    logger.log_metrics({"train_loss": 1.0}, step=1)
+    logger.log_metrics({"epoch": 1, "train_loss": 1.0})
     logger.log_artifact(
         artifact_path,
         name="best_metadata",
@@ -100,7 +105,11 @@ def test_wandb_logger_uses_fake_wandb_without_network(monkeypatch, tmp_path):
     assert calls["init"]["tags"] == ["test"]
     assert calls["init"]["mode"] == "offline"
     assert calls["init"]["config"] == {"seed": 42}
-    assert calls["logs"] == [({"train_loss": 1.0}, 1)]
+    assert run.define_metric_calls == [
+        ("epoch", {"summary": "max"}),
+        ("*", {"step_metric": "epoch"}),
+    ]
+    assert calls["logs"] == [({"epoch": 1, "train_loss": 1.0}, None)]
     assert len(run.logged_artifacts) == 1
     artifact, aliases = run.logged_artifacts[0]
     assert artifact.name == "best_metadata"

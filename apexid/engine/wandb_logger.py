@@ -117,12 +117,19 @@ class WandbLogger:
             mode=mode,
             config=config,
         )
+        # Epoch-level metrics must use a custom x-axis. Passing step=epoch while
+        # W&B system monitoring advances the internal step causes dropped logs.
+        self.run.define_metric("epoch", summary="max")
+        self.run.define_metric("*", step_metric="epoch")
 
     def log_metrics(self, metrics, step=None):
         payload = sanitize_metrics(metrics)
         if not payload:
             return None
-        self.wandb.log(payload, step=step)
+        if step is None:
+            self.wandb.log(payload)
+        else:
+            self.wandb.log(payload, step=step)
         return payload
 
     def _upload_artifact(self, artifact, aliases):

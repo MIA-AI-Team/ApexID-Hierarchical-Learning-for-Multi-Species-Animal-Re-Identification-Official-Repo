@@ -671,7 +671,7 @@ class Trainer:
                     val_metrics,
                     early_stopping_improved=early_stopping_improved,
                 )
-                self.experiment_logger.log_metrics(log_metrics, step=int(epoch) + 1)
+                self.experiment_logger.log_metrics(log_metrics)
                 if early_stopping_improved:
                     self._log_best_artifacts(
                         epoch,

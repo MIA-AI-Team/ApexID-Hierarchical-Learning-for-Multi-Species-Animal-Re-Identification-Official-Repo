@@ -311,7 +311,7 @@ def test_trainer_logs_epoch_metrics_and_best_artifacts(tmp_path):
     assert logger.finished is True
     assert len(logger.metrics) == 1
     metrics, step = logger.metrics[0]
-    assert step == 1
+    assert step is None
     assert metrics["epoch"] == 1
     assert metrics["epoch_index"] == 0
     assert metrics["epochs"] == 1
@@ -423,8 +423,8 @@ def test_trainer_dispatches_open_set_loaders_and_logs_slash_metrics(tmp_path):
     assert len(logger.metrics) == 5
     first_metrics, first_step = logger.metrics[0]
     last_metrics, last_step = logger.metrics[-1]
-    assert first_step == 1
-    assert last_step == 5
+    assert first_step is None
+    assert last_step is None
     assert "train_acc" not in first_metrics
     assert "val_acc" not in first_metrics
     assert first_metrics["mixed/NormAcc"] == 0.7
