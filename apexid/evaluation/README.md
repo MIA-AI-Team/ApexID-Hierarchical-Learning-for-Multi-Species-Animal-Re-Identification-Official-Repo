@@ -56,6 +56,21 @@ whether positive pairs are close. Uniformity detects whether embeddings are well
 distributed on the hypersphere. k-NN accuracy tests whether frozen embeddings are
 directly useful for retrieval.
 
+Large train galleries make exact open-set metrics expensive because gallery
+matching, mAP, and clustering scale with the number of validation images. The
+default config keeps `evaluation.sample_limits` set to `null`, so epoch-time
+validation uses the full splits. When `val.csv` is exactly
+`val_known.csv + val_unknown.csv`, the validator reuses those embeddings for the
+mixed split and reuses gallery-match scores for mixed metrics. You can set
+`evaluation.sample_limits` to positive integers for faster approximate
+identity-balanced validation.
+
+The heaviest exact metrics are `known/mAP` and CMC/top-k retrieval against the
+train gallery, rejection and mixed knownness scores, mixed threshold selection,
+and threshold-connected clustering for unknown/rejected samples. The evaluator
+keeps those metrics exact by default while avoiding repeated gallery scoring
+where the known, unknown, and mixed splits overlap.
+
 ## W&B Metric Names
 
 Known:
@@ -111,6 +126,17 @@ Diagnostics:
 
 ```text
 validation/diagnostics_ran
+validation/mixed_embeddings_reused
+validation/mixed_scores_reused
+validation/metrics_sampled
+validation/gallery_samples_used
+validation/gallery_samples_total
+validation/known_samples_used
+validation/known_samples_total
+validation/unknown_samples_used
+validation/unknown_samples_total
+validation/mixed_samples_used
+validation/mixed_samples_total
 diagnostics/intra_similarity
 diagnostics/inter_similarity
 diagnostics/intra_inter_gap

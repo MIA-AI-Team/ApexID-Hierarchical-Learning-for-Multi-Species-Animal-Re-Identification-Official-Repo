@@ -218,6 +218,55 @@ def extract_embeddings(backbone, dataloader, device=None, progress=True, desc="E
     return result
 
 
+def _loader_data_csv(loader):
+    dataset = getattr(loader, "dataset", None)
+    return getattr(dataset, "data_csv", None)
+
+
+def _mixed_loader_is_known_unknown_concat(known_loader, unknown_loader, mixed_loader):
+    known_df = _loader_data_csv(known_loader)
+    unknown_df = _loader_data_csv(unknown_loader)
+    mixed_df = _loader_data_csv(mixed_loader)
+    if known_df is None or unknown_df is None or mixed_df is None:
+        return False
+    if len(mixed_df) != len(known_df) + len(unknown_df):
+        return False
+
+    compare_columns = [
+        column
+        for column in ("identity", "path")
+        if column in known_df and column in unknown_df and column in mixed_df
+    ]
+    if not compare_columns:
+        return False
+
+    for column in compare_columns:
+        expected = np.concatenate(
+            [
+                known_df[column].astype(str).to_numpy(copy=False),
+                unknown_df[column].astype(str).to_numpy(copy=False),
+            ]
+        )
+        actual = mixed_df[column].astype(str).to_numpy(copy=False)
+        if not np.array_equal(actual, expected):
+            return False
+    return True
+
+
+def _concat_embedding_results(first, second):
+    result = {
+        "num_samples": int(first.get("num_samples", 0)) + int(second.get("num_samples", 0))
+    }
+    for key in sorted((set(first) & set(second)) - {"num_samples"}):
+        first_value = first[key]
+        second_value = second[key]
+        if torch.is_tensor(first_value) and torch.is_tensor(second_value):
+            result[key] = torch.cat([first_value, second_value], dim=0)
+        elif isinstance(first_value, np.ndarray) and isinstance(second_value, np.ndarray):
+            result[key] = np.concatenate([first_value, second_value], axis=0)
+    return result
+
+
 class Validator:
     """Validation loop for ApexID re-identification experiments."""
 
@@ -373,13 +422,22 @@ class Validator:
             progress=self.progress,
             desc=f"Val unknown{suffix}",
         )
-        mixed = extract_embeddings(
-            self.backbone,
-            mixed_loader,
-            device=self.device,
-            progress=self.progress,
-            desc=f"Val mixed{suffix}",
-        )
+        mixed_reused = _mixed_loader_is_known_unknown_concat(known_loader, unknown_loader, mixed_loader)
+        if mixed_reused:
+            mixed = _concat_embedding_results(known, unknown)
+            if self.progress:
+                tqdm.write(f"Val mixed{suffix}: reused known+unknown embeddings")
+        else:
+            mixed = extract_embeddings(
+                self.backbone,
+                mixed_loader,
+                device=self.device,
+                progress=self.progress,
+                desc=f"Val mixed{suffix}",
+            )
+
+        if self.progress:
+            tqdm.write(f"Computing open-set validation metrics{suffix}")
 
         known_classification = self._classification_metrics_from_embeddings(
             known["embeddings"],
@@ -416,6 +474,7 @@ class Validator:
             "micro_f1": float(open_set_metrics.get("mixed/F1", np.nan)),
             "num_known": int(known_classification["num_known"]),
             "num_samples": int(mixed["num_samples"]),
+            "validation/mixed_embeddings_reused": int(bool(mixed_reused)),
         }
         result.update(open_set_metrics)
         if return_embeddings:

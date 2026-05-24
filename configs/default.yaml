@@ -108,6 +108,11 @@ evaluation:
   - 10
   - 20
   - 50
+  sample_limits:
+    gallery: null
+    known: null
+    unknown: null
+    mixed: null
   top_k:
   - 1
   - 5

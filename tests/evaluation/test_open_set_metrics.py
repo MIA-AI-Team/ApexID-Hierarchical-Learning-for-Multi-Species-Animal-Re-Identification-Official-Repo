@@ -215,6 +215,54 @@ def test_evaluate_all_validation_splits_skips_and_runs_diagnostics_by_one_based_
     assert math.isfinite(ran["diagnostics/knn_top1"])
 
 
+def test_evaluate_all_validation_splits_applies_identity_balanced_sample_limits():
+    labels = np.arange(11)
+    eye = np.eye(labels.size, dtype=np.float32)
+
+    gallery_labels = np.repeat(np.arange(8), 2)
+    gallery_embeddings = eye[gallery_labels]
+    known_labels = np.repeat(np.arange(3), 3)
+    known_embeddings = eye[known_labels]
+    known_cls = known_labels.copy()
+    unknown_labels = np.repeat(np.arange(8, 11), 3)
+    unknown_embeddings = eye[unknown_labels]
+    unknown_cls = np.full(unknown_labels.shape[0], -100)
+    mixed_embeddings = np.vstack([known_embeddings, unknown_embeddings])
+    mixed_labels = np.concatenate([known_labels, unknown_labels])
+    mixed_cls = np.concatenate([known_cls, unknown_cls])
+
+    metrics = evaluate_all_validation_splits(
+        gallery_embeddings,
+        gallery_labels,
+        known_embeddings,
+        known_labels,
+        unknown_embeddings,
+        unknown_labels,
+        mixed_embeddings,
+        mixed_labels,
+        known_cls_labels=known_cls,
+        unknown_cls_labels=unknown_cls,
+        mixed_cls_labels=mixed_cls,
+        config={
+            "known_unknown_threshold": 0.5,
+            "sample_limits": {"gallery": 6, "known": 4, "unknown": 4, "mixed": 6},
+            "diagnostics": {"enabled": False},
+        },
+        epoch_index=0,
+        chunk_size=3,
+        random_state=7,
+    )
+
+    assert metrics["validation/metrics_sampled"] == 1
+    assert metrics["validation/gallery_samples_used"] == 6
+    assert metrics["validation/gallery_samples_total"] == gallery_labels.shape[0]
+    assert metrics["validation/known_samples_used"] == 4
+    assert metrics["validation/unknown_samples_used"] == 4
+    assert metrics["validation/mixed_samples_used"] == 6
+    assert metrics["known/top1"] == 1.0
+    assert math.isfinite(metrics["mixed/NormAcc"])
+
+
 def test_diagnostics_and_metrics_do_not_crash_with_singleton_identities():
     embeddings = np.eye(3, dtype=np.float32)
     labels = np.array([0, 1, 2])

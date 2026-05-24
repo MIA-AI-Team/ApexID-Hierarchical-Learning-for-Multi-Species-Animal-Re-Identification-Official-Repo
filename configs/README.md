@@ -27,7 +27,8 @@ Important sections:
 - `head` and `loss`: margin head and external objective configuration.
 - `optimizer`, `scheduler`, and `lr_range_test`: learning-rate behavior.
 - `training`, `validation`, and `evaluation`: epoch loop, label ignore indices,
-  metric cadence, open-set metric toggles, thresholds, and validation chunk size.
+  metric cadence, open-set metric toggles, thresholds, sample limits, and
+  validation chunk size.
 - `checkpoint` and `early_stopping`: resumable latest checkpoint and best-model
   artifacts.
 - `tracking`: W&B logging settings.
@@ -39,6 +40,27 @@ Train with the default config:
 ```bash
 python scripts/train.py --config configs/default.yaml
 ```
+
+## Validation Settings
+
+`evaluation.sample_limits` controls whether open-set metric computation uses the
+full validation splits or deterministic identity-balanced samples. The default
+values are `null`, which means full validation:
+
+```yaml
+evaluation:
+  sample_limits:
+    gallery: null
+    known: null
+    unknown: null
+    mixed: null
+```
+
+Set positive integers only when you intentionally want faster approximate
+metrics during development. The default open-set loader setup expects `val.csv`
+to be `val_known.csv` followed by `val_unknown.csv`; when that is true, the
+validator reuses known+unknown embeddings and avoids a separate mixed forward
+pass.
 
 Debug the configured dataset and label flow:
 

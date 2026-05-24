@@ -27,6 +27,12 @@ metrics/artifacts through W&B.
 Validation retrieval metrics use the configured query chunk size to avoid
 allocating the full all-pairs similarity matrix at once.
 
+Open-set validation uses gallery, known, unknown, and mixed loaders. When the
+mixed split is exactly `val_known.csv + val_unknown.csv`, `Validator` reuses the
+known and unknown embeddings instead of running a separate mixed forward pass.
+The evaluator also reuses gallery-match scores for mixed metrics, so full
+validation remains exact while avoiding duplicated work.
+
 ## Common Commands
 
 Run engine tests:
@@ -56,3 +62,5 @@ from apexid.engine import save_training_checkpoint, load_training_checkpoint
   `mixed/NormAcc`, `known/mAP`, and the legacy `val_*` aliases.
 - Preserve `classification_ignore_index` and `metric_ignore_index` behavior for
   open-set validation.
+- Preserve mixed-split reuse only when dataset metadata confirms the mixed split
+  order matches known followed by unknown.

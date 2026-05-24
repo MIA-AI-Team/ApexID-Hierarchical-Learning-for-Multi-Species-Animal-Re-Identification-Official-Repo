@@ -40,6 +40,10 @@ def test_default_config_contains_experiment_training_sections():
     assert cfg["evaluation"]["diagnostics_every_n_epochs"] == 5
     assert cfg["evaluation"]["diagnostics"]["max_pairs"] == 100000
     assert cfg["evaluation"]["clustering"]["method"] == "threshold_connected_components"
+    assert cfg["evaluation"]["sample_limits"]["gallery"] is None
+    assert cfg["evaluation"]["sample_limits"]["known"] is None
+    assert cfg["evaluation"]["sample_limits"]["unknown"] is None
+    assert cfg["evaluation"]["sample_limits"]["mixed"] is None
     assert cfg["evaluation"]["dir"]["far_levels"] == [0.01, 0.001]
     assert cfg["early_stopping"]["monitor"] == "mixed/NormAcc"
     assert cfg["early_stopping"]["mode"] == "max"

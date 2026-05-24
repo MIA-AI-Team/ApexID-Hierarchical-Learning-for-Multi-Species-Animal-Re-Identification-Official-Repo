@@ -1,5 +1,6 @@
 import math
 
+import pandas as pd
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -14,6 +15,22 @@ class LogitHead(nn.Module):
 
     def predict_logits(self, embeddings):
         return embeddings[:, :2]
+
+
+class MetadataTensorDataset(TensorDataset):
+    def __init__(self, images, cls_labels, metric_labels, identities, paths):
+        super().__init__(images, cls_labels, metric_labels)
+        self.data_csv = pd.DataFrame({"identity": identities, "path": paths})
+
+
+class CountingIdentity(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.samples_seen = 0
+
+    def forward(self, images):
+        self.samples_seen += int(images.shape[0])
+        return images
 
 
 def test_validator_computes_known_loss_accuracy_and_reid_metrics():
@@ -162,6 +179,93 @@ def test_validator_open_set_uses_gallery_known_unknown_and_mixed_loaders():
     assert result["diagnostics/knn_top1"] == 1.0
     assert result["mAP"] == result["known/mAP"]
     assert result["micro_f1"] == result["mixed/F1"]
+    assert tuple(result["embeddings"].shape) == (4, 2)
+
+
+def test_validator_reuses_mixed_loader_when_it_is_known_unknown_concatenation():
+    gallery_images = torch.tensor(
+        [
+            [1.0, 0.0],
+            [0.95, 0.05],
+            [0.0, 1.0],
+            [0.05, 0.95],
+        ]
+    )
+    gallery_labels = torch.tensor([0, 0, 1, 1])
+    known_images = torch.tensor([[0.98, 0.02], [0.02, 0.98]])
+    known_cls = torch.tensor([0, 1])
+    known_metric = torch.tensor([0, 1])
+    unknown_images = torch.tensor([[-1.0, 0.0], [0.0, -1.0]])
+    unknown_cls = torch.tensor([-100, -100])
+    unknown_metric = torch.tensor([2, 3])
+    mixed_images = torch.cat([known_images, unknown_images], dim=0)
+    mixed_cls = torch.cat([known_cls, unknown_cls], dim=0)
+    mixed_metric = torch.cat([known_metric, unknown_metric], dim=0)
+
+    backbone = CountingIdentity()
+    validator = Validator(
+        backbone,
+        LogitHead(),
+        loss=nn.CrossEntropyLoss(),
+        device="cpu",
+        classification_ignore_index=-100,
+        metric_chunk_size=2,
+        progress=False,
+    )
+    result = validator.validate_open_set(
+        DataLoader(
+            MetadataTensorDataset(
+                gallery_images,
+                gallery_labels,
+                gallery_labels,
+                identities=["a", "a", "b", "b"],
+                paths=["g0", "g1", "g2", "g3"],
+            ),
+            batch_size=2,
+        ),
+        DataLoader(
+            MetadataTensorDataset(
+                known_images,
+                known_cls,
+                known_metric,
+                identities=["a", "b"],
+                paths=["k0", "k1"],
+            ),
+            batch_size=2,
+        ),
+        DataLoader(
+            MetadataTensorDataset(
+                unknown_images,
+                unknown_cls,
+                unknown_metric,
+                identities=["u0", "u1"],
+                paths=["u0", "u1"],
+            ),
+            batch_size=2,
+        ),
+        DataLoader(
+            MetadataTensorDataset(
+                mixed_images,
+                mixed_cls,
+                mixed_metric,
+                identities=["a", "b", "u0", "u1"],
+                paths=["k0", "k1", "u0", "u1"],
+            ),
+            batch_size=2,
+        ),
+        evaluation_config={
+            "known_unknown_threshold": 0.5,
+            "diagnostics": {"enabled": False},
+            "clustering": {"method": "threshold_connected_components", "threshold": 0.8},
+        },
+        epoch=0,
+        epochs=1,
+        return_embeddings=True,
+    )
+
+    assert backbone.samples_seen == 8
+    assert result["validation/mixed_embeddings_reused"] == 1
+    assert result["validation/mixed_scores_reused"] == 1
     assert tuple(result["embeddings"].shape) == (4, 2)
 
 

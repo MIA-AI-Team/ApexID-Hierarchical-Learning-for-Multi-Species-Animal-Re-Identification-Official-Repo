@@ -74,6 +74,128 @@ def _chunk_size(chunk_size, num_samples):
     return chunk_size
 
 
+def _optional_sample_limit(value, name):
+    if value in {None, "", "null"}:
+        return None
+    value = int(value)
+    if value <= 0:
+        raise ValueError(f"{name} must be > 0 when provided.")
+    return value
+
+
+def _sample_limits_from_config(config):
+    sample_cfg = dict(config.get("sample_limits", {}) or {})
+    aliases = {
+        "gallery": ("gallery", "max_gallery_samples"),
+        "known": ("known", "max_known_samples"),
+        "unknown": ("unknown", "max_unknown_samples"),
+        "mixed": ("mixed", "max_mixed_samples"),
+    }
+
+    limits = {}
+    for split_name, keys in aliases.items():
+        value = None
+        for key in keys:
+            if key in sample_cfg:
+                value = sample_cfg[key]
+                break
+            if key in config:
+                value = config[key]
+                break
+        limits[split_name] = _optional_sample_limit(value, f"evaluation.sample_limits.{split_name}")
+    return limits
+
+
+def _balanced_sample_indices(labels, max_samples, rng):
+    labels = _as_1d_array(labels, "labels")
+    num_samples = int(labels.shape[0])
+    if max_samples is None or max_samples >= num_samples:
+        return np.arange(num_samples, dtype=np.int64)
+
+    max_samples = int(max_samples)
+    unique_labels = np.unique(labels)
+    selected = []
+
+    if unique_labels.size > max_samples:
+        unique_labels = rng.choice(unique_labels, size=max_samples, replace=False)
+
+    for label in unique_labels:
+        label_indices = np.flatnonzero(labels == label)
+        if label_indices.size:
+            selected.append(int(rng.choice(label_indices)))
+
+    selected = np.asarray(selected, dtype=np.int64)
+    remaining_count = max_samples - int(selected.size)
+    if remaining_count > 0:
+        mask = np.ones(num_samples, dtype=bool)
+        mask[selected] = False
+        remaining = np.flatnonzero(mask)
+        if remaining.size:
+            fill = rng.choice(remaining, size=min(remaining_count, remaining.size), replace=False)
+            selected = np.concatenate([selected, fill.astype(np.int64, copy=False)])
+
+    selected = np.unique(selected.astype(np.int64, copy=False))
+    if selected.size > max_samples:
+        selected = rng.choice(selected, size=max_samples, replace=False)
+    return np.sort(selected.astype(np.int64, copy=False))
+
+
+def _gallery_sample_indices(labels, max_samples, required_labels, rng):
+    labels = _as_1d_array(labels, "gallery_labels")
+    num_samples = int(labels.shape[0])
+    if max_samples is None or max_samples >= num_samples:
+        return np.arange(num_samples, dtype=np.int64)
+
+    max_samples = int(max_samples)
+    selected = []
+    required_labels = np.unique(np.asarray(required_labels, dtype=labels.dtype))
+    for label in required_labels:
+        label_indices = np.flatnonzero(labels == label)
+        if label_indices.size:
+            selected.append(int(rng.choice(label_indices)))
+
+    selected = np.unique(np.asarray(selected, dtype=np.int64))
+    if selected.size > max_samples:
+        selected = rng.choice(selected, size=max_samples, replace=False)
+
+    remaining_count = max_samples - int(selected.size)
+    if remaining_count > 0:
+        mask = np.ones(num_samples, dtype=bool)
+        mask[selected] = False
+        remaining = np.flatnonzero(mask)
+        if remaining.size:
+            extra = _balanced_sample_indices(labels[remaining], remaining_count, rng)
+            selected = np.concatenate([selected, remaining[extra]])
+
+    return np.sort(np.unique(selected.astype(np.int64, copy=False)))
+
+
+def _take_optional_1d(values, indices, name):
+    if values is None:
+        return None
+    values = _as_1d_array(values, name)
+    return values[indices]
+
+
+def _is_concatenated_split(
+    mixed_embeddings,
+    mixed_labels,
+    known_embeddings,
+    known_labels,
+    unknown_embeddings,
+    unknown_labels,
+):
+    if mixed_labels.shape[0] != known_labels.shape[0] + unknown_labels.shape[0]:
+        return False
+    if mixed_embeddings.shape[0] != known_embeddings.shape[0] + unknown_embeddings.shape[0]:
+        return False
+    expected_labels = np.concatenate([known_labels, unknown_labels])
+    if not np.array_equal(mixed_labels, expected_labels):
+        return False
+    expected_embeddings = np.concatenate([known_embeddings, unknown_embeddings], axis=0)
+    return np.array_equal(mixed_embeddings, expected_embeddings)
+
+
 def best_gallery_matches(query_embeddings, gallery_embeddings, gallery_labels, chunk_size=1024):
     """Return best cosine score and gallery identity for each query embedding."""
     query_embeddings = _normalize_embeddings(query_embeddings).astype(np.float32, copy=False)
@@ -120,6 +242,8 @@ def compute_known_retrieval_metrics(
     top_k=(1, 5, 10),
     cmc_ranks=(1, 5, 10, 20, 50),
     chunk_size=1024,
+    compute_map=True,
+    return_matches=False,
 ):
     """Compute known-identity retrieval metrics using train embeddings as gallery."""
     query_embeddings, query_labels = _validate_embedding_labels(
@@ -152,26 +276,37 @@ def compute_known_retrieval_metrics(
 
     num_queries = int(query_labels.shape[0])
     num_gallery = int(gallery_labels.shape[0])
+    if return_matches:
+        best_scores = np.full(num_queries, -np.inf, dtype=np.float32)
+        best_labels = np.full(num_queries, -1, dtype=gallery_labels.dtype)
     if num_queries == 0 or num_gallery == 0:
+        if return_matches:
+            return result, best_scores, best_labels
         return result
 
     chunk_size = _chunk_size(chunk_size, num_queries)
+    max_rank = max(ranks) if ranks else 0
     top_hits = {k: 0 for k in ranks}
     valid_queries = 0
     ap_values = []
     top1_correct = np.zeros(num_queries, dtype=np.float64)
 
-    gallery_positive_counts = {
-        label: int(np.sum(gallery_labels == label))
+    gallery_positive_indices = {
+        label: np.flatnonzero(gallery_labels == label)
         for label in np.unique(query_labels)
     }
+    gallery_positive_counts = {label: int(indices.size) for label, indices in gallery_positive_indices.items()}
 
     for start in range(0, num_queries, chunk_size):
         stop = min(start + chunk_size, num_queries)
         labels_chunk = query_labels[start:stop]
         similarity = query_embeddings[start:stop] @ gallery_embeddings.T
-        ranked = np.argsort(-similarity, axis=1)
-        relevance = gallery_labels[ranked] == labels_chunk[:, None]
+
+        if return_matches:
+            best_indices = np.argmax(similarity, axis=1)
+            best_scores[start:stop] = similarity[np.arange(stop - start), best_indices]
+            best_labels[start:stop] = gallery_labels[best_indices]
+
         has_positive = np.array(
             [gallery_positive_counts.get(label, 0) > 0 for label in labels_chunk],
             dtype=bool,
@@ -180,22 +315,74 @@ def compute_known_retrieval_metrics(
             continue
 
         valid_queries += int(np.sum(has_positive))
-        top1_correct[start:stop] = relevance[:, :1].any(axis=1).astype(np.float64)
-        for k in ranks:
-            k_eff = min(k, num_gallery)
-            top_hits[k] += int(relevance[has_positive, :k_eff].any(axis=1).sum())
-        for rel in relevance[has_positive]:
-            ap_values.append(_average_precision_from_relevance(rel))
+
+        if max_rank > 0:
+            rank_limit = min(max_rank, num_gallery)
+            if rank_limit == num_gallery:
+                top_indices = np.argsort(-similarity, axis=1)[:, :rank_limit]
+            else:
+                top_indices = np.argpartition(
+                    -similarity,
+                    kth=rank_limit - 1,
+                    axis=1,
+                )[:, :rank_limit]
+                top_scores = np.take_along_axis(similarity, top_indices, axis=1)
+                top_order = np.argsort(-top_scores, axis=1)
+                top_indices = np.take_along_axis(top_indices, top_order, axis=1)
+            top_relevance = gallery_labels[top_indices] == labels_chunk[:, None]
+            top1_correct[start:stop] = top_relevance[:, :1].any(axis=1).astype(np.float64)
+            for k in ranks:
+                k_eff = min(k, rank_limit)
+                top_hits[k] += int(top_relevance[has_positive, :k_eff].any(axis=1).sum())
+
+        if compute_map:
+            valid_local_indices = np.flatnonzero(has_positive)
+            sorted_scores = -np.sort(-similarity[valid_local_indices], axis=1)
+            for sorted_row_index, row_offset in enumerate(valid_local_indices):
+                positive_indices = gallery_positive_indices[labels_chunk[row_offset]]
+                positive_scores = similarity[row_offset, positive_indices]
+                positive_order = np.argsort(-positive_scores)
+                positive_scores = positive_scores[positive_order]
+                positive_ranks = np.searchsorted(
+                    -sorted_scores[sorted_row_index],
+                    -positive_scores,
+                    side="left",
+                )
+                if positive_ranks.size > 1:
+                    tie_offsets = np.zeros(positive_ranks.shape[0], dtype=np.int64)
+                    tie_start = 0
+                    while tie_start < positive_scores.size:
+                        tie_stop = tie_start + 1
+                        while (
+                            tie_stop < positive_scores.size
+                            and positive_scores[tie_stop] == positive_scores[tie_start]
+                        ):
+                            tie_stop += 1
+                        tie_offsets[tie_start:tie_stop] = np.arange(tie_stop - tie_start, dtype=np.int64)
+                        tie_start = tie_stop
+                    positive_ranks = positive_ranks + tie_offsets
+                positive_ranks = positive_ranks + 1
+                positive_ranks.sort()
+                precision_at_hits = (
+                    np.arange(1, positive_ranks.size + 1, dtype=np.float64)
+                    / positive_ranks.astype(np.float64)
+                )
+                ap_values.append(float(np.mean(precision_at_hits)))
 
     if valid_queries == 0:
+        if return_matches:
+            return result, best_scores, best_labels
         return result
 
     for k in top_k:
         result[f"known/top{k}"] = float(top_hits[k] / valid_queries)
     for k in cmc_ranks:
         result[f"known/cmc_rank{k}"] = float(top_hits[k] / valid_queries)
-    result["known/mAP"] = _safe_mean(ap_values)
+    if compute_map:
+        result["known/mAP"] = _safe_mean(ap_values)
     result["known/BAKS"] = _balanced_mean_by_label(query_labels, top1_correct)
+    if return_matches:
+        return result, best_scores, best_labels
     return result
 
 
@@ -418,43 +605,130 @@ def select_threshold_by_normacc(scores, true_known_mask, true_labels, pred_known
     if thresholds.size == 0:
         return _metric_nan()
 
-    best_threshold = float(thresholds[0])
+    known_positions = np.flatnonzero(true_known_mask)
+    unknown_positions = np.flatnonzero(~true_known_mask)
+    known_inverse = np.empty(0, dtype=np.int64)
+    unknown_inverse = np.empty(0, dtype=np.int64)
+    known_counts = np.empty(0, dtype=np.float64)
+    unknown_counts = np.empty(0, dtype=np.float64)
+    known_inverse_by_position = np.full(scores.shape[0], -1, dtype=np.int64)
+    unknown_inverse_by_position = np.full(scores.shape[0], -1, dtype=np.int64)
+
+    if known_positions.size:
+        _, known_inverse, known_counts = np.unique(
+            true_labels[known_positions],
+            return_inverse=True,
+            return_counts=True,
+        )
+        known_counts = known_counts.astype(np.float64)
+        known_inverse_by_position[known_positions] = known_inverse
+    if unknown_positions.size:
+        _, unknown_inverse, unknown_counts = np.unique(
+            true_labels[unknown_positions],
+            return_inverse=True,
+            return_counts=True,
+        )
+        unknown_counts = unknown_counts.astype(np.float64)
+        unknown_inverse_by_position[unknown_positions] = unknown_inverse
+
+    known_correct_accepted = np.zeros(known_counts.shape[0], dtype=np.float64)
+    unknown_accepted = np.zeros(unknown_counts.shape[0], dtype=np.float64)
+
+    def score_from_counts():
+        if known_counts.size == 0 or unknown_counts.size == 0:
+            return _metric_nan()
+        baks = float(np.mean(known_correct_accepted / known_counts))
+        baus = float(np.mean((unknown_counts - unknown_accepted) / unknown_counts))
+        return norm_accuracy(baks, baus)
+
+    best_threshold = float(np.nextafter(np.max(scores[np.isfinite(scores)]), np.inf))
     best_score = -np.inf
-    for threshold in thresholds:
-        accept_mask = scores >= threshold
-        baks = _balanced_known_accuracy(true_known_mask, true_labels, pred_known_labels, accept_mask)
-        baus = _balanced_unknown_accuracy(true_known_mask, true_labels, accept_mask)
-        score = norm_accuracy(baks, baus)
+
+    score = score_from_counts()
+    score_for_selection = -np.inf if not math.isfinite(score) else score
+    if score_for_selection > best_score:
+        best_score = score_for_selection
+
+    finite_indices = np.flatnonzero(np.isfinite(scores))
+    order = finite_indices[np.argsort(-scores[finite_indices])]
+    cursor = 0
+    while cursor < order.size:
+        threshold = scores[order[cursor]]
+        next_cursor = cursor + 1
+        while next_cursor < order.size and scores[order[next_cursor]] == threshold:
+            next_cursor += 1
+        indices = order[cursor:next_cursor]
+        known_group = indices[true_known_mask[indices]]
+        if known_group.size:
+            correct_group = known_group[pred_known_labels[known_group] == true_labels[known_group]]
+            if correct_group.size:
+                np.add.at(known_correct_accepted, known_inverse_by_position[correct_group], 1.0)
+        unknown_group = indices[~true_known_mask[indices]]
+        if unknown_group.size:
+            np.add.at(unknown_accepted, unknown_inverse_by_position[unknown_group], 1.0)
+
+        score = score_from_counts()
         score_for_selection = -np.inf if not math.isfinite(score) else score
         if score_for_selection > best_score or (
             score_for_selection == best_score and float(threshold) > best_threshold
         ):
             best_score = score_for_selection
             best_threshold = float(threshold)
+        cursor = next_cursor
     return best_threshold
 
 
-def compute_oscr_auc(known_scores, unknown_scores, known_correct):
+def _known_unknown_acceptance_curve(known_scores, unknown_scores, known_correct):
     known_scores = np.asarray(known_scores, dtype=np.float64)
     unknown_scores = np.asarray(unknown_scores, dtype=np.float64)
     known_correct = np.asarray(known_correct, dtype=bool)
     if known_scores.size == 0 or unknown_scores.size == 0:
-        return _metric_nan()
+        return None, None
     if known_correct.shape[0] != known_scores.shape[0]:
         raise ValueError("known_correct length must match known_scores.")
 
-    thresholds = _candidate_thresholds(np.concatenate([known_scores, unknown_scores]))
-    if thresholds.size == 0:
-        return _metric_nan()
+    scores = np.concatenate([known_scores, unknown_scores])
+    is_known = np.concatenate(
+        [
+            np.ones(known_scores.shape[0], dtype=bool),
+            np.zeros(unknown_scores.shape[0], dtype=bool),
+        ]
+    )
+    correct = np.concatenate([known_correct, np.zeros(unknown_scores.shape[0], dtype=bool)])
+    finite_indices = np.flatnonzero(np.isfinite(scores))
+    if finite_indices.size == 0:
+        return None, None
 
     fpr_values = []
     ccr_values = []
-    for threshold in thresholds:
-        fpr_values.append(float(np.mean(unknown_scores >= threshold)))
-        ccr_values.append(float(np.mean((known_scores >= threshold) & known_correct)))
+    unknown_accepted = 0
+    known_correct_accepted = 0
+    fpr_values.append(0.0)
+    ccr_values.append(0.0)
 
-    fpr_values = np.asarray(fpr_values, dtype=np.float64)
-    ccr_values = np.asarray(ccr_values, dtype=np.float64)
+    order = finite_indices[np.argsort(-scores[finite_indices])]
+    cursor = 0
+    while cursor < order.size:
+        threshold = scores[order[cursor]]
+        next_cursor = cursor + 1
+        while next_cursor < order.size and scores[order[next_cursor]] == threshold:
+            next_cursor += 1
+        indices = order[cursor:next_cursor]
+        unknown_accepted += int(np.sum(~is_known[indices]))
+        known_correct_accepted += int(np.sum(is_known[indices] & correct[indices]))
+        fpr_values.append(float(unknown_accepted / unknown_scores.shape[0]))
+        ccr_values.append(float(known_correct_accepted / known_scores.shape[0]))
+        cursor = next_cursor
+
+    return np.asarray(fpr_values, dtype=np.float64), np.asarray(ccr_values, dtype=np.float64)
+
+
+def compute_oscr_auc(known_scores, unknown_scores, known_correct):
+    curve = _known_unknown_acceptance_curve(known_scores, unknown_scores, known_correct)
+    fpr_values, ccr_values = curve
+    if fpr_values is None:
+        return _metric_nan()
+
     order = np.argsort(fpr_values)
     fpr_values = fpr_values[order]
     ccr_values = ccr_values[order]
@@ -467,25 +741,14 @@ def compute_oscr_auc(known_scores, unknown_scores, known_correct):
 
 
 def compute_dir_at_far(known_scores, unknown_scores, known_correct, far_level=0.01):
-    known_scores = np.asarray(known_scores, dtype=np.float64)
-    unknown_scores = np.asarray(unknown_scores, dtype=np.float64)
-    known_correct = np.asarray(known_correct, dtype=bool)
-    if known_scores.size == 0 or unknown_scores.size == 0:
+    curve = _known_unknown_acceptance_curve(known_scores, unknown_scores, known_correct)
+    fpr_values, ccr_values = curve
+    if fpr_values is None:
         return _metric_nan()
-    if known_correct.shape[0] != known_scores.shape[0]:
-        raise ValueError("known_correct length must match known_scores.")
-
-    thresholds = _candidate_thresholds(np.concatenate([known_scores, unknown_scores]))
-    best_dir = _metric_nan()
-    best_value = -np.inf
-    for threshold in thresholds:
-        far = float(np.mean(unknown_scores >= threshold))
-        if far <= float(far_level):
-            detection_identification_rate = float(np.mean((known_scores >= threshold) & known_correct))
-            if detection_identification_rate > best_value:
-                best_value = detection_identification_rate
-                best_dir = detection_identification_rate
-    return float(best_dir)
+    valid = fpr_values <= float(far_level)
+    if not np.any(valid):
+        return _metric_nan()
+    return float(np.max(ccr_values[valid]))
 
 
 def compute_mixed_open_set_metrics(
@@ -716,6 +979,7 @@ def compute_embedding_diagnostics(
             top_k=(1, 5),
             cmc_ranks=(),
             chunk_size=chunk_size,
+            compute_map=False,
         )
         result["diagnostics/knn_top1"] = float(knn_metrics.get("known/top1", _metric_nan()))
         result["diagnostics/knn_top5"] = float(knn_metrics.get("known/top5", _metric_nan()))
@@ -784,31 +1048,119 @@ def evaluate_all_validation_splits(
         name="mixed_labels",
     )
 
-    metrics = {}
-    known_scores, known_best_labels = best_gallery_matches(
-        known_embeddings,
-        gallery_embeddings,
-        gallery_labels,
-        chunk_size=chunk_size,
-    )
-    unknown_scores, _ = best_gallery_matches(
-        unknown_embeddings,
-        gallery_embeddings,
-        gallery_labels,
-        chunk_size=chunk_size,
-    )
-    mixed_scores, mixed_best_labels = best_gallery_matches(
-        mixed_embeddings,
-        gallery_embeddings,
-        gallery_labels,
-        chunk_size=chunk_size,
-    )
-    mixed_true_known = _true_known_mask_from_cls(
+    full_counts = {
+        "gallery": int(gallery_labels.shape[0]),
+        "known": int(known_labels.shape[0]),
+        "unknown": int(unknown_labels.shape[0]),
+        "mixed": int(mixed_labels.shape[0]),
+    }
+    sample_limits = _sample_limits_from_config(config)
+    rng = np.random.default_rng(int(random_state))
+
+    mixed_true_known_full = _true_known_mask_from_cls(
         mixed_cls_labels,
         mixed_labels,
         gallery_labels,
         unknown_label=classification_ignore_index,
     )
+    known_indices = _balanced_sample_indices(known_labels, sample_limits["known"], rng)
+    unknown_indices = _balanced_sample_indices(unknown_labels, sample_limits["unknown"], rng)
+    mixed_indices = _balanced_sample_indices(mixed_labels, sample_limits["mixed"], rng)
+
+    known_embeddings = known_embeddings[known_indices]
+    known_labels = known_labels[known_indices]
+    known_cls_labels = _take_optional_1d(known_cls_labels, known_indices, "known_cls_labels")
+    unknown_embeddings = unknown_embeddings[unknown_indices]
+    unknown_labels = unknown_labels[unknown_indices]
+    unknown_cls_labels = _take_optional_1d(unknown_cls_labels, unknown_indices, "unknown_cls_labels")
+    mixed_embeddings = mixed_embeddings[mixed_indices]
+    mixed_labels = mixed_labels[mixed_indices]
+    mixed_cls_labels = _take_optional_1d(mixed_cls_labels, mixed_indices, "mixed_cls_labels")
+    mixed_true_known = mixed_true_known_full[mixed_indices]
+
+    required_gallery_labels = known_labels
+    if mixed_labels.size and np.any(mixed_true_known):
+        required_gallery_labels = np.concatenate([required_gallery_labels, mixed_labels[mixed_true_known]])
+    gallery_indices = _gallery_sample_indices(
+        gallery_labels,
+        sample_limits["gallery"],
+        required_gallery_labels,
+        rng,
+    )
+    gallery_embeddings = gallery_embeddings[gallery_indices]
+    gallery_labels = gallery_labels[gallery_indices]
+
+    used_counts = {
+        "gallery": int(gallery_labels.shape[0]),
+        "known": int(known_labels.shape[0]),
+        "unknown": int(unknown_labels.shape[0]),
+        "mixed": int(mixed_labels.shape[0]),
+    }
+    metrics_sampled = any(used_counts[name] < full_counts[name] for name in full_counts)
+
+    metrics = {}
+    if metrics_sampled:
+        metrics.update(
+            {
+                "validation/metrics_sampled": 1,
+                "validation/gallery_samples_used": used_counts["gallery"],
+                "validation/gallery_samples_total": full_counts["gallery"],
+                "validation/known_samples_used": used_counts["known"],
+                "validation/known_samples_total": full_counts["known"],
+                "validation/unknown_samples_used": used_counts["unknown"],
+                "validation/unknown_samples_total": full_counts["unknown"],
+                "validation/mixed_samples_used": used_counts["mixed"],
+                "validation/mixed_samples_total": full_counts["mixed"],
+            }
+        )
+
+    if bool(config.get("compute_known", True)):
+        known_metrics, known_scores, known_best_labels = compute_known_retrieval_metrics(
+            known_embeddings,
+            known_labels,
+            gallery_embeddings,
+            gallery_labels,
+            top_k=top_k,
+            cmc_ranks=cmc_ranks,
+            chunk_size=chunk_size,
+            return_matches=True,
+        )
+        metrics.update(known_metrics)
+    else:
+        known_scores, known_best_labels = best_gallery_matches(
+            known_embeddings,
+            gallery_embeddings,
+            gallery_labels,
+            chunk_size=chunk_size,
+        )
+
+    unknown_scores, unknown_best_labels = best_gallery_matches(
+        unknown_embeddings,
+        gallery_embeddings,
+        gallery_labels,
+        chunk_size=chunk_size,
+    )
+
+    mixed_is_concatenated = _is_concatenated_split(
+        mixed_embeddings,
+        mixed_labels,
+        known_embeddings,
+        known_labels,
+        unknown_embeddings,
+        unknown_labels,
+    )
+    if mixed_is_concatenated:
+        metrics["validation/mixed_scores_reused"] = 1
+        mixed_scores = np.concatenate([known_scores, unknown_scores])
+        mixed_best_labels = np.concatenate([known_best_labels, unknown_best_labels])
+    else:
+        metrics["validation/mixed_scores_reused"] = 0
+        mixed_scores, mixed_best_labels = best_gallery_matches(
+            mixed_embeddings,
+            gallery_embeddings,
+            gallery_labels,
+            chunk_size=chunk_size,
+        )
 
     threshold = config.get("known_unknown_threshold")
     if threshold in {None, "", "null"}:
@@ -820,18 +1172,6 @@ def evaluate_all_validation_splits(
         )
     threshold = float(threshold)
 
-    if bool(config.get("compute_known", True)):
-        metrics.update(
-            compute_known_retrieval_metrics(
-                known_embeddings,
-                known_labels,
-                gallery_embeddings,
-                gallery_labels,
-                top_k=top_k,
-                cmc_ranks=cmc_ranks,
-                chunk_size=chunk_size,
-            )
-        )
     if bool(config.get("compute_unknown", True)):
         metrics.update(
             compute_unknown_clustering_metrics(

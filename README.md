@@ -73,6 +73,27 @@ Training builds datasets, transforms, a P x K sampler, an ApexID model, the
 configured head/loss, optimizer, scheduler, validator, checkpoint writer, early
 stopping, optional W&B logging, and optional UMAP embedding plots.
 
+## Open-Set Validation
+
+The default training config evaluates the full open-set validation splits every
+epoch:
+
+- `val_known.csv`: known identities held out from training images.
+- `val_unknown.csv`: identities that do not appear in `train.csv`.
+- `val.csv`: the mixed open-set split, normally
+  `val_known.csv + val_unknown.csv`.
+
+When `val.csv` is exactly the known split followed by the unknown split, the
+validator reuses the known and unknown embeddings instead of running the mixed
+loader again. It also reuses gallery-match scores for mixed metrics. This keeps
+full validation exact while avoiding duplicated work.
+
+Exact metrics can still be expensive on large galleries because `known/mAP`,
+CMC/top-k retrieval, rejection metrics, threshold selection, and clustering all
+depend on gallery or validation-set size. For faster approximate validation, set
+positive `evaluation.sample_limits` values in `configs/default.yaml`; leave them
+as `null` to keep full-split validation.
+
 ## Validate The Data Pipeline
 
 Before a long run, inspect the CSV-to-label flow and one DataLoader batch:
@@ -163,8 +184,8 @@ Tips:
 The trainer logs epoch-level metrics such as `train_loss`, `val_loss`,
 `val_top1`, `val_top5`, `val_mAP`, `val_micro_f1`, `lr`,
 open-set metrics such as `known/mAP`, `unknown/ARI`, `rejection/AUROC`,
-`mixed/NormAcc`, diagnostics cadence state, validation sample counts, and
-early-stopping state.
+`mixed/NormAcc`, diagnostics cadence state, validation reuse flags, validation
+sample counts when sampling is enabled, and early-stopping state.
 
 ## Test
 
