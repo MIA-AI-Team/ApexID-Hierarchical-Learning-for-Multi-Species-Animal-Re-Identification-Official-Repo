@@ -136,7 +136,9 @@ tracking:
   group: null
   tags: []
   mode: online
-  log_artifacts: best
+  log_artifacts: metadata
+  block_on_artifact_upload: false
+  artifact_finish_timeout: 300
 ```
 
 Tips:
@@ -146,8 +148,17 @@ Tips:
 - Add strings to `tags`, for example `["osnet", "sphereface2"]`.
 - Use `mode: offline` to test logging locally without uploading. Local W&B files
   are written under `wandb/`, which is ignored by Git.
-- `log_artifacts: best` uploads the best model files saved by early stopping,
-  not every epoch checkpoint.
+- `log_artifacts: none` logs metrics only and skips all W&B file uploads. This is
+  the recommended setting on slow networks such as Kaggle.
+- Use `log_artifacts: metadata` to upload small files such as best-run JSON
+  metadata and UMAP plots when embedding plotting is enabled.
+- Use `log_artifacts: best` when you also want the best `.pt` weights uploaded to
+  W&B.
+- `block_on_artifact_upload: false` keeps training moving while W&B uploads run
+  in the background. W&B may still wait for pending uploads during `finish()`.
+- If logging appears stuck for a long time after validation, the usual cause is
+  uploading large checkpoint artifacts over a slow connection, not scalar metric
+  logging.
 
 The trainer logs epoch-level metrics such as `train_loss`, `val_loss`,
 `val_top1`, `val_top5`, `val_mAP`, `val_micro_f1`, `lr`,

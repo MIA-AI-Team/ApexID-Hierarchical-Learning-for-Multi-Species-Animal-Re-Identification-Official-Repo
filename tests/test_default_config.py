@@ -65,7 +65,9 @@ def test_default_config_contains_experiment_training_sections():
     assert cfg["embedding_plot"]["best_filename"] == "best_embedding_space.png"
     assert cfg["tracking"]["enabled"] is False
     assert cfg["tracking"]["provider"] == "wandb"
-    assert cfg["tracking"]["log_artifacts"] == "best"
+    assert cfg["tracking"]["log_artifacts"] == "none"
+    assert cfg["tracking"]["block_on_artifact_upload"] is False
+    assert cfg["tracking"]["artifact_finish_timeout"] == 300
 
 
 def test_default_config_builds_arcface_head_with_cross_entropy_loss():

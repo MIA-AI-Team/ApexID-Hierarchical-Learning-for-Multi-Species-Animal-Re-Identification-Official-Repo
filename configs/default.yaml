@@ -162,4 +162,6 @@ tracking:
   group: null
   tags: []
   mode: online
-  log_artifacts: best
+  log_artifacts: none
+  block_on_artifact_upload: false
+  artifact_finish_timeout: 300
