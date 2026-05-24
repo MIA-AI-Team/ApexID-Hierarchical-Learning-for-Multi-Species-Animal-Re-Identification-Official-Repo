@@ -21,15 +21,15 @@ data:
   wavelet: false
   transforms:
     mean:
-    - 0.158895
-    - 0.156707
-    - 0.15302
+    - 0.152443
+    - 0.150199
+    - 0.146532
     std:
-    - 0.248437
-    - 0.242192
-    - 0.237389
+    - 0.246863
+    - 0.240918
+    - 0.235914
 dataloader:
-  batch_size: 32
+  batch_size: 64
   num_workers: 4
   pin_memory: true
   persistent_workers: true
@@ -42,7 +42,7 @@ dataloader:
     shuffle: true
 model:
   name: apexid
-  embedding_dim: 128
+  embedding_dim: 256
   input_channels: 3
   backbone:
     name: osnet_x0_25
@@ -82,7 +82,7 @@ training:
   epochs: 100
   progress: true
   verbose: true
-  gradient_clip_norm: 7.0
+  gradient_clip_norm: null
   classification_ignore_index: -100
   metric_ignore_index: null
 validation:

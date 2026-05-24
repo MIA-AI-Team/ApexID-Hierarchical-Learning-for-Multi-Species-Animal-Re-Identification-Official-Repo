@@ -11,10 +11,6 @@ from apexid.utils.config import DEFAULT_CONFIG_PATH, load_config
 from .DWT import append_haar_wavelet_channels as _append_haar_wavelet_channels
 
 
-CLAHE_CLIP_LIMIT = 4.0
-CLAHE_TILE_GRID_SIZE = (5, 5)
-
-
 def _standardize_columns(data_csv):
     """Normalize common CSV column names to ApexID's canonical schema.
 
@@ -112,53 +108,6 @@ def _load_image_rgb(img_path):
     if image is None:
         raise FileNotFoundError(f"Could not read image with OpenCV: {img_path}")
     return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-
-def _clahe_transform():
-    """Create the deterministic CLAHE transform used by train/eval pipelines.
-
-    Args:
-        None
-
-    Returns:
-        albumentations.CLAHE: Contrast-limited adaptive histogram equalization
-        transform. It expects an RGB image with shape ``(height, width, 3)`` and
-        uint8 values in ``[0, 255]``.
-
-    Functionality:
-        Uses the same CLAHE parameters everywhere the data pipeline needs local
-        contrast enhancement, including transform builders and mean/std
-        calculation.
-    """
-    return A.CLAHE(
-        clip_limit=CLAHE_CLIP_LIMIT,
-        tile_grid_size=CLAHE_TILE_GRID_SIZE,
-        p=1.0,
-    )
-
-
-def _apply_clahe(image):
-    """Apply deterministic CLAHE to an RGB image.
-
-    Args:
-        image (numpy.ndarray): RGB image with shape ``(height, width, 3)`` and
-            uint8 values in ``[0, 255]``.
-
-    Returns:
-        numpy.ndarray: CLAHE-enhanced RGB image with the same shape and dtype as
-        the input image.
-
-    Functionality:
-        Runs the same Albumentations CLAHE operation used by train and eval
-        transforms so normalization statistics are computed from the exact
-        preprocessing path used during training and evaluation.
-    """
-    clahe = A.CLAHE(
-        clip_limit=CLAHE_CLIP_LIMIT,
-        tile_grid_size=CLAHE_TILE_GRID_SIZE,
-        p=1.0,
-    )
-    return clahe(image=image)["image"]
 
 
 def _image_to_float01(image, **kwargs):
@@ -263,9 +212,9 @@ def build_train_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
         ``wavelet=True``.
 
     Functionality:
-        Resizes the image, applies deterministic CLAHE, applies light geometric
-        augmentation, optionally adds Haar wavelet detail channels, normalizes by
-        dataset statistics, and converts the output to a tensor.
+        Resizes the image, applies light geometric augmentation, optionally adds
+        Haar wavelet detail channels, normalizes by dataset statistics, and
+        converts the output to a tensor.
     """
     settings = _get_transform_settings(config=config, config_path=config_path)
     height, width = _as_hw(settings["image_size"])
@@ -278,7 +227,6 @@ def build_train_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
     return A.Compose(
         [
             A.Resize(height=height, width=width),
-            # _clahe_transform(),
             A.Affine(
                 scale=(0.95, 1.05),
                 translate_percent=(-0.03, 0.03),
@@ -344,7 +292,6 @@ def build_eval_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
     return A.Compose(
         [
             A.Resize(height=height, width=width),
-            # _clahe_transform(),
             to_float,
             _normalization(settings["mean"], settings["std"]),
             ToTensorV2(),
@@ -379,12 +326,11 @@ def calculate_dataset_mean_std(
     Returns:
         tuple[list[float], list[float]]: ``(mean, std)`` lists with length ``3``
         for RGB or length ``6`` when wavelet channels are enabled. Values are
-        computed after resizing, CLAHE, and optional wavelet channel
-        construction.
+        computed after resizing and optional wavelet channel construction.
 
     Functionality:
         Streams images with OpenCV, converts them to RGB, applies the same resize
-        CLAHE, and channel construction used by transforms, then computes stable
+        and channel construction used by transforms, then computes stable
         per-channel statistics over all pixels.
 
     Raises:
@@ -407,7 +353,6 @@ def calculate_dataset_mean_std(
         img_path = _resolve_image_path(img_path, root_dir=root_dir)
         image = _load_image_rgb(img_path)
         image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
-        image = _apply_clahe(image)
         image = (
             _append_haar_wavelet_channels(image)
             if settings["wavelet"]

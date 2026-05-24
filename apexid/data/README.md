@@ -7,8 +7,8 @@ wavelet channel construction, and batch sampling for ApexID experiments.
 
 - `datasets/dataset.py`: `ApexID_Dataset`, a CSV/DataFrame-backed PyTorch
   dataset.
-- `transforms.py`: Albumentations train/eval transform builders, CLAHE
-  preprocessing, path resolution, and dataset mean/std calculation.
+- `transforms.py`: Albumentations train/eval transform builders, path
+  resolution, and dataset mean/std calculation.
 - `DWT.py`: Haar wavelet detail-channel utilities.
 - `samplers/pk_sampler.py`: deterministic P x K batch sampler for metric
   learning and re-identification batches.
@@ -46,10 +46,9 @@ image, cls_label, metric_label
 
 ## Transforms
 
-Training transforms resize, apply deterministic CLAHE, apply light affine
-augmentation, convert to float, optionally append wavelet channels, normalize,
-and convert to a tensor. Evaluation transforms use deterministic preprocessing
-only.
+Training transforms resize, apply light affine augmentation, convert to float,
+optionally append wavelet channels, normalize, and convert to a tensor.
+Evaluation transforms use deterministic preprocessing only.
 
 Relevant config keys:
 

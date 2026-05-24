@@ -1,15 +1,9 @@
 import cv2
 import numpy as np
 import pandas as pd
-import albumentations as A
 
 from apexid.data.DWT import append_haar_wavelet_channels
-from apexid.data.transforms import (
-    CLAHE_CLIP_LIMIT,
-    CLAHE_TILE_GRID_SIZE,
-    build_eval_transforms,
-    calculate_dataset_mean_std,
-)
+from apexid.data.transforms import build_eval_transforms, calculate_dataset_mean_std
 
 
 def _write_rgb_png(path, image):
@@ -26,16 +20,10 @@ def _load_rgb(path):
 def _manual_stats(paths, image_size, wavelet=False):
     height, width = image_size
     pixels_per_image = []
-    clahe = A.CLAHE(
-        clip_limit=CLAHE_CLIP_LIMIT,
-        tile_grid_size=CLAHE_TILE_GRID_SIZE,
-        p=1.0,
-    )
 
     for path in paths:
         image = _load_rgb(path)
         image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
-        image = clahe(image=image)["image"]
         if wavelet:
             image = append_haar_wavelet_channels(image)
         else:
@@ -100,7 +88,7 @@ def test_calculate_dataset_mean_std_matches_manual_wavelet_calculation(tmp_path)
     np.testing.assert_allclose(std, expected_std, rtol=0, atol=1e-12)
 
 
-def test_eval_transform_applies_same_clahe_used_for_stats():
+def test_eval_transform_matches_stats_preprocessing():
     image = np.zeros((16, 20, 3), dtype=np.uint8)
     image[..., 0] = np.arange(20, dtype=np.uint8)[None, :] * 8
     image[..., 1] = np.arange(16, dtype=np.uint8)[:, None] * 10
@@ -118,11 +106,6 @@ def test_eval_transform_applies_same_clahe_used_for_stats():
 
     transform = build_eval_transforms(config=config)
     transformed = transform(image=image)["image"].permute(1, 2, 0).numpy()
-    clahe = A.CLAHE(
-        clip_limit=CLAHE_CLIP_LIMIT,
-        tile_grid_size=CLAHE_TILE_GRID_SIZE,
-        p=1.0,
-    )
-    expected = clahe(image=image)["image"].astype(np.float32) / 255.0
+    expected = image.astype(np.float32) / 255.0
 
     np.testing.assert_allclose(transformed, expected, rtol=0, atol=1e-6)
