@@ -3,4 +3,7 @@ data_preprocessing.py
 __pycache__/
 outputs/
 wandb/
+.env
+.env.*
+!.env.example
 ApexID_Dataset/

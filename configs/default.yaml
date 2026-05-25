@@ -1,20 +1,20 @@
 experiment:
-  name: apexid_osnet_arcface
-  output_dir: outputs/apexid_osnet_arcface
+  name: apexid_osnet_arcface_64_0.5
+  output_dir: outputs/apexid_osnet_arcface_64_0.5
 seed: 42
 device:
   prefer_gpu: true
   gpu_index: 0
 data:
-  train_path: ApexID_Dataset/open_set_splits/train.csv
-  val_known_path: ApexID_Dataset/open_set_splits/val_known.csv
-  val_unknown_path: ApexID_Dataset/open_set_splits/val_unknown.csv
-  val_path: ApexID_Dataset/open_set_splits/val.csv
+  train_path: /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/open_set_splits/train.csv
+  val_known_path: /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/open_set_splits/val_known.csv
+  val_unknown_path: /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/open_set_splits/val_unknown.csv
+  val_path: /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/open_set_splits/val.csv
   train_csv: null
   val_known_csv: null
   val_unknown_csv: null
   val_csv: null
-  root_dir: ApexID_Dataset
+  root_dir: /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/
   image_size:
   - 440
   - 440
@@ -30,6 +30,7 @@ data:
     - 0.235914
 dataloader:
   batch_size: 64
+  val_batch_size: 128
   num_workers: 4
   pin_memory: true
   persistent_workers: true
@@ -37,15 +38,15 @@ dataloader:
   sampler:
     name: pk
     num_identities: 16
-    num_instances: 2
+    num_instances: 4
     batches_per_epoch: null
     shuffle: true
 model:
   name: apexid
-  embedding_dim: 256
+  embedding_dim: 512
   input_channels: 3
   backbone:
-    name: osnet_x0_25
+    name: osnet_x1_0
     kwargs: {}
 head:
   name: arcface
@@ -56,10 +57,11 @@ loss:
   name: cross_entropy
   kwargs: {}
 optimizer:
-  name: adam
+  name: adamW
   kwargs:
     lr: 0.0003
     weight_decay: 0.0001
+    foreach: true
 lr_range_test:
   enabled: true
   mode: auto_apply
@@ -79,7 +81,7 @@ scheduler:
     mode: triangular2
     cycle_momentum: false
 training:
-  epochs: 100
+  epochs: 300
   progress: true
   verbose: true
   gradient_clip_norm: null
@@ -140,29 +142,36 @@ embedding_plot:
   filename_template: epoch_{epoch_number:03d}_umap.png
   best_filename: best_embedding_space.png
 checkpoint:
-  output_dir: outputs/apexid_osnet_arcface/checkpoints
+  output_dir: outputs/apexid_osnet_arcface_64_0.5/checkpoints
   every_n_epochs: 1
   filename: last_checkpoint.pt
   delete_previous: true
   resume_path: null
 early_stopping:
   enabled: true
-  monitor: mixed/NormAcc
+  monitor: known/mAP
   mode: max
   patience: 10
   min_delta: 0.0
-  output_dir: outputs/apexid_osnet_arcface/checkpoints
+  output_dir: outputs/apexid_osnet_arcface_64_0.5/checkpoints
   full_model_name: best_full_model.pt
   backbone_name: best_backbone.pt
   metadata_name: best_metadata.json
 tracking:
-  enabled: false
+  enabled: true
   provider: wandb
   project: ApexID
-  entity: null
-  run_name: null
+  entity: MIA_AI_Team
+  run_name: ApexID-osnet-arcface-64-0.5-Scratch
   group: null
-  tags: []
+  tags: [
+    "osnet",
+    "arcface",
+    "64",
+    "0.5",
+    "scratch",
+    "apexid",
+  ]
   mode: online
   log_artifacts: none
   block_on_artifact_upload: false
