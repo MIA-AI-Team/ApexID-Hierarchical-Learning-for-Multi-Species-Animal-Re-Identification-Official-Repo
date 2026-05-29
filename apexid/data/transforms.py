@@ -236,21 +236,21 @@ def build_train_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
             ),
             A.ToGray(
                 num_output_channels=3,
-                p=0.15,
+                p=0.05,
             ),
             A.GaussianBlur(
                 blur_limit=(2, 3),
-                p=0.2,
+                p=0.1,
             ),
             A.GaussNoise(
-                std_range=(0.02, 0.05),
-                p=0.35,
+                std_range=(0.02, 0.005),
+                p=0.05,
             ),
             A.PixelDropout(
                 dropout_prob=0.005,
                 per_channel=False,
                 drop_value=0,
-                p=0.10,
+                p=0.03,
             ),
             to_float,
             _normalization(settings["mean"], settings["std"]),

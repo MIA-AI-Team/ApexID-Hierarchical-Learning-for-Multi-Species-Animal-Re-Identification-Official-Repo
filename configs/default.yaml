@@ -37,8 +37,8 @@ dataloader:
   drop_last: true
   sampler:
     name: pk
-    num_identities: 16
-    num_instances: 4
+    num_identities: 32
+    num_instances: 2
     batches_per_epoch: null
     shuffle: true
 model:
@@ -51,8 +51,8 @@ model:
 head:
   name: arcface
   kwargs:
-    s: 64.0
-    m: 0.5
+    s: 40.0
+    m: 0.3
 loss:
   name: cross_entropy
   kwargs: {}
