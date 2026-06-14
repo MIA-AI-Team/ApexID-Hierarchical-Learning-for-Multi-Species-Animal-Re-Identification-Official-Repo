@@ -15,6 +15,7 @@ from apexid.engine.validator import (
     _unpack_batch,
 )
 from apexid.utils.seed import DEFAULT_SEED, seed_everything
+from apexid.training.finetune import apply_finetune_phase
 
 
 seed_everything(DEFAULT_SEED)
@@ -134,6 +135,7 @@ class Trainer:
         experiment_logger=None,
         embedding_plotter=None,
         evaluation_config=None,
+        finetune_config=None,
     ):
         """Initialize the training helper.
 
@@ -215,6 +217,8 @@ class Trainer:
         self.experiment_logger = experiment_logger or NullLogger()
         self.embedding_plotter = embedding_plotter
         self.evaluation_config = dict(evaluation_config or {})
+        self.finetune_config = dict(finetune_config or {}) if finetune_config else None
+        self._finetune_phase = None
 
         if self.validation_every_n_epochs <= 0:
             raise ValueError("validation_every_n_epochs must be > 0.")
@@ -435,6 +439,9 @@ class Trainer:
             return
         if isinstance(self.scheduler, torch.optim.lr_scheduler.CyclicLR):
             return
+        if isinstance(self.scheduler, torch.optim.lr_scheduler.SequentialLR):
+            self.scheduler.step()
+            return
         if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
             metric = epoch_metrics.get("val_loss", epoch_metrics["train_loss"])
             if metric is None or math.isnan(float(metric)):
@@ -623,6 +630,17 @@ class Trainer:
 
         try:
             for epoch in range(int(start_epoch), int(epochs)):
+                if self.finetune_config is not None:
+                    finetune_cfg = {"finetune": self.finetune_config}
+                    phase = apply_finetune_phase(self.backbone, self.head, finetune_cfg, epoch)
+                    if phase != self._finetune_phase:
+                        self._finetune_phase = phase
+                        if self.verbose:
+                            tqdm.write(
+                                f"Finetune phase: {phase.get('phase')} "
+                                f"(strategy={phase.get('strategy')}, "
+                                f"backbone_trainable={phase.get('backbone_trainable')})"
+                            )
                 self._set_train_loader_epoch(train_loader, epoch)
                 train_metrics = self.train_one_epoch(train_loader, epoch, epochs)
                 run_validation = ((epoch + 1) % self.validation_every_n_epochs == 0) or (epoch == epochs - 1)

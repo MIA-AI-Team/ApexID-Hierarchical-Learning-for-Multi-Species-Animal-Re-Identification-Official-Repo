@@ -3,7 +3,7 @@ wildlife-tools @ git+https://github.com/WildlifeDatasets/wildlife-tools
 torch
 torchvision
 timm
-opencv-python
+opencv-python-headless
 numpy
 pandas
 scikit-learn

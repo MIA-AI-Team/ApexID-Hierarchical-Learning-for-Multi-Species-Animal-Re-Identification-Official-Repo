@@ -79,3 +79,6 @@ model:
   compatible.
 - Do not L2-normalize inside a backbone; `ApexID.forward` owns embedding
   normalization.
+- Pretrained fine-tuning profiles are configured in `configs/default.yaml`
+  under `finetune` and applied automatically for `*_pt` backbones. See
+  [`configs/README.md`](../../configs/README.md#pretrained-fine-tuning).

@@ -80,6 +80,29 @@ scheduler:
     step_size_epochs: 4
     mode: triangular2
     cycle_momentum: false
+finetune:
+  enabled: auto
+  strategy: full
+  head_only_epochs: 2
+  unfreeze_top_fraction: 0.25
+  optimizer:
+    backbone_lr: 1.0e-5
+    head_lr: 1.0e-4
+    head_lr_multiplier: null
+  scheduler:
+    name: cosine_annealing_lr
+    kwargs:
+      T_max: null
+      eta_min: 1.0e-6
+    warmup:
+      enabled: true
+      epochs: 5
+      start_lr: 1.0e-6
+  lr_range_test:
+    enabled: false
+    mode: suggest_lr
+    apply_to: head
+    backbone_lr_divisor: 10.0
 training:
   epochs: 300
   progress: true

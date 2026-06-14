@@ -7,9 +7,15 @@ point is `default.yaml`.
 
 - `default.yaml`: complete training configuration for the default ApexID
   experiment. It defines dataset paths, transforms, sampler settings, model
-  shape, backbone, head, loss, optimizer, scheduler, LR range test, training
-  behavior, validation metrics, embedding plots, checkpoints, early stopping,
-  and experiment tracking.
+  shape, backbone, head, loss, optimizer, scheduler, LR range test, finetune
+  profile, training behavior, validation metrics, embedding plots, checkpoints,
+  early stopping, and experiment tracking.
+- `cluster_home.yaml`: cluster paths for scratch training (e.g. ConvNeXt-Large
+  from random init). Uses CyclicLR + LR range test when the backbone is not
+  pretrained.
+- `cluster_pretrained.yaml`: cluster paths for ImageNet-pretrained fine-tuning
+  (e.g. `osnet_x1_0_pt`). Auto-switches to cosine + warmup when
+  `finetune.enabled: auto`.
 
 ## How It Connects
 
@@ -25,7 +31,7 @@ Important sections:
 - `dataloader`: batch size, workers, and P x K sampler parameters.
 - `model`: ApexID embedding dimensions, input channels, and backbone selection.
 - `head` and `loss`: margin head and external objective configuration.
-- `optimizer`, `scheduler`, and `lr_range_test`: learning-rate behavior.
+- `optimizer`, `scheduler`, `lr_range_test`, and `finetune`: learning-rate behavior.
 - `training`, `validation`, and `evaluation`: epoch loop, label ignore indices,
   metric cadence, open-set metric toggles, thresholds, sample limits, and
   validation chunk size.
@@ -117,6 +123,138 @@ Available ConvNeXt aliases are `convnext_tiny`, `convnext_small`,
 `convnext_base`, `convnext_large`, and pretrained-default `_pt` variants.
 All ConvNeXt backbones return the configured embedding dimension and are
 normalized by `ApexID.forward`, matching the OSNet path.
+
+## Pretrained Fine-Tuning
+
+When the backbone is ImageNet-pretrained (`*_pt` aliases or `kwargs.pretrained:
+true`), `scripts/train.py` calls `resolve_training_profile()` and applies the
+`finetune` section automatically when `finetune.enabled: auto`.
+
+### Scratch vs pretrained profiles
+
+| Profile | Backbone examples | LR range test | Scheduler | Optimizer LRs |
+|---------|-------------------|---------------|-----------|---------------|
+| **Scratch** | `osnet_x1_0`, `convnext_large` + `pretrained: false` | **On** by default (`lr_range_test.enabled: true`) | **CyclicLR** (finder sets `base_lr` / `max_lr`) | Single `optimizer.kwargs.lr` |
+| **Pretrained** | `osnet_x1_0_pt`, `convnext_base_pt`, `pretrained: true` | **Off** by default (`finetune.lr_range_test.enabled: false`) | **Cosine annealing + warmup** | Separate `backbone_lr` and `head_lr` |
+
+The top-level `scheduler` and `lr_range_test` blocks in YAML are kept for scratch
+runs. When the finetune profile activates, `resolve_training_profile()` overrides
+the effective scheduler and disables the LR finder unless you explicitly re-enable
+it under `finetune.lr_range_test`.
+
+### Finetune strategies
+
+Choose with `finetune.strategy`:
+
+| Strategy | Behavior | When to use |
+|----------|----------|-------------|
+| `full` | Unfreeze backbone + head from epoch 0; differential LRs; cosine decay | MiewID-style full fine-tune from ImageNet weights |
+| `head_first` | Freeze backbone for `head_only_epochs`; train head (and optionally top backbone layers); then unfreeze all | WildFusion-style stable head warmup before backbone updates |
+
+`head_first` options:
+
+- `head_only_epochs`: number of epochs with a frozen backbone (default `2`).
+- `unfreeze_top_fraction`: fraction of backbone modules to unfreeze during the
+  head-only phase (`0.0` = head only, `0.25` = head + top 25% of backbone layers).
+- `WaveletStem` (6-channel wavelet input) stays trainable during the frozen phase
+  because it is randomly initialized, not loaded from ImageNet.
+
+### Full `finetune` block
+
+```yaml
+finetune:
+  enabled: auto          # auto | true | false
+  strategy: full         # full | head_first
+  head_only_epochs: 2    # head_first only
+  unfreeze_top_fraction: 0.25
+  optimizer:
+    backbone_lr: 1.0e-5
+    head_lr: 1.0e-4
+    head_lr_multiplier: null   # optional: head_lr = backbone_lr * multiplier
+  scheduler:
+    name: cosine_annealing_lr
+    kwargs:
+      T_max: null              # defaults to training.epochs
+      eta_min: 1.0e-6
+    warmup:
+      enabled: true
+      epochs: 5
+      start_lr: 1.0e-6
+  lr_range_test:
+    enabled: false             # default for pretrained
+    mode: suggest_lr           # optional: run finder, apply LRs to param groups
+    apply_to: head
+    backbone_lr_divisor: 10.0  # backbone_lr = suggested_max / divisor
+```
+
+Set `finetune.enabled: false` to force scratch-style CyclicLR even with a `_pt`
+backbone. Set `finetune.enabled: true` to force the finetune profile even on a
+random-init backbone.
+
+### Optional LR range test for pretrained
+
+By default, pretrained runs **do not** run the LR finder (fixed finetune LRs are
+used instead). To experiment:
+
+```yaml
+finetune:
+  lr_range_test:
+    enabled: true
+    mode: suggest_lr
+```
+
+This runs the finder once, writes artifacts under `outputs/.../lr_range_test/`,
+sets backbone/head LRs from the suggestion, and still uses cosine scheduling —
+not CyclicLR.
+
+### OSNet pretrained example
+
+Use `embedding_dim: 512` so ImageNet fc weights load. ArcFace `s` / `m` must be
+under `head.kwargs`:
+
+```yaml
+model:
+  embedding_dim: 512
+  input_channels: 3
+  backbone:
+    name: osnet_x1_0_pt
+    kwargs:
+      pretrained: true
+head:
+  name: arcface
+  kwargs:
+    s: 40.0
+    m: 0.3
+finetune:
+  enabled: auto
+  strategy: head_first
+  head_only_epochs: 2
+```
+
+### Cluster usage
+
+Scratch on cluster (ConvNeXt-Large, no wavelet):
+
+```bash
+# configs/cluster_home.yaml — scratch backbone, cyclic_lr + lr_range_test
+sbatch slurm_train_h100.sh
+```
+
+Pretrained on cluster:
+
+```bash
+CONFIG=configs/cluster_pretrained.yaml sbatch slurm_train_h100.sh
+```
+
+Quick config check on the login node:
+
+```bash
+grep -E "backbone|pretrained|strategy|wavelet|resume_path" configs/cluster_pretrained.yaml
+grep -A 6 "^head:" configs/cluster_pretrained.yaml
+grep -A 12 "^finetune:" configs/cluster_pretrained.yaml
+```
+
+Ready-to-use template: [`cluster_pretrained.yaml`](cluster_pretrained.yaml).
 
 ## Contributor Notes
 

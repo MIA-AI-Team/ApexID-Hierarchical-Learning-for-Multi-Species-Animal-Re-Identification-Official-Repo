@@ -243,7 +243,7 @@ def build_train_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
                 p=0.1,
             ),
             A.GaussNoise(
-                std_range=(0.02, 0.005),
+                std_range=(0.002, 0.005),
                 p=0.05,
             ),
             A.PixelDropout(

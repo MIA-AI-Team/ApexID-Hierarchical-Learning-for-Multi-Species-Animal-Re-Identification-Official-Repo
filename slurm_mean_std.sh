@@ -38,7 +38,7 @@ $UV venv --no-project "$VENV"
 PY="$VENV/bin/python"
 
 # CPU-only deps for mean/std (torch needed because apexid/__init__.py imports device.py).
-$UV pip install --python "$PY" numpy pandas opencv-python PyYAML albumentations torch --torch-backend=cpu
+$UV pip install --python "$PY" numpy pandas opencv-python-headless PyYAML albumentations torch --torch-backend=cpu
 
 cd "$REPO_ROOT"
 

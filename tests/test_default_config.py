@@ -18,6 +18,7 @@ def test_default_config_contains_experiment_training_sections():
         "optimizer",
         "lr_range_test",
         "scheduler",
+        "finetune",
         "training",
         "validation",
         "evaluation",
@@ -47,15 +48,17 @@ def test_default_config_contains_experiment_training_sections():
     assert cfg["evaluation"]["cmc_ranks"] == [20, 50]
     assert cfg["evaluation"]["top_k"] == [1, 5, 10]
     assert cfg["evaluation"]["dir"]["far_levels"] == [0.01, 0.001]
-    assert cfg["early_stopping"]["monitor"] == "mixed/NormAcc"
+    assert cfg["early_stopping"]["monitor"] == "known/mAP"
     assert cfg["early_stopping"]["mode"] == "max"
     assert cfg["checkpoint"]["delete_previous"] is True
     assert cfg["training"]["verbose"] is True
     assert cfg["training"]["classification_ignore_index"] == -100
-    assert cfg["experiment"]["name"] == "apexid_osnet_arcface"
+    assert cfg["experiment"]["name"] == "apexid_osnet_arcface_64_0.5"
     assert cfg["head"]["name"] == "arcface"
-    assert cfg["head"]["kwargs"]["s"] == 64.0
-    assert cfg["head"]["kwargs"]["m"] == 0.5
+    assert cfg["head"]["kwargs"]["s"] == 40.0
+    assert cfg["head"]["kwargs"]["m"] == 0.3
+    assert cfg["finetune"]["enabled"] == "auto"
+    assert cfg["finetune"]["strategy"] == "full"
     assert cfg["loss"]["name"] == "cross_entropy"
     assert cfg["lr_range_test"]["enabled"] is True
     assert cfg["lr_range_test"]["mode"] == "auto_apply"
@@ -69,7 +72,7 @@ def test_default_config_contains_experiment_training_sections():
     assert cfg["embedding_plot"]["best_output_dir"] is None
     assert cfg["embedding_plot"]["filename_template"] == "epoch_{epoch_number:03d}_umap.png"
     assert cfg["embedding_plot"]["best_filename"] == "best_embedding_space.png"
-    assert cfg["tracking"]["enabled"] is False
+    assert cfg["tracking"]["enabled"] is True
     assert cfg["tracking"]["provider"] == "wandb"
     assert cfg["tracking"]["log_artifacts"] == "none"
     assert cfg["tracking"]["block_on_artifact_upload"] is False

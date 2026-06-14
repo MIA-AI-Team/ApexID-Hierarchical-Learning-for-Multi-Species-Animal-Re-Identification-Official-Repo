@@ -43,6 +43,16 @@ from apexid.data.datasets.dataset import ApexID_Dataset
 from apexid.data.samplers import PKBatchSampler
 from apexid.engine import Trainer, build_experiment_logger, load_training_checkpoint
 from apexid.models import build_components
+from apexid.training.finetune import (
+    apply_finetune_phase,
+    apply_suggest_lr_from_range_test,
+    collect_backbone_params,
+    collect_head_params,
+    finetune_lr_range_test_cfg,
+    is_finetune_active,
+    resolve_training_profile,
+    should_run_lr_range_test,
+)
 from apexid.utils.config import DEFAULT_CONFIG_PATH, load_config
 from apexid.utils.device import get_device
 from apexid.utils.embedding_umap import EmbeddingUMAPPlotter
@@ -268,9 +278,25 @@ def build_optimizer(cfg, model, head):
     """Build the optimizer from config."""
     optimizer_cfg = _as_dict(cfg.get("optimizer", {}))
     name = str(optimizer_cfg.get("name", "adam")).lower()
-    kwargs = _as_dict(optimizer_cfg.get("kwargs", {}))
-    params = list(model.parameters()) + list(head.parameters())
+    kwargs = dict(_as_dict(optimizer_cfg.get("kwargs", {})))
+    shared_kwargs = {key: value for key, value in kwargs.items() if key != "lr"}
 
+    if is_finetune_active(cfg):
+        backbone_lr = float(cfg.get("_finetune_backbone_lr", kwargs.get("lr", 1.0e-5)))
+        head_lr = float(cfg.get("_finetune_head_lr", backbone_lr * 10.0))
+        param_groups = [
+            {"params": collect_backbone_params(model), "lr": backbone_lr, "param_group_name": "backbone"},
+            {"params": collect_head_params(head), "lr": head_lr, "param_group_name": "head"},
+        ]
+        if name == "adam":
+            return torch.optim.Adam(param_groups, **shared_kwargs)
+        if name == "adamw":
+            return torch.optim.AdamW(param_groups, **shared_kwargs)
+        if name == "sgd":
+            return torch.optim.SGD(param_groups, **shared_kwargs)
+        raise ValueError("Unknown optimizer '{}'. Available: adam, adamw, sgd.".format(name))
+
+    params = list(model.parameters()) + list(head.parameters())
     if name == "adam":
         return torch.optim.Adam(params, **kwargs)
     if name == "adamw":
@@ -280,7 +306,7 @@ def build_optimizer(cfg, model, head):
     raise ValueError("Unknown optimizer '{}'. Available: adam, adamw, sgd.".format(name))
 
 
-def build_scheduler(cfg, optimizer, train_loader=None, overrides=None):
+def build_scheduler(cfg, optimizer, train_loader=None, overrides=None, total_epochs=None):
     """Build an optional learning-rate scheduler from config."""
     scheduler_cfg = _as_dict(cfg.get("scheduler", {}))
     name = scheduler_cfg.get("name")
@@ -289,9 +315,39 @@ def build_scheduler(cfg, optimizer, train_loader=None, overrides=None):
 
     name = str(name).lower()
     kwargs = dict(_as_dict(scheduler_cfg.get("kwargs", {})))
+    warmup_cfg = _as_dict(scheduler_cfg.get("warmup", {}))
+
     if name in {"step_lr", "steplr"}:
         return torch.optim.lr_scheduler.StepLR(optimizer, **kwargs)
     if name in {"cosine_annealing_lr", "cosineannealinglr", "cosine"}:
+        epochs = int(total_epochs or _as_dict(cfg.get("training", {})).get("epochs", 100))
+        if kwargs.get("T_max") in {None, ""}:
+            kwargs["T_max"] = epochs
+        if bool(warmup_cfg.get("enabled", False)):
+            warmup_epochs = int(warmup_cfg.get("epochs", 0))
+            if warmup_epochs <= 0:
+                return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, **kwargs)
+            if warmup_epochs >= int(kwargs["T_max"]):
+                raise ValueError("scheduler.warmup.epochs must be smaller than cosine T_max.")
+            base_lrs = [group["lr"] for group in optimizer.param_groups]
+            start_lr = float(warmup_cfg.get("start_lr", min(base_lrs) / 10.0))
+            start_factors = [
+                max(start_lr / max(float(lr), 1e-12), 1e-8) for lr in base_lrs
+            ]
+            warmup = torch.optim.lr_scheduler.LinearLR(
+                optimizer,
+                start_factor=min(start_factors),
+                end_factor=1.0,
+                total_iters=warmup_epochs,
+            )
+            cosine_kwargs = dict(kwargs)
+            cosine_kwargs["T_max"] = int(kwargs["T_max"]) - warmup_epochs
+            cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, **cosine_kwargs)
+            return torch.optim.lr_scheduler.SequentialLR(
+                optimizer,
+                schedulers=[warmup, cosine],
+                milestones=[warmup_epochs],
+            )
         return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, **kwargs)
     if name in {"reduce_on_plateau", "reduce_lr_on_plateau", "reducelronplateau"}:
         return torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **kwargs)
@@ -314,15 +370,14 @@ def build_scheduler(cfg, optimizer, train_loader=None, overrides=None):
 
 def maybe_run_lr_range_test(cfg, model, head, criterion, optimizer, train_loader, device, resume_path=None):
     """Run the optional LR range test and return scheduler overrides."""
-    lr_test_cfg = _as_dict(cfg.get("lr_range_test", {}))
-    if not bool(lr_test_cfg.get("enabled", False)):
-        return None
-    if resume_path not in {None, ""}:
+    lr_test_cfg = finetune_lr_range_test_cfg(cfg)
+    if not should_run_lr_range_test(cfg, resume_path=resume_path):
         return None
 
     mode = str(lr_test_cfg.get("mode", "auto_apply")).lower()
-    if mode not in {"auto_apply", "report_only"}:
-        raise ValueError("lr_range_test.mode must be 'auto_apply' or 'report_only'.")
+    allowed_modes = {"auto_apply", "report_only", "suggest_lr"}
+    if mode not in allowed_modes:
+        raise ValueError("lr_range_test.mode must be one of: auto_apply, report_only, suggest_lr.")
 
     experiment_dir = Path(_as_dict(cfg.get("experiment", {})).get("output_dir", "outputs/apexid_run"))
     output_dir = lr_test_cfg.get("output_dir")
@@ -356,6 +411,10 @@ def maybe_run_lr_range_test(cfg, model, head, criterion, optimizer, train_loader
     )
 
     if mode == "report_only":
+        return None
+
+    if mode == "suggest_lr" or is_finetune_active(cfg):
+        apply_suggest_lr_from_range_test(cfg, optimizer, result)
         return None
 
     for group in optimizer.param_groups:
@@ -456,6 +515,7 @@ def build_trainer(
         experiment_logger=experiment_logger,
         embedding_plotter=embedding_plotter,
         evaluation_config=_as_dict(cfg.get("evaluation", {})),
+        finetune_config=_as_dict(cfg.get("finetune", {})) if is_finetune_active(cfg) else None,
     )
 
 
@@ -468,6 +528,7 @@ def train_from_config(cfg):
     Returns:
         dict: Training history returned by ``Trainer.train``.
     """
+    cfg = resolve_training_profile(cfg)
     seed = int(cfg.get("seed", DEFAULT_SEED) or DEFAULT_SEED)
     seed_everything(seed)
 
@@ -499,7 +560,9 @@ def train_from_config(cfg):
     model, head, criterion = build_components(cfg, num_classes=num_classes)
     model.to(device)
     head.to(device)
+    apply_finetune_phase(model, head, cfg, epoch=0)
     optimizer = build_optimizer(cfg, model, head)
+    training_epochs = int(_as_dict(cfg.get("training", {})).get("epochs", 100))
     scheduler_overrides = maybe_run_lr_range_test(
         cfg,
         model,
@@ -510,7 +573,13 @@ def train_from_config(cfg):
         device,
         resume_path=resume_path,
     )
-    scheduler = build_scheduler(cfg, optimizer, train_loader=train_loader, overrides=scheduler_overrides)
+    scheduler = build_scheduler(
+        cfg,
+        optimizer,
+        train_loader=train_loader,
+        overrides=scheduler_overrides,
+        total_epochs=training_epochs,
+    )
     experiment_logger = build_experiment_logger(cfg, metadata=tracking_metadata)
     embedding_plotter = build_embedding_plotter(cfg)
     trainer = build_trainer(cfg, model, head, criterion, optimizer, scheduler, device,

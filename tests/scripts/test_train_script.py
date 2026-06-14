@@ -172,6 +172,36 @@ def test_train_script_builds_datasets_and_loaders_from_train_val_paths(tmp_path)
     assert unknown_batch[1].tolist() == [-100, -100]
 
 
+def test_train_script_builds_finetune_optimizer_param_groups(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["model"]["backbone"] = {"name": "osnet_x0_25_pt", "kwargs": {"pretrained": False}}
+    cfg = train_script.resolve_training_profile(cfg)
+    _, _, num_classes = train_script.build_datasets(cfg)
+    model, head, _ = train_script.build_components(cfg, num_classes=num_classes)
+    optimizer = train_script.build_optimizer(cfg, model, head)
+
+    assert len(optimizer.param_groups) == 2
+    assert optimizer.param_groups[0]["param_group_name"] == "backbone"
+    assert optimizer.param_groups[1]["param_group_name"] == "head"
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(1e-5)
+    assert optimizer.param_groups[1]["lr"] == pytest.approx(1e-4)
+
+
+def test_train_script_builds_cosine_warmup_scheduler(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["scheduler"] = {
+        "name": "cosine_annealing_lr",
+        "kwargs": {"T_max": 10, "eta_min": 1e-6},
+        "warmup": {"enabled": True, "epochs": 2, "start_lr": 1e-6},
+    }
+    optimizer = torch.optim.SGD([torch.nn.Parameter(torch.ones(1))], lr=1e-3)
+    scheduler = train_script.build_scheduler(cfg, optimizer, total_epochs=10)
+
+    assert isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
+
+
 def test_train_script_builds_optimizer_and_scheduler(tmp_path):
     train_script = _load_train_script()
     cfg = _base_cfg(tmp_path)

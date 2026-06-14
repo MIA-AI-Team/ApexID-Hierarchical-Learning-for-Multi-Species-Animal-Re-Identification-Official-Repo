@@ -40,6 +40,10 @@ $UV venv --no-project "$VENV"
 PY="$VENV/bin/python"
 
 $UV pip install --python "$PY" --torch-backend=cu124 -r "$REPO_ROOT/requirements.txt"
+# GPU nodes are headless; opencv-python needs libGL.so.1. Reinstall cv2 via headless only.
+$UV pip uninstall --python "$PY" -y opencv-python opencv-python-headless 2>/dev/null || true
+$UV pip install --python "$PY" opencv-python-headless
+$PY -c "import cv2; print('cv2', cv2.__version__)"
 
 export HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
