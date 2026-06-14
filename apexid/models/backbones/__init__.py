@@ -1,3 +1,14 @@
+from .convnext import (
+    ConvNeXtBackbone,
+    convnext_base,
+    convnext_base_pt,
+    convnext_large,
+    convnext_large_pt,
+    convnext_small,
+    convnext_small_pt,
+    convnext_tiny,
+    convnext_tiny_pt,
+)
 from .osnet import (
     OSNet,
     osnet_ibn_x1_0,
@@ -20,11 +31,20 @@ from .registry import BACKBONE_REGISTRY, available_backbones, build_backbone, re
 
 __all__ = [
     "BACKBONE_REGISTRY",
+    "ConvNeXtBackbone",
     "OSNet",
     "PretrainedOSNet",
     "WaveletStem",
     "available_backbones",
     "build_backbone",
+    "convnext_base",
+    "convnext_base_pt",
+    "convnext_large",
+    "convnext_large_pt",
+    "convnext_small",
+    "convnext_small_pt",
+    "convnext_tiny",
+    "convnext_tiny_pt",
     "init_pretrained_weights",
     "osnet_ibn_x1_0",
     "osnet_ibn_x1_0_pt",

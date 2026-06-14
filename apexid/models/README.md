@@ -9,7 +9,8 @@ and factory functions used to build training components from config.
   returns L2-normalized embeddings.
 - `model_factory.py`: `build_model`, `build_head`, `build_loss`, and
   `build_components` for config-driven construction.
-- `backbones/`: OSNet implementations and backbone registry.
+- `backbones/`: OSNet and TorchVision ConvNeXt implementations plus the
+  backbone registry.
 - `heads/`: ArcFace, dynamic ArcFace, SphereFace2, and SphereFace2 focal heads.
 - `__init__.py`: public model exports.
 
@@ -19,6 +20,9 @@ and factory functions used to build training components from config.
 reads `model`, `head`, `loss`, and `data.wavelet` config sections, builds the
 embedding model, chooses input channels, constructs the selected head, and
 returns an external loss when the head does not compute its own objective.
+Backbone names are selected through `model.backbone.name`; ConvNeXt aliases
+include `convnext_tiny`, `convnext_small`, `convnext_base`, `convnext_large`,
+and pretrained-default `_pt` variants.
 
 ## Common Commands
 
@@ -36,6 +40,19 @@ from apexid.models import build_components
 
 cfg = load_config(config_path="configs/default.yaml")
 model, head, criterion = build_components(cfg, num_classes=100)
+```
+
+Select ConvNeXt in YAML without changing the surrounding model/head contract:
+
+```yaml
+model:
+  name: apexid
+  embedding_dim: 512
+  input_channels: 3
+  backbone:
+    name: convnext_tiny_pt
+    kwargs:
+      pretrained: true
 ```
 
 ## Contributor Notes

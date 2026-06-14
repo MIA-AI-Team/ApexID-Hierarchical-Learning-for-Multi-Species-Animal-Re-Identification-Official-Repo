@@ -6,12 +6,14 @@ This folder tests model construction and head behavior.
 
 - `test_input_channels.py`: model/input-channel behavior, especially RGB versus
   wavelet six-channel inputs.
+- `test_convnext.py`: TorchVision ConvNeXt registration, embedding shape,
+  pretrained aliases, and six-channel input handling.
 - `test_sphereface2_focal.py`: SphereFace2 focal head behavior.
 
 ## How It Connects
 
-These tests protect `apexid.models`, including model factories, backbone input
-channels, and trainable heads used by `scripts/train.py`.
+These tests protect `apexid.models`, including model factories, OSNet and
+ConvNeXt backbone input channels, and trainable heads used by `scripts/train.py`.
 
 ## Common Commands
 

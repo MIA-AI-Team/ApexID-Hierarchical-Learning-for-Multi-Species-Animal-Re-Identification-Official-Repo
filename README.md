@@ -1,9 +1,10 @@
 # ApexID
 
 ApexID is a PyTorch project for animal re-identification. It trains an
-embedding model, applies metric/classification heads such as ArcFace and
-SphereFace2, validates with retrieval metrics, and saves checkpoints,
-experiment history, and optional embedding-space plots.
+embedding model with OSNet or TorchVision ConvNeXt backbones, applies
+metric/classification heads such as ArcFace and SphereFace2, validates with
+retrieval metrics, and saves checkpoints, experiment history, and optional
+embedding-space plots.
 
 Run commands from the repository root:
 
@@ -72,6 +73,24 @@ python scripts/train.py --config configs/default.yaml
 Training builds datasets, transforms, a P x K sampler, an ApexID model, the
 configured head/loss, optimizer, scheduler, validator, checkpoint writer, early
 stopping, optional W&B logging, and optional UMAP embedding plots.
+
+To run a ConvNeXt experiment, keep the same ApexID model wrapper and choose a
+registered TorchVision ConvNeXt backbone in the config:
+
+```yaml
+model:
+  name: apexid
+  embedding_dim: 512
+  input_channels: 3
+  backbone:
+    name: convnext_tiny_pt
+    kwargs:
+      pretrained: true
+```
+
+Registered ConvNeXt backbones include `convnext_tiny`, `convnext_small`,
+`convnext_base`, `convnext_large`, and pretrained-default aliases with `_pt`.
+The default config remains OSNet-based.
 
 ## Open-Set Validation
 

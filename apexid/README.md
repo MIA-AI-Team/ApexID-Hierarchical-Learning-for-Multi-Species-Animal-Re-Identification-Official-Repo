@@ -7,8 +7,8 @@ training scripts, tests, notebooks, and future inference/evaluation workflows.
 
 - `data/`: CSV-backed datasets, image transforms, wavelet channel generation,
   mean/std calculation, and P x K batch sampling.
-- `models/`: ApexID embedding model, OSNet backbones, trainable heads, and
-  factory functions that build components from config.
+- `models/`: ApexID embedding model, OSNet and TorchVision ConvNeXt backbones,
+  trainable heads, and factory functions that build components from config.
 - `losses/`: objective implementations used by model factories and heads.
 - `engine/`: training loop, validation loop, checkpointing, early stopping, and
   experiment logging.

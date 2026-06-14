@@ -92,6 +92,32 @@ Run the config test:
 pytest tests/test_default_config.py
 ```
 
+## Backbone Selection
+
+The default config keeps the OSNet experiment:
+
+```yaml
+model:
+  backbone:
+    name: osnet_x1_0
+```
+
+To run TorchVision ConvNeXt instead, change only the backbone name and optional
+kwargs:
+
+```yaml
+model:
+  backbone:
+    name: convnext_tiny_pt
+    kwargs:
+      pretrained: true
+```
+
+Available ConvNeXt aliases are `convnext_tiny`, `convnext_small`,
+`convnext_base`, `convnext_large`, and pretrained-default `_pt` variants.
+All ConvNeXt backbones return the configured embedding dimension and are
+normalized by `ApexID.forward`, matching the OSNet path.
+
 ## Contributor Notes
 
 - Keep paths relative to the repository root unless the code explicitly expects

@@ -1,3 +1,13 @@
+from .convnext import (
+    convnext_base,
+    convnext_base_pt,
+    convnext_large,
+    convnext_large_pt,
+    convnext_small,
+    convnext_small_pt,
+    convnext_tiny,
+    convnext_tiny_pt,
+)
 from .osnet import (
     osnet_ibn_x1_0,
     osnet_x0_25,
@@ -54,3 +64,11 @@ register_backbone("osnet_x0_75_pt")(osnet_x0_75_pt)
 register_backbone("osnet_x0_5_pt")(osnet_x0_5_pt)
 register_backbone("osnet_x0_25_pt")(osnet_x0_25_pt)
 register_backbone("osnet_ibn_x1_0_pt")(osnet_ibn_x1_0_pt)
+register_backbone("convnext_tiny")(convnext_tiny)
+register_backbone("convnext_small")(convnext_small)
+register_backbone("convnext_base")(convnext_base)
+register_backbone("convnext_large")(convnext_large)
+register_backbone("convnext_tiny_pt")(convnext_tiny_pt)
+register_backbone("convnext_small_pt")(convnext_small_pt)
+register_backbone("convnext_base_pt")(convnext_base_pt)
+register_backbone("convnext_large_pt")(convnext_large_pt)
