@@ -83,12 +83,14 @@ scheduler:
 finetune:
   enabled: auto
   strategy: head_first
-  head_only_epochs: 2
-  unfreeze_top_fraction: 0.25
+  head_only_epochs: 3
+  unfreeze_top_fraction: 0.0
   optimizer:
     backbone_lr: 1.0e-5
     head_lr: 1.0e-4
     head_lr_multiplier: null
+    backbone_weight_decay: null
+    head_weight_decay: null
   scheduler:
     name: cosine_annealing_lr
     kwargs:

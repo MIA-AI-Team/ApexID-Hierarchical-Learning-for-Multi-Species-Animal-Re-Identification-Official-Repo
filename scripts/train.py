@@ -284,9 +284,25 @@ def build_optimizer(cfg, model, head):
     if is_finetune_active(cfg):
         backbone_lr = float(cfg.get("_finetune_backbone_lr", kwargs.get("lr", 1.0e-5)))
         head_lr = float(cfg.get("_finetune_head_lr", backbone_lr * 10.0))
+        backbone_group = {
+            "params": collect_backbone_params(model),
+            "lr": backbone_lr,
+            "param_group_name": "backbone",
+        }
+        head_group = {
+            "params": collect_head_params(head),
+            "lr": head_lr,
+            "param_group_name": "head",
+        }
+        backbone_weight_decay = cfg.get("_finetune_backbone_weight_decay")
+        head_weight_decay = cfg.get("_finetune_head_weight_decay")
+        if backbone_weight_decay not in {None, ""}:
+            backbone_group["weight_decay"] = float(backbone_weight_decay)
+        if head_weight_decay not in {None, ""}:
+            head_group["weight_decay"] = float(head_weight_decay)
         param_groups = [
-            {"params": collect_backbone_params(model), "lr": backbone_lr, "param_group_name": "backbone"},
-            {"params": collect_head_params(head), "lr": head_lr, "param_group_name": "head"},
+            backbone_group,
+            head_group,
         ]
         if name == "adam":
             return torch.optim.Adam(param_groups, **shared_kwargs)

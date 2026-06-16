@@ -176,6 +176,10 @@ def test_train_script_builds_finetune_optimizer_param_groups(tmp_path):
     train_script = _load_train_script()
     cfg = _base_cfg(tmp_path)
     cfg["model"]["backbone"] = {"name": "osnet_x0_25_pt", "kwargs": {"pretrained": False}}
+    cfg.setdefault("finetune", {})["optimizer"] = {
+        "backbone_weight_decay": 1e-5,
+        "head_weight_decay": 5e-4,
+    }
     cfg = train_script.resolve_training_profile(cfg)
     _, _, num_classes = train_script.build_datasets(cfg)
     model, head, _ = train_script.build_components(cfg, num_classes=num_classes)
@@ -186,6 +190,8 @@ def test_train_script_builds_finetune_optimizer_param_groups(tmp_path):
     assert optimizer.param_groups[1]["param_group_name"] == "head"
     assert optimizer.param_groups[0]["lr"] == pytest.approx(1e-5)
     assert optimizer.param_groups[1]["lr"] == pytest.approx(1e-4)
+    assert optimizer.param_groups[0]["weight_decay"] == pytest.approx(1e-5)
+    assert optimizer.param_groups[1]["weight_decay"] == pytest.approx(5e-4)
 
 
 def test_train_script_builds_cosine_warmup_scheduler(tmp_path):

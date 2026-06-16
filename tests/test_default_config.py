@@ -59,6 +59,10 @@ def test_default_config_contains_experiment_training_sections():
     assert cfg["head"]["kwargs"]["m"] == 0.3
     assert cfg["finetune"]["enabled"] == "auto"
     assert cfg["finetune"]["strategy"] == "full"
+    assert cfg["finetune"]["head_only_epochs"] == 3
+    assert cfg["finetune"]["unfreeze_top_fraction"] == 0.0
+    assert cfg["finetune"]["optimizer"]["backbone_weight_decay"] is None
+    assert cfg["finetune"]["optimizer"]["head_weight_decay"] is None
     assert cfg["loss"]["name"] == "cross_entropy"
     assert cfg["lr_range_test"]["enabled"] is True
     assert cfg["lr_range_test"]["mode"] == "auto_apply"
