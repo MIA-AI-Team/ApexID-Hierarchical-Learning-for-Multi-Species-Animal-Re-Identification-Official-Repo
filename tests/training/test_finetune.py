@@ -100,3 +100,39 @@ def test_apply_finetune_phase_full_keeps_backbone_trainable():
     phase = apply_finetune_phase(model, head, cfg, epoch=0)
     assert phase["phase"] == "full"
     assert all(param.requires_grad for param in model.backbone.parameters())
+
+
+def test_apply_finetune_phase_auto_without_model_is_scratch():
+    """Partial cfg (no model section) must not silently activate head_first."""
+    model = ApexID(backbone_name="osnet_x0_25", embedding_dim=8, input_channels=3)
+    head = nn.Linear(8, 4)
+    cfg = {
+        "finetune": {
+            "enabled": "auto",
+            "strategy": "head_first",
+            "head_only_epochs": 2,
+            "unfreeze_top_fraction": 0.0,
+        }
+    }
+
+    phase = apply_finetune_phase(model, head, cfg, epoch=0)
+    assert phase["phase"] == "scratch"
+    assert all(param.requires_grad for param in model.backbone.parameters())
+
+
+def test_apply_finetune_phase_head_first_with_trainer_style_cfg():
+    """Trainer passes finetune block only; enabled=True must preserve head_first."""
+    model = ApexID(backbone_name="osnet_x0_25", embedding_dim=8, input_channels=3)
+    head = nn.Linear(8, 4)
+    cfg = {
+        "finetune": {
+            "enabled": True,
+            "strategy": "head_first",
+            "head_only_epochs": 2,
+            "unfreeze_top_fraction": 0.0,
+        }
+    }
+
+    phase = apply_finetune_phase(model, head, cfg, epoch=0)
+    assert phase["phase"] == "head_first"
+    assert not any(param.requires_grad for param in model.backbone.parameters())

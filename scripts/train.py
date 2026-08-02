@@ -4,8 +4,10 @@ import logging
 import os
 import sys
 import warnings
+import copy
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 
@@ -107,6 +109,119 @@ def _build_metrics_label_map(*paths):
     if not frames:
         raise ValueError("At least one CSV path is required to build metric labels.")
     return ApexID_Dataset.build_label_mapping(pd.concat(frames, ignore_index=True))
+
+
+def _normalise_name(value):
+    """Return a lower-cased string name helper."""
+    if value is None:
+        return None
+    return str(value).strip().lower()
+
+
+def _class_counts_from_train_dataset(train_dataset, num_classes):
+    """Return per-class counts aligned with training class indices."""
+    identity_series = train_dataset.data_csv[train_dataset.identity_column]
+    label_to_idx = train_dataset.label_to_idx
+    class_indices = [label_to_idx[identity] for identity in identity_series if identity in label_to_idx]
+    if not class_indices:
+        raise ValueError("Unable to compute class frequencies: training dataset is empty.")
+    counts = np.bincount(np.asarray(class_indices, dtype=np.int64), minlength=int(num_classes)).astype(np.float32)
+    if counts.shape[0] != int(num_classes):
+        raise ValueError("Computed class counts do not match the configured number of classes.")
+    if np.any(counts <= 0):
+        raise ValueError(
+            "Class frequency margins require at least one sample per class. "
+            "Found one or more classes with zero samples."
+        )
+    return counts
+
+
+def _build_frequency_bin_margins(train_dataset, num_classes, margin_min=0.2, margin_max=0.5):
+    """Compute MiewID-style per-class margins from class frequencies."""
+    margin_min = float(margin_min)
+    margin_max = float(margin_max)
+    if not 0 < margin_min < np.pi / 2:
+        raise ValueError("head.kwargs.margin_min must be in the open interval (0, pi/2).")
+    if not 0 < margin_max < np.pi / 2:
+        raise ValueError("head.kwargs.margin_max must be in the open interval (0, pi/2).")
+    if margin_max <= margin_min:
+        raise ValueError("head.kwargs.margin_max must be greater than head.kwargs.margin_min.")
+
+    class_counts = _class_counts_from_train_dataset(train_dataset, num_classes)
+    # Match MiewID behavior: rarer classes get larger margins.
+    raw = np.sqrt(1.0 / np.sqrt(class_counts))
+    raw_min = float(raw.min())
+    raw_max = float(raw.max())
+    if np.isclose(raw_max, raw_min):
+        margins = np.full((int(num_classes),), margin_max, dtype=np.float32)
+    else:
+        margins = (raw - raw_min) / (raw_max - raw_min)
+        margins = margins * (margin_max - margin_min) + margin_min
+    return margins.tolist()
+
+
+def _is_null_config_value(value):
+    """Return True for empty YAML null-like sentinel values."""
+    if value is None:
+        return True
+    if isinstance(value, str) and value.strip().lower() in {"", "none", "null"}:
+        return True
+    return False
+
+
+def _resolve_resume_path(cfg, repo_root=None):
+    """Resolve checkpoint resume path from config, including ``auto`` detection."""
+    checkpoint_cfg = _as_dict(cfg.get("checkpoint", {}))
+    resume_path = checkpoint_cfg.get("resume_path")
+    if _is_null_config_value(resume_path):
+        return None
+
+    resume_key = str(resume_path).strip().lower()
+    if resume_key != "auto":
+        return str(resume_path)
+
+    filename = checkpoint_cfg.get("filename", "last_checkpoint.pt")
+    checkpoint_dir = checkpoint_cfg.get("output_dir")
+    if checkpoint_dir in {None, ""}:
+        experiment_dir = _as_dict(cfg.get("experiment", {})).get("output_dir", "outputs/apexid_run")
+        checkpoint_dir = Path(experiment_dir) / "checkpoints"
+    candidate = Path(checkpoint_dir)
+    if not candidate.is_absolute() and repo_root is not None:
+        candidate = Path(repo_root) / candidate
+    candidate = candidate / filename
+    if candidate.is_file():
+        return str(candidate)
+    return None
+
+
+def _apply_subcenter_margin_config(cfg, train_dataset, num_classes):
+    """Resolve sub-center margin modes and inject explicit per-class margins."""
+    cfg = copy.deepcopy(_as_dict(cfg))
+    head_cfg = _as_dict(cfg.get("head", {}))
+    head_name = _normalise_name(head_cfg.get("name", ""))
+    if head_name not in {"arcface_subcenter_dynamic", "arcface_subcenter", "subcenter_arcface"}:
+        return cfg
+
+    head_kwargs = dict(_as_dict(head_cfg.get("kwargs", {})))
+    if head_kwargs.get("margins") is not None:
+        return cfg
+
+    margins_source = _normalise_name(head_kwargs.get("margins_source", "uniform"))
+    if margins_source != "frequency_bins":
+        return cfg
+
+    margin_min = head_kwargs.get("margin_min", 0.2)
+    margin_max = head_kwargs.get("margin_max", head_kwargs.get("margin_default", 0.3))
+    head_kwargs["margins"] = _build_frequency_bin_margins(
+        train_dataset=train_dataset,
+        num_classes=num_classes,
+        margin_min=margin_min,
+        margin_max=margin_max,
+    )
+
+    cfg["head"] = dict(head_cfg)
+    cfg["head"]["kwargs"] = head_kwargs
+    return cfg
 
 
 def build_datasets(cfg):
@@ -542,10 +657,13 @@ def train_from_config(cfg):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     train_dataset, validation_datasets, num_classes = build_datasets(cfg)
+    cfg = _apply_subcenter_margin_config(cfg, train_dataset, num_classes)
     train_loader, validation_loaders = build_dataloaders(cfg, train_dataset, validation_datasets, device)
 
     checkpoint_cfg = _as_dict(cfg.get("checkpoint", {}))
-    resume_path = checkpoint_cfg.get("resume_path")
+    resume_path = _resolve_resume_path(cfg, repo_root=REPO_ROOT)
+    if resume_path is not None:
+        print(f"Resuming training from checkpoint: {resume_path}")
     tracking_metadata = {
         "num_classes": int(num_classes),
         "train_dataset_size": int(len(train_dataset)),

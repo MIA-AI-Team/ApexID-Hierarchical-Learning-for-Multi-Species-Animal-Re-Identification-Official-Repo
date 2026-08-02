@@ -1,4 +1,5 @@
 import random
+import warnings
 from collections import OrderedDict
 from pathlib import Path
 
@@ -39,6 +40,25 @@ def _torch_load(path, map_location):
         return torch.load(path, map_location=map_location)
 
 
+def _as_byte_rng_tensor(state):
+    """Normalize RNG state payloads to CPU ``torch.ByteTensor`` for PyTorch APIs."""
+    if torch.is_tensor(state):
+        tensor = state.detach().cpu()
+        if tensor.dtype != torch.uint8:
+            tensor = tensor.to(dtype=torch.uint8)
+        tensor = tensor.contiguous()
+    elif isinstance(state, (bytes, bytearray)):
+        tensor = torch.frombuffer(state, dtype=torch.uint8)
+    else:
+        array = np.asarray(state, dtype=np.uint8)
+        tensor = torch.from_numpy(array).contiguous()
+
+    # torch.set_rng_state still requires the legacy ByteTensor type on some PyTorch builds.
+    if not isinstance(tensor, torch.ByteTensor):
+        tensor = torch.ByteTensor(tensor.numpy().astype(np.uint8, copy=False))
+    return tensor.clone()
+
+
 def collect_rng_state():
     """Collect Python, NumPy, PyTorch CPU, and PyTorch CUDA RNG state.
 
@@ -52,11 +72,11 @@ def collect_rng_state():
     state = {
         "python": random.getstate(),
         "numpy": np.random.get_state(),
-        "torch": torch.get_rng_state(),
+        "torch": _as_byte_rng_tensor(torch.get_rng_state()),
         "cuda": None,
     }
     if torch.cuda.is_available():
-        state["cuda"] = torch.cuda.get_rng_state_all()
+        state["cuda"] = [_as_byte_rng_tensor(device_state) for device_state in torch.cuda.get_rng_state_all()]
     return state
 
 
@@ -71,14 +91,24 @@ def restore_rng_state(rng_state):
     """
     if not rng_state:
         return
-    if rng_state.get("python") is not None:
-        random.setstate(rng_state["python"])
-    if rng_state.get("numpy") is not None:
-        np.random.set_state(rng_state["numpy"])
-    if rng_state.get("torch") is not None:
-        torch.set_rng_state(rng_state["torch"])
-    if torch.cuda.is_available() and rng_state.get("cuda") is not None:
-        torch.cuda.set_rng_state_all(rng_state["cuda"])
+    try:
+        if rng_state.get("python") is not None:
+            random.setstate(rng_state["python"])
+        if rng_state.get("numpy") is not None:
+            np.random.set_state(rng_state["numpy"])
+        if rng_state.get("torch") is not None:
+            torch.set_rng_state(_as_byte_rng_tensor(rng_state["torch"]))
+        if torch.cuda.is_available() and rng_state.get("cuda") is not None:
+            cuda_state = rng_state["cuda"]
+            if isinstance(cuda_state, (list, tuple)):
+                cuda_state = [_as_byte_rng_tensor(device_state) for device_state in cuda_state]
+            torch.cuda.set_rng_state_all(cuda_state)
+    except (TypeError, ValueError, RuntimeError) as exc:
+        warnings.warn(
+            f"Could not restore checkpoint RNG state ({exc}); continuing with current RNG state.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 def should_save_checkpoint(epoch, every_n_epochs):

@@ -1,7 +1,13 @@
 from torch import nn
 
 from .apexid_model import ApexID
-from .heads import ArcFaceHead, DynArcFaceHead, SphereFace2FocalHead, SphereFace2Head
+from .heads import (
+    ArcFaceHead,
+    ArcFaceSubCenterDynamicHead,
+    DynArcFaceHead,
+    SphereFace2FocalHead,
+    SphereFace2Head,
+)
 from ..losses import DCMIPLoss
 from ..utils.seed import DEFAULT_SEED, seed_everything
 
@@ -9,6 +15,9 @@ from ..utils.seed import DEFAULT_SEED, seed_everything
 HEAD_REGISTRY = {
     "arcface": ArcFaceHead,
     "arcface_head": ArcFaceHead,
+    "arcface_subcenter_dynamic": ArcFaceSubCenterDynamicHead,
+    "arcface_subcenter": ArcFaceSubCenterDynamicHead,
+    "subcenter_arcface": ArcFaceSubCenterDynamicHead,
     "dynarcface": DynArcFaceHead,
     "dynamic_arcface": DynArcFaceHead,
     "dyn_arcface": DynArcFaceHead,

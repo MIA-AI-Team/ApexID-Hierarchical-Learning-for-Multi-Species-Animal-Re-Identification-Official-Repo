@@ -9,7 +9,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from apexid.models.heads import SphereFace2Head
+from apexid.models.heads import ArcFaceSubCenterDynamicHead, SphereFace2Head
 from apexid.engine.loggers import NullLogger
 
 
@@ -396,6 +396,107 @@ def test_train_script_builds_sphereface2_internal_loss_components(tmp_path):
     assert isinstance(head, SphereFace2Head)
     assert criterion is None
     assert len(optimizer.param_groups[0]["params"]) > 0
+
+
+def test_train_script_builds_subcenter_arcface_components(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["head"] = {
+        "name": "arcface_subcenter_dynamic",
+        "kwargs": {
+            "s": 16.0,
+            "k": 2,
+            "margin_default": 0.3,
+            "margins_source": "uniform",
+        },
+    }
+    cfg["loss"] = {"name": "cross_entropy", "kwargs": {}}
+    _, _, num_classes = train_script.build_datasets(cfg)
+
+    model, head, criterion = train_script.build_components(cfg, num_classes=num_classes)
+    optimizer = train_script.build_optimizer(cfg, model, head)
+
+    assert isinstance(head, ArcFaceSubCenterDynamicHead)
+    assert criterion is not None
+    assert len(optimizer.param_groups[0]["params"]) > 0
+
+
+def test_train_script_builds_frequency_bin_margins_for_subcenter_head(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    train_csv = Path(cfg["data"]["train_path"])
+    image_dir = Path(cfg["data"]["root_dir"])
+    _make_csv(train_csv, image_dir, ["a", "a", "a", "b"])
+    cfg["head"] = {
+        "name": "arcface_subcenter_dynamic",
+        "kwargs": {
+            "s": 16.0,
+            "k": 2,
+            "margins_source": "frequency_bins",
+            "margin_min": 0.2,
+            "margin_max": 0.4,
+        },
+    }
+    train_dataset, _, num_classes = train_script.build_datasets(cfg)
+
+    resolved_cfg = train_script._apply_subcenter_margin_config(cfg, train_dataset, num_classes)
+    margins = resolved_cfg["head"]["kwargs"]["margins"]
+
+    assert len(margins) == num_classes
+    assert min(margins) >= 0.2 - 1e-6
+    assert max(margins) <= 0.4 + 1e-6
+    assert margins[1] > margins[0]
+
+
+def test_train_script_resolve_resume_path_auto_detects_last_checkpoint(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    checkpoint_dir = tmp_path / "outputs" / "test_run" / "checkpoints"
+    checkpoint_dir.mkdir(parents=True)
+    checkpoint_file = checkpoint_dir / "last_checkpoint.pt"
+    checkpoint_file.write_bytes(b"stub")
+
+    cfg["experiment"]["output_dir"] = str(tmp_path / "outputs" / "test_run")
+    cfg["checkpoint"] = {
+        "output_dir": str(checkpoint_dir),
+        "filename": "last_checkpoint.pt",
+        "resume_path": "auto",
+    }
+
+    resolved = train_script._resolve_resume_path(cfg, repo_root=tmp_path)
+
+    assert resolved == str(checkpoint_file)
+
+
+def test_train_script_resolve_resume_path_auto_returns_none_when_missing(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["checkpoint"] = {
+        "output_dir": str(tmp_path / "missing" / "checkpoints"),
+        "filename": "last_checkpoint.pt",
+        "resume_path": "auto",
+    }
+
+    assert train_script._resolve_resume_path(cfg, repo_root=tmp_path) is None
+
+
+def test_train_script_frequency_bin_margins_respect_explicit_margins(tmp_path):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    cfg["head"] = {
+        "name": "arcface_subcenter_dynamic",
+        "kwargs": {
+            "s": 16.0,
+            "k": 2,
+            "margins_source": "frequency_bins",
+            "margins": [0.21, 0.31],
+        },
+    }
+    train_dataset, _, num_classes = train_script.build_datasets(cfg)
+
+    resolved_cfg = train_script._apply_subcenter_margin_config(cfg, train_dataset, num_classes)
+
+    assert resolved_cfg["head"]["kwargs"]["margins"] == [0.21, 0.31]
 
 
 def test_train_script_rejects_external_loss_for_sphereface2(tmp_path):

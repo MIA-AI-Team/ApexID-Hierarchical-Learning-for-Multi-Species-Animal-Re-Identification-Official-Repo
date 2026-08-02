@@ -1,6 +1,6 @@
 experiment:
-  name: apexid_convnext_large_arcface_scratch
-  output_dir: outputs/apexid_convnext_large_arcface_scratch
+  name: apexid_dinov3_convnext_small_pt_sphereface2a_lw20_full_finetune_2048
+  output_dir: outputs/apexid_dinov3_convnext_small_pt_sphereface2a_lw20_full_finetune_2048
 seed: 42
 device:
   prefer_gpu: true
@@ -29,38 +29,41 @@ data:
     - 0.240918
     - 0.235914
 dataloader:
-  batch_size: 24
-  val_batch_size: 64
+  batch_size: 64
+  val_batch_size: 128
   num_workers: 4
   pin_memory: true
   persistent_workers: true
   drop_last: true
   sampler:
     name: pk
-    num_identities: 6
+    num_identities: 16
     num_instances: 4
     batches_per_epoch: null
     shuffle: true
 model:
   name: apexid
-  embedding_dim: 512
+  embedding_dim: 2048
   input_channels: 3
   backbone:
-    name: convnext_large
+    name: dinov3_convnext_small_pt
     kwargs:
-      pretrained: false
+      pretrained: true
 head:
-  name: arcface
+  name: sphereface2
   kwargs:
-    s: 40.0
+    magn_type: A
+    alpha: 0.90
+    r: 40.0
     m: 0.3
+    t: 3.0
+    lw: 20.0
 loss:
-  name: cross_entropy
+  name: null
   kwargs: {}
 optimizer:
   name: adamW
   kwargs:
-    lr: 0.0003
     weight_decay: 0.0001
     foreach: true
 lr_range_test:
@@ -81,6 +84,29 @@ scheduler:
     step_size_epochs: 4
     mode: triangular2
     cycle_momentum: false
+finetune:
+  enabled: auto
+  strategy: full
+  head_only_epochs: 3
+  unfreeze_top_fraction: 0.0
+  optimizer:
+    backbone_lr: 1.0e-5
+    head_lr: 1.0e-4
+    head_lr_multiplier: null
+  scheduler:
+    name: cosine_annealing_lr
+    kwargs:
+      T_max: null
+      eta_min: 1.0e-6
+    warmup:
+      enabled: true
+      epochs: 5
+      start_lr: 1.0e-6
+  lr_range_test:
+    enabled: false
+    mode: suggest_lr
+    apply_to: head
+    backbone_lr_divisor: 10.0
 training:
   epochs: 300
   progress: true
@@ -89,7 +115,7 @@ training:
   classification_ignore_index: -100
   metric_ignore_index: null
 validation:
-  every_n_epochs: 1
+  every_n_epochs: 3
   metric_chunk_size: 1024
   metrics:
   - top1
@@ -143,18 +169,19 @@ embedding_plot:
   filename_template: epoch_{epoch_number:03d}_umap.png
   best_filename: best_embedding_space.png
 checkpoint:
-  output_dir: outputs/apexid_convnext_large_arcface_scratch/checkpoints
+  output_dir: outputs/apexid_dinov3_convnext_small_pt_sphereface2a_lw20_full_finetune_2048/checkpoints
   every_n_epochs: 1
   filename: last_checkpoint.pt
   delete_previous: true
-  resume_path: null
+  # auto: continue from last_checkpoint.pt when present (SLURM time-limit resume)
+  resume_path: auto
 early_stopping:
   enabled: true
   monitor: known/mAP
   mode: max
   patience: 10
   min_delta: 0.0
-  output_dir: outputs/apexid_convnext_large_arcface_scratch/checkpoints
+  output_dir: outputs/apexid_dinov3_convnext_small_pt_sphereface2a_lw20_full_finetune_2048/checkpoints
   full_model_name: best_full_model.pt
   backbone_name: best_backbone.pt
   metadata_name: best_metadata.json
@@ -163,41 +190,23 @@ tracking:
   provider: wandb
   project: ApexID
   entity: MIA_AI_Team
-  run_name: ApexID-convnext-large-arcface-40-0.3-scratch
+  run_name: ApexID-dinov3-convnext-small-pt-sphereface2a-lw20-full-finetune-2048
   group: null
   tags:
+  - dinov3
+  - lvd1689m
   - convnext
-  - convnext_large
-  - arcface
-  - '40'
-  - '0.3'
-  - scratch
-  - no-wavelet
+  - convnext_small
+  - pretrained
+  - sphereface2
+  - sphereface2_a
+  - lw20
+  - finetune
+  - full
+  - emb2048
   - apexid
+
   mode: online
   log_artifacts: none
   block_on_artifact_upload: false
   artifact_finish_timeout: 300
-finetune:
-  enabled: auto
-  strategy: full
-  head_only_epochs: 2
-  unfreeze_top_fraction: 0.25
-  optimizer:
-    backbone_lr: 1.0e-5
-    head_lr: 1.0e-4
-    head_lr_multiplier: null
-  scheduler:
-    name: cosine_annealing_lr
-    kwargs:
-      T_max: null
-      eta_min: 1.0e-6
-    warmup:
-      enabled: true
-      epochs: 5
-      start_lr: 1.0e-6
-  lr_range_test:
-    enabled: false
-    mode: suggest_lr
-    apply_to: head
-    backbone_lr_divisor: 10.0

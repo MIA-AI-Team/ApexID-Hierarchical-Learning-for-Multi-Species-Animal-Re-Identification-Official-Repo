@@ -246,6 +246,12 @@ Pretrained on cluster:
 CONFIG=configs/cluster_pretrained.yaml sbatch slurm_train_h100.sh
 ```
 
+Sub-center ArcFace dynamic A/B candidate:
+
+```bash
+CONFIG=configs/cluster_subcenter_dynamic.yaml sbatch slurm_train_h100.sh
+```
+
 Quick config check on the login node:
 
 ```bash
@@ -254,7 +260,34 @@ grep -A 6 "^head:" configs/cluster_pretrained.yaml
 grep -A 12 "^finetune:" configs/cluster_pretrained.yaml
 ```
 
-Ready-to-use template: [`cluster_pretrained.yaml`](cluster_pretrained.yaml).
+Ready-to-use templates: [`cluster_pretrained.yaml`](cluster_pretrained.yaml),
+[`cluster_subcenter_dynamic.yaml`](cluster_subcenter_dynamic.yaml).
+
+### Sub-center margin modes
+
+`arcface_subcenter_dynamic` now supports two margin-source modes:
+
+- `margins_source: uniform` (default): all classes use `margin_default`.
+- `margins_source: frequency_bins`: `scripts/train.py` computes per-class margins
+  from train-set class counts (MiewID-style), then injects them into
+  `head.kwargs.margins` before building the head.
+
+Example:
+
+```yaml
+head:
+  name: arcface_subcenter_dynamic
+  kwargs:
+    s: 40.0
+    k: 3
+    margins_source: frequency_bins
+    margin_min: 0.2
+    margin_max: 0.3
+```
+
+In this mode, rarer classes receive larger margins; frequent classes receive
+smaller margins. If `head.kwargs.margins` is provided explicitly, it overrides
+the computed values.
 
 ## Contributor Notes
 

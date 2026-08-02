@@ -104,7 +104,7 @@ finetune:
     apply_to: head
     backbone_lr_divisor: 10.0
 training:
-  epochs: 100
+  epochs: 300
   progress: true
   verbose: true
   gradient_clip_norm: null

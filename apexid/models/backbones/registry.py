@@ -8,6 +8,16 @@ from .convnext import (
     convnext_tiny,
     convnext_tiny_pt,
 )
+from .dinov3_convnext import (
+    dinov3_convnext_base,
+    dinov3_convnext_base_pt,
+    dinov3_convnext_large,
+    dinov3_convnext_large_pt,
+    dinov3_convnext_small,
+    dinov3_convnext_small_pt,
+    dinov3_convnext_tiny,
+    dinov3_convnext_tiny_pt,
+)
 from .osnet import (
     osnet_ibn_x1_0,
     osnet_x0_25,
@@ -72,3 +82,11 @@ register_backbone("convnext_tiny_pt")(convnext_tiny_pt)
 register_backbone("convnext_small_pt")(convnext_small_pt)
 register_backbone("convnext_base_pt")(convnext_base_pt)
 register_backbone("convnext_large_pt")(convnext_large_pt)
+register_backbone("dinov3_convnext_tiny")(dinov3_convnext_tiny)
+register_backbone("dinov3_convnext_small")(dinov3_convnext_small)
+register_backbone("dinov3_convnext_base")(dinov3_convnext_base)
+register_backbone("dinov3_convnext_large")(dinov3_convnext_large)
+register_backbone("dinov3_convnext_tiny_pt")(dinov3_convnext_tiny_pt)
+register_backbone("dinov3_convnext_small_pt")(dinov3_convnext_small_pt)
+register_backbone("dinov3_convnext_base_pt")(dinov3_convnext_base_pt)
+register_backbone("dinov3_convnext_large_pt")(dinov3_convnext_large_pt)

@@ -1,8 +1,9 @@
-wildlife-datasets @ git+https://github.com/WildlifeDatasets/wildlife-datasets@develop
+wildlife-datasets @ git+https://github.com/WildlifeDatasets/wildlife-datasets@main
 wildlife-tools @ git+https://github.com/WildlifeDatasets/wildlife-tools
 torch
 torchvision
 timm
+transformers
 opencv-python-headless
 numpy
 pandas
@@ -11,6 +12,8 @@ Pillow
 albumentations
 PyYAML
 wandb
-umap-learn
+numba>=0.59.1
+llvmlite>=0.42.0
+umap-learn>=0.5.7
 matplotlib
 gdown

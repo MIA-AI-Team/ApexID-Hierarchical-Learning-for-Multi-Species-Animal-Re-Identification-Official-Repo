@@ -1,13 +1,17 @@
+import io
 import random
 from copy import deepcopy
 
 import numpy as np
+import pytest
 import torch
 from torch import nn
 
 from apexid.engine.checkpoint import (
+    collect_rng_state,
     load_checkpoint,
     load_training_checkpoint,
+    restore_rng_state,
     save_training_checkpoint,
     should_save_checkpoint,
 )
@@ -155,6 +159,83 @@ def test_load_training_checkpoint_restores_model_optimizer_scheduler_and_metadat
     assert checkpoint["history"] == history
     assert checkpoint["metrics"] == metrics
     assert checkpoint["extra_state"]["experiment"] == "checkpoint-test"
+
+
+def test_rng_state_round_trip_survives_torch_save_load():
+    torch.manual_seed(123)
+    random.seed(123)
+    np.random.seed(123)
+
+    expected = {
+        "python": random.random(),
+        "numpy": float(np.random.rand()),
+        "torch": torch.rand(4).tolist(),
+    }
+
+    torch.manual_seed(123)
+    random.seed(123)
+    np.random.seed(123)
+    rng_state = collect_rng_state()
+
+    buffer = io.BytesIO()
+    torch.save(rng_state, buffer)
+    buffer.seek(0)
+    loaded_rng = torch.load(buffer, weights_only=False)
+
+    random.random()
+    np.random.rand()
+    torch.rand(4)
+
+    restore_rng_state(loaded_rng)
+
+    actual = {
+        "python": random.random(),
+        "numpy": float(np.random.rand()),
+        "torch": torch.rand(4).tolist(),
+    }
+    assert actual == expected
+
+
+def test_restore_rng_state_accepts_uint8_tensor_from_legacy_checkpoint():
+    torch.manual_seed(7)
+    _ = torch.rand(1)
+    expected_next = torch.rand(3).tolist()
+
+    torch.manual_seed(7)
+    _ = torch.rand(1)
+    legacy_state = {
+        "torch": torch.get_rng_state().to(dtype=torch.uint8),
+    }
+
+    torch.rand(99)
+
+    restore_rng_state(legacy_state)
+    assert torch.rand(3).tolist() == expected_next
+
+
+def test_load_training_checkpoint_tolerates_invalid_rng_state(tmp_path):
+    model, optimizer, scheduler = _build_model_optimizer_scheduler()
+    checkpoint_path = save_training_checkpoint(
+        epoch=1,
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        output_dir=tmp_path,
+        every_n_epochs=1,
+    )
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    checkpoint["rng_state"] = {"torch": "legacy-invalid-rng-state"}
+    torch.save(checkpoint, checkpoint_path)
+
+    with pytest.warns(RuntimeWarning, match="Could not restore checkpoint RNG state"):
+        loaded = load_training_checkpoint(
+            checkpoint_path,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+        )
+
+    assert loaded["next_epoch"] == 2
 
 
 def test_load_checkpoint_supports_legacy_state_dict_key(tmp_path):

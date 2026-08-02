@@ -631,7 +631,11 @@ class Trainer:
         try:
             for epoch in range(int(start_epoch), int(epochs)):
                 if self.finetune_config is not None:
-                    finetune_cfg = {"finetune": self.finetune_config}
+                    # Trainer only stores the finetune block; force enabled=True so
+                    # is_finetune_active() does not require model.backbone for "auto".
+                    finetune_cfg = {
+                        "finetune": {**self.finetune_config, "enabled": True},
+                    }
                     phase = apply_finetune_phase(self.backbone, self.head, finetune_cfg, epoch)
                     if phase != self._finetune_phase:
                         self._finetune_phase = phase
