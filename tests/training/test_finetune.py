@@ -4,6 +4,7 @@ from torch import nn
 
 from apexid.models.apexid_model import ApexID
 from apexid.training.finetune import (
+    DEFAULT_FINETUNE,
     apply_finetune_phase,
     is_finetune_active,
     is_pretrained_backbone,
@@ -42,6 +43,13 @@ def test_is_finetune_active_false_for_scratch_backbone():
     assert is_finetune_active(cfg) is False
 
 
+def test_default_finetune_head_first_warmup_is_three_head_only_epochs():
+    assert DEFAULT_FINETUNE["head_only_epochs"] == 3
+    assert DEFAULT_FINETUNE["unfreeze_top_fraction"] == 0.0
+    assert DEFAULT_FINETUNE["optimizer"]["backbone_weight_decay"] is None
+    assert DEFAULT_FINETUNE["optimizer"]["head_weight_decay"] is None
+
+
 def test_resolve_training_profile_switches_scheduler_for_pretrained():
     cfg = _base_cfg()
     cfg["model"]["backbone"]["name"] = "convnext_base_pt"
@@ -49,9 +57,37 @@ def test_resolve_training_profile_switches_scheduler_for_pretrained():
 
     assert resolved["scheduler"]["name"] == "cosine_annealing_lr"
     assert resolved["scheduler"]["kwargs"]["T_max"] == 50
+    assert resolved["finetune"]["head_only_epochs"] == 3
+    assert resolved["finetune"]["unfreeze_top_fraction"] == 0.0
     assert resolved["lr_range_test"]["enabled"] is False
     assert resolved["_finetune_backbone_lr"] == pytest.approx(1e-5)
     assert resolved["_finetune_head_lr"] == pytest.approx(1e-4)
+
+
+def test_resolve_training_profile_accepts_finetune_weight_decay_overrides():
+    cfg = _base_cfg()
+    cfg["model"]["backbone"]["name"] = "convnext_base_pt"
+    cfg["optimizer"]["kwargs"]["weight_decay"] = 1e-4
+    cfg["finetune"]["optimizer"] = {
+        "backbone_weight_decay": 1e-5,
+        "head_weight_decay": 5e-4,
+    }
+
+    resolved = resolve_training_profile(cfg)
+
+    assert resolved["_finetune_backbone_weight_decay"] == pytest.approx(1e-5)
+    assert resolved["_finetune_head_weight_decay"] == pytest.approx(5e-4)
+
+
+def test_resolve_training_profile_uses_shared_weight_decay_as_finetune_fallback():
+    cfg = _base_cfg()
+    cfg["model"]["backbone"]["name"] = "convnext_base_pt"
+    cfg["optimizer"]["kwargs"]["weight_decay"] = 1e-4
+
+    resolved = resolve_training_profile(cfg)
+
+    assert resolved["_finetune_backbone_weight_decay"] == pytest.approx(1e-4)
+    assert resolved["_finetune_head_weight_decay"] == pytest.approx(1e-4)
 
 
 def test_resolve_training_profile_keeps_scratch_settings():
@@ -90,6 +126,25 @@ def test_apply_finetune_phase_head_first_freezes_backbone():
     phase = apply_finetune_phase(model, head, cfg, epoch=2)
     assert phase["backbone_trainable"] is True
     assert all(param.requires_grad for param in model.backbone.parameters())
+
+
+def test_apply_finetune_phase_head_first_ignores_legacy_top_fraction():
+    model = ApexID(backbone_name="osnet_x0_25", embedding_dim=8, input_channels=3)
+    head = nn.Linear(8, 4)
+    cfg = {
+        "finetune": {
+            "enabled": True,
+            "strategy": "head_first",
+            "head_only_epochs": 3,
+            "unfreeze_top_fraction": 1.0,
+        }
+    }
+
+    phase = apply_finetune_phase(model, head, cfg, epoch=0)
+
+    assert phase["phase"] == "head_first"
+    assert not any(param.requires_grad for param in model.backbone.parameters())
+    assert all(param.requires_grad for param in head.parameters())
 
 
 def test_apply_finetune_phase_full_keeps_backbone_trainable():

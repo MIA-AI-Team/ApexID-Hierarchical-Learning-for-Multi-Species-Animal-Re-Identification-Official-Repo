@@ -93,6 +93,8 @@ finetune:
     backbone_lr: 1.0e-5
     head_lr: 1.0e-4
     head_lr_multiplier: null
+    backbone_weight_decay: null
+    head_weight_decay: null
   scheduler:
     name: cosine_annealing_lr
     kwargs:

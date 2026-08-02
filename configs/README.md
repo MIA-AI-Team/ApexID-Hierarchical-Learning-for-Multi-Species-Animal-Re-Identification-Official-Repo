@@ -135,7 +135,7 @@ true`), `scripts/train.py` calls `resolve_training_profile()` and applies the
 | Profile | Backbone examples | LR range test | Scheduler | Optimizer LRs |
 |---------|-------------------|---------------|-----------|---------------|
 | **Scratch** | `osnet_x1_0`, `convnext_large` + `pretrained: false` | **On** by default (`lr_range_test.enabled: true`) | **CyclicLR** (finder sets `base_lr` / `max_lr`) | Single `optimizer.kwargs.lr` |
-| **Pretrained** | `osnet_x1_0_pt`, `convnext_base_pt`, `pretrained: true` | **Off** by default (`finetune.lr_range_test.enabled: false`) | **Cosine annealing + warmup** | Separate `backbone_lr` and `head_lr` |
+| **Pretrained** | `osnet_x1_0_pt`, `convnext_base_pt`, `pretrained: true` | **Off** by default (`finetune.lr_range_test.enabled: false`) | **Cosine annealing + warmup** | Separate backbone/head LR and optional weight decay |
 
 The top-level `scheduler` and `lr_range_test` blocks in YAML are kept for scratch
 runs. When the finetune profile activates, `resolve_training_profile()` overrides
@@ -149,15 +149,17 @@ Choose with `finetune.strategy`:
 | Strategy | Behavior | When to use |
 |----------|----------|-------------|
 | `full` | Unfreeze backbone + head from epoch 0; differential LRs; cosine decay | MiewID-style full fine-tune from ImageNet weights |
-| `head_first` | Freeze backbone for `head_only_epochs`; train head (and optionally top backbone layers); then unfreeze all | WildFusion-style stable head warmup before backbone updates |
+| `head_first` | Run `head_only_epochs` extra head-only warmup epochs with the backbone frozen; then unfreeze all for `training.epochs` real epochs | WildFusion-style stable head warmup before backbone updates |
 
 `head_first` options:
 
-- `head_only_epochs`: number of epochs with a frozen backbone (default `2`).
-- `unfreeze_top_fraction`: fraction of backbone modules to unfreeze during the
-  head-only phase (`0.0` = head only, `0.25` = head + top 25% of backbone layers).
-- `WaveletStem` (6-channel wavelet input) stays trainable during the frozen phase
-  because it is randomly initialized, not loaded from ImageNet.
+- `head_only_epochs`: extra warmup epochs that train only the head before real
+  training starts (default `3`).
+- `training.epochs`: real training epochs after the backbone is unfrozen.
+- The scheduler, validation, checkpointing, early stopping, and epoch-level
+  experiment logging start only after the head-only warmup.
+- `unfreeze_top_fraction` is kept in configs for compatibility, but head-first
+  warmup freezes the full backbone; leave it at `0.0`.
 
 ### Full `finetune` block
 
@@ -165,12 +167,14 @@ Choose with `finetune.strategy`:
 finetune:
   enabled: auto          # auto | true | false
   strategy: full         # full | head_first
-  head_only_epochs: 2    # head_first only
-  unfreeze_top_fraction: 0.25
+  head_only_epochs: 3    # extra head-only warmup epochs before training.epochs
+  unfreeze_top_fraction: 0.0
   optimizer:
     backbone_lr: 1.0e-5
     head_lr: 1.0e-4
     head_lr_multiplier: null   # optional: head_lr = backbone_lr * multiplier
+    backbone_weight_decay: null # null falls back to optimizer.kwargs.weight_decay
+    head_weight_decay: null     # set 0.0 or another value for a separate head decay
   scheduler:
     name: cosine_annealing_lr
     kwargs:
@@ -228,7 +232,7 @@ head:
 finetune:
   enabled: auto
   strategy: head_first
-  head_only_epochs: 2
+  head_only_epochs: 3
 ```
 
 ### Cluster usage

@@ -508,6 +508,177 @@ def test_trainer_steps_cyclic_lr_once_per_optimizer_update(tmp_path):
     assert scheduler.last_epoch == initial_last_epoch + len(train_loader)
 
 
+def test_head_first_warmup_trains_head_only_without_lifecycle_side_effects(tmp_path):
+    torch.manual_seed(42)
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.1)
+    validator = DummyValidator()
+    logger = RecordingLogger()
+    initial_backbone = [param.detach().clone() for param in backbone.parameters()]
+    initial_head = [param.detach().clone() for param in head.parameters()]
+
+    trainer = Trainer(
+        backbone,
+        head,
+        loss=nn.CrossEntropyLoss(),
+        optimizer=optimizer,
+        validator=validator,
+        device="cpu",
+        progress=False,
+        verbose=False,
+        checkpoint_dir=tmp_path,
+        early_stopping_enabled=False,
+        experiment_logger=logger,
+        finetune_config={
+            "enabled": True,
+            "strategy": "head_first",
+            "head_only_epochs": 1,
+        },
+    )
+
+    history = trainer.train(_loader(), _loader(), epochs=0)
+
+    assert all(len(values) == 0 for values in history.values())
+    assert validator.calls == 0
+    assert logger.metrics == []
+    assert logger.finished is True
+    assert list(tmp_path.glob("*.pt")) == []
+    assert all(torch.allclose(before, after) for before, after in zip(initial_backbone, backbone.parameters()))
+    assert any(not torch.allclose(before, after) for before, after in zip(initial_head, head.parameters()))
+
+
+def test_head_first_warmup_is_extra_and_not_logged_or_validated(tmp_path):
+    torch.manual_seed(42)
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.01)
+    validator = DummyValidator()
+    logger = RecordingLogger()
+
+    trainer = Trainer(
+        backbone,
+        head,
+        loss=nn.CrossEntropyLoss(),
+        optimizer=optimizer,
+        validator=validator,
+        device="cpu",
+        progress=False,
+        verbose=False,
+        checkpoint_dir=tmp_path,
+        checkpoint_every_n_epochs=1,
+        checkpoint_filename="checkpoint_epoch_{epoch_number:03d}.pt",
+        checkpoint_delete_previous=False,
+        early_stopping_enabled=True,
+        early_stopping_monitor="val_mAP",
+        early_stopping_mode="max",
+        early_stopping_dir=tmp_path,
+        experiment_logger=logger,
+        finetune_config={
+            "enabled": True,
+            "strategy": "head_first",
+            "head_only_epochs": 2,
+        },
+    )
+
+    history = trainer.train(_loader(), _loader(), epochs=1)
+
+    assert len(history["train_loss"]) == 1
+    assert validator.calls == 1
+    assert len(logger.metrics) == 1
+    metrics, _ = logger.metrics[0]
+    assert metrics["epoch"] == 1
+    assert metrics["epoch_index"] == 0
+    assert trainer.early_stopping.best_epoch == 0
+    assert sorted(path.name for path in tmp_path.glob("checkpoint_epoch_*.pt")) == [
+        "checkpoint_epoch_001.pt"
+    ]
+
+
+def test_head_first_warmup_does_not_step_cyclic_lr(tmp_path):
+    torch.manual_seed(42)
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.001)
+    scheduler = torch.optim.lr_scheduler.CyclicLR(
+        optimizer,
+        base_lr=0.001,
+        max_lr=0.01,
+        step_size_up=1,
+        cycle_momentum=False,
+    )
+    initial_last_epoch = scheduler.last_epoch
+    train_loader = _loader()
+
+    trainer = Trainer(
+        backbone,
+        head,
+        loss=nn.CrossEntropyLoss(),
+        optimizer=optimizer,
+        scheduler=scheduler,
+        validator=DummyValidator(),
+        device="cpu",
+        progress=False,
+        verbose=False,
+        checkpoint_dir=tmp_path,
+        early_stopping_enabled=False,
+        finetune_config={
+            "enabled": True,
+            "strategy": "head_first",
+            "head_only_epochs": 2,
+        },
+    )
+
+    trainer.train(train_loader, _loader(), epochs=1)
+
+    assert scheduler.last_epoch == initial_last_epoch + len(train_loader)
+
+
+def test_head_first_warmup_uses_base_lr_before_scheduler_start(tmp_path):
+    torch.manual_seed(42)
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.01)
+    scheduler = torch.optim.lr_scheduler.LinearLR(
+        optimizer,
+        start_factor=0.1,
+        end_factor=1.0,
+        total_iters=2,
+    )
+    observed_lrs = []
+
+    class LrTrackingTrainer(Trainer):
+        def train_one_epoch(self, *args, **kwargs):
+            observed_lrs.append(float(self.optimizer.param_groups[0]["lr"]))
+            return super().train_one_epoch(*args, **kwargs)
+
+    assert abs(optimizer.param_groups[0]["lr"] - 0.001) < 1e-12
+    trainer = LrTrackingTrainer(
+        backbone,
+        head,
+        loss=nn.CrossEntropyLoss(),
+        optimizer=optimizer,
+        scheduler=scheduler,
+        validator=DummyValidator(),
+        device="cpu",
+        progress=False,
+        verbose=False,
+        checkpoint_dir=tmp_path,
+        early_stopping_enabled=False,
+        finetune_config={
+            "enabled": True,
+            "strategy": "head_first",
+            "head_only_epochs": 1,
+        },
+    )
+
+    trainer.train(_loader(), _loader(), epochs=1)
+
+    assert len(observed_lrs) == 2
+    assert abs(observed_lrs[0] - 0.01) < 1e-12
+    assert abs(observed_lrs[1] - 0.001) < 1e-12
+
+
 def test_trainer_rejects_unknown_labels_in_training(tmp_path):
     images = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
     cls_labels = torch.tensor([0, -100])
@@ -614,3 +785,71 @@ def test_trainer_sets_epoch_on_train_loader_sampler_and_batch_sampler(tmp_path):
 
     assert sampler.epochs == [0, 1, 2]
     assert batch_sampler.epochs == [0, 1, 2]
+
+
+def test_head_first_sampler_epoch_offsets_include_warmup(tmp_path):
+    torch.manual_seed(42)
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.01)
+    sampler = TrackingEpochSampler()
+    sampler_loader = TrackingLoader(sampler=sampler)
+
+    trainer = Trainer(
+        backbone,
+        head,
+        loss=nn.CrossEntropyLoss(),
+        optimizer=optimizer,
+        validator=DummyValidator(),
+        device="cpu",
+        progress=False,
+        verbose=False,
+        checkpoint_dir=tmp_path,
+        early_stopping_enabled=False,
+        finetune_config={
+            "enabled": True,
+            "strategy": "head_first",
+            "head_only_epochs": 2,
+        },
+    )
+
+    trainer.train(sampler_loader, _loader(), epochs=2)
+
+    assert sampler.epochs == [0, 1, 2, 3]
+
+
+def test_head_first_resume_skips_warmup_and_keeps_real_epoch_numbers(tmp_path):
+    torch.manual_seed(42)
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.01)
+    sampler = TrackingEpochSampler()
+    sampler_loader = TrackingLoader(sampler=sampler)
+    validator = DummyValidator()
+    logger = RecordingLogger()
+
+    trainer = Trainer(
+        backbone,
+        head,
+        loss=nn.CrossEntropyLoss(),
+        optimizer=optimizer,
+        validator=validator,
+        device="cpu",
+        progress=False,
+        verbose=False,
+        checkpoint_dir=tmp_path,
+        early_stopping_enabled=False,
+        experiment_logger=logger,
+        finetune_config={
+            "enabled": True,
+            "strategy": "head_first",
+            "head_only_epochs": 2,
+        },
+    )
+
+    history = trainer.train(sampler_loader, _loader(), epochs=3, start_epoch=1)
+
+    assert len(history["train_loss"]) == 2
+    assert validator.calls == 2
+    assert sampler.epochs == [3, 4]
+    assert [metrics["epoch"] for metrics, _ in logger.metrics] == [2, 3]

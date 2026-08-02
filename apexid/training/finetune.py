@@ -3,20 +3,19 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-import torch
 from torch import nn
-
-from apexid.models.backbones.osnet_pt import WaveletStem
 
 DEFAULT_FINETUNE: dict[str, Any] = {
     "enabled": "auto",
     "strategy": "full",
-    "head_only_epochs": 2,
-    "unfreeze_top_fraction": 0.25,
+    "head_only_epochs": 3,
+    "unfreeze_top_fraction": 0.0,
     "optimizer": {
         "backbone_lr": 1.0e-5,
         "head_lr": 1.0e-4,
         "head_lr_multiplier": None,
+        "backbone_weight_decay": None,
+        "head_weight_decay": None,
     },
     "scheduler": {
         "name": "cosine_annealing_lr",
@@ -116,11 +115,22 @@ def resolve_training_profile(cfg) -> dict:
         head_lr = backbone_lr * float(head_lr_multiplier)
     else:
         head_lr = float(finetune_opt.get("head_lr", 1.0e-4))
+    shared_weight_decay = optimizer_kwargs.get("weight_decay")
+    backbone_weight_decay = finetune_opt.get("backbone_weight_decay")
+    head_weight_decay = finetune_opt.get("head_weight_decay")
+    if backbone_weight_decay in {None, ""}:
+        backbone_weight_decay = shared_weight_decay
+    if head_weight_decay in {None, ""}:
+        head_weight_decay = shared_weight_decay
     optimizer_kwargs.setdefault("lr", backbone_lr)
     optimizer_cfg["kwargs"] = optimizer_kwargs
     resolved["optimizer"] = optimizer_cfg
     resolved["_finetune_backbone_lr"] = backbone_lr
     resolved["_finetune_head_lr"] = head_lr
+    if backbone_weight_decay not in {None, ""}:
+        resolved["_finetune_backbone_weight_decay"] = float(backbone_weight_decay)
+    if head_weight_decay not in {None, ""}:
+        resolved["_finetune_head_weight_decay"] = float(head_weight_decay)
 
     if not bool(_as_dict(finetune_cfg.get("lr_range_test", {})).get("enabled", False)):
         lr_test_cfg = _as_dict(resolved.get("lr_range_test", {}))
@@ -159,54 +169,22 @@ def collect_head_params(head) -> list[nn.Parameter]:
     return list(head.parameters())
 
 
-def _wavelet_stem_modules(model) -> list[nn.Module]:
-    backbone = model.backbone
-    stems: list[nn.Module] = []
-    if hasattr(backbone, "stem") and isinstance(backbone.stem, WaveletStem):
-        stems.append(backbone.stem)
-    inner = getattr(backbone, "backbone", None)
-    if inner is not None and hasattr(inner, "stem") and isinstance(inner.stem, WaveletStem):
-        stems.append(inner.stem)
-    return stems
-
-
 def _set_requires_grad(module: nn.Module, requires_grad: bool) -> None:
     for param in module.parameters():
         param.requires_grad = requires_grad
 
 
-def _parameter_modules(model: nn.Module) -> list[nn.Module]:
-    modules: list[nn.Module] = []
-    for module in model.modules():
-        if list(module.parameters(recurse=False)):
-            modules.append(module)
-    return modules
-
-
-def _apply_top_fraction_unfreeze(backbone: nn.Module, fraction: float) -> None:
-    if fraction <= 0:
-        return
-    modules = _parameter_modules(backbone)
-    if not modules:
-        return
-    count = max(1, int(len(modules) * float(fraction)))
-    for module in modules[-count:]:
-        _set_requires_grad(module, True)
+def _backbone_module(model) -> nn.Module:
+    return getattr(model, "backbone", model)
 
 
 def _freeze_backbone_for_head_first(model, finetune_cfg) -> None:
-    backbone = model.backbone
-    _set_requires_grad(backbone, False)
-    for stem in _wavelet_stem_modules(model):
-        _set_requires_grad(stem, True)
-    fraction = float(finetune_cfg.get("unfreeze_top_fraction", 0.0) or 0.0)
-    if fraction > 0:
-        inner = getattr(backbone, "backbone", backbone)
-        _apply_top_fraction_unfreeze(inner, fraction)
+    _ = finetune_cfg
+    _set_requires_grad(_backbone_module(model), False)
 
 
 def _unfreeze_backbone(model) -> None:
-    _set_requires_grad(model.backbone, True)
+    _set_requires_grad(_backbone_module(model), True)
 
 
 def apply_finetune_phase(model, head, cfg, epoch: int) -> dict[str, Any]:
@@ -221,7 +199,7 @@ def apply_finetune_phase(model, head, cfg, epoch: int) -> dict[str, Any]:
 
     finetune_cfg = _as_dict(_as_dict(cfg).get("finetune", {}))
     strategy = str(finetune_cfg.get("strategy", "full")).lower()
-    head_only_epochs = int(finetune_cfg.get("head_only_epochs", 2))
+    head_only_epochs = int(finetune_cfg.get("head_only_epochs", 3))
 
     if strategy == "head_first" and epoch < head_only_epochs:
         _freeze_backbone_for_head_first(model, finetune_cfg)

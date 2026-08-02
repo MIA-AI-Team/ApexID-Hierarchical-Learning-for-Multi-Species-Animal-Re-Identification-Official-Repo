@@ -367,7 +367,16 @@ class Trainer:
         else:
             print(message)
 
-    def train_one_epoch(self, train_loader, epoch, epochs):
+    def train_one_epoch(
+        self,
+        train_loader,
+        epoch,
+        epochs,
+        *,
+        scheduler_enabled=True,
+        backbone_train=True,
+        phase_label="Train",
+    ):
         """Run one training epoch.
 
         Args:
@@ -375,11 +384,15 @@ class Trainer:
                 batches.
             epoch (int): Zero-based epoch index.
             epochs (int): Total number of epochs.
+            scheduler_enabled (bool): Whether to step per-batch schedulers.
+            backbone_train (bool): Whether the backbone should be in train mode.
+                Use ``False`` for frozen head-only warmup.
+            phase_label (str): Progress-bar prefix for the phase.
 
         Returns:
             dict: Training metrics with key ``loss``.
         """
-        self.backbone.train()
+        self.backbone.train(bool(backbone_train))
         self.head.train()
 
         total_loss = 0.0
@@ -387,7 +400,7 @@ class Trainer:
 
         iterator = tqdm(
             train_loader,
-            desc=f"Train [{epoch + 1}/{epochs}]",
+            desc=f"{phase_label} [{epoch + 1}/{epochs}]",
             leave=False,
             dynamic_ncols=True,
             disable=not self.progress,
@@ -413,7 +426,7 @@ class Trainer:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.gradient_clip_norm), foreach=True)
 
             self.optimizer.step()
-            if isinstance(self.scheduler, torch.optim.lr_scheduler.CyclicLR):
+            if scheduler_enabled and isinstance(self.scheduler, torch.optim.lr_scheduler.CyclicLR):
                 self.scheduler.step()
 
             batch_size = int(images.size(0))
@@ -449,6 +462,55 @@ class Trainer:
             self.scheduler.step(metric)
         else:
             self.scheduler.step()
+
+    def _optimizer_lrs(self):
+        """Return current optimizer learning rates."""
+        return [float(group["lr"]) for group in self.optimizer.param_groups]
+
+    def _optimizer_base_lrs(self):
+        """Return optimizer base LRs before scheduler initialization effects."""
+        scheduler_base_lrs = list(getattr(self.scheduler, "base_lrs", []) or [])
+        lrs = []
+        for index, group in enumerate(self.optimizer.param_groups):
+            lr = group.get("initial_lr")
+            if lr is None and index < len(scheduler_base_lrs):
+                lr = scheduler_base_lrs[index]
+            if lr is None:
+                lr = group["lr"]
+            lrs.append(float(lr))
+        return lrs
+
+    def _set_optimizer_lrs(self, lrs):
+        """Set optimizer learning rates without changing scheduler state."""
+        for group, lr in zip(self.optimizer.param_groups, lrs):
+            group["lr"] = float(lr)
+
+    def _head_first_warmup_epochs(self):
+        """Return extra head-only warmup epochs for active head-first finetuning."""
+        if self.finetune_config is None:
+            return 0
+        strategy = str(self.finetune_config.get("strategy", "full")).lower()
+        if strategy != "head_first":
+            return 0
+        return max(0, int(self.finetune_config.get("head_only_epochs", 3)))
+
+    def _apply_and_log_finetune_phase(self, phase_epoch):
+        """Apply finetune freeze state and log phase changes once."""
+        if self.finetune_config is None:
+            return None
+        # Trainer only stores the finetune block; force enabled=True so
+        # is_finetune_active() does not require model.backbone for "auto".
+        finetune_cfg = {"finetune": {**self.finetune_config, "enabled": True}}
+        phase = apply_finetune_phase(self.backbone, self.head, finetune_cfg, phase_epoch)
+        if phase != self._finetune_phase:
+            self._finetune_phase = phase
+            if self.verbose:
+                tqdm.write(
+                    f"Finetune phase: {phase.get('phase')} "
+                    f"(strategy={phase.get('strategy')}, "
+                    f"backbone_trainable={phase.get('backbone_trainable')})"
+                )
+        return phase
 
     def _append_history(self, history, train_metrics, val_metrics):
         """Append one epoch of train/validation metrics to history."""
@@ -627,25 +689,31 @@ class Trainer:
             raise ValueError("epochs must be provided either to Trainer(...) or train(...).")
 
         history = resume_history if resume_history is not None else self.empty_history()
+        warmup_epochs = self._head_first_warmup_epochs()
 
         try:
+            if int(start_epoch) == 0 and warmup_epochs > 0:
+                scheduler_start_lrs = self._optimizer_lrs()
+                self._set_optimizer_lrs(self._optimizer_base_lrs())
+                try:
+                    for warmup_epoch in range(warmup_epochs):
+                        self._apply_and_log_finetune_phase(warmup_epoch)
+                        self._set_train_loader_epoch(train_loader, warmup_epoch)
+                        self.train_one_epoch(
+                            train_loader,
+                            warmup_epoch,
+                            warmup_epochs,
+                            scheduler_enabled=False,
+                            backbone_train=False,
+                            phase_label="Warmup",
+                        )
+                finally:
+                    self._set_optimizer_lrs(scheduler_start_lrs)
+
             for epoch in range(int(start_epoch), int(epochs)):
-                if self.finetune_config is not None:
-                    # Trainer only stores the finetune block; force enabled=True so
-                    # is_finetune_active() does not require model.backbone for "auto".
-                    finetune_cfg = {
-                        "finetune": {**self.finetune_config, "enabled": True},
-                    }
-                    phase = apply_finetune_phase(self.backbone, self.head, finetune_cfg, epoch)
-                    if phase != self._finetune_phase:
-                        self._finetune_phase = phase
-                        if self.verbose:
-                            tqdm.write(
-                                f"Finetune phase: {phase.get('phase')} "
-                                f"(strategy={phase.get('strategy')}, "
-                                f"backbone_trainable={phase.get('backbone_trainable')})"
-                            )
-                self._set_train_loader_epoch(train_loader, epoch)
+                phase_epoch = warmup_epochs + epoch
+                self._apply_and_log_finetune_phase(phase_epoch)
+                self._set_train_loader_epoch(train_loader, phase_epoch)
                 train_metrics = self.train_one_epoch(train_loader, epoch, epochs)
                 run_validation = ((epoch + 1) % self.validation_every_n_epochs == 0) or (epoch == epochs - 1)
                 return_embeddings = bool(self.embedding_plotter) and run_validation
