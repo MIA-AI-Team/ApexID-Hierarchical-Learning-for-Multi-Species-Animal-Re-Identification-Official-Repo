@@ -24,6 +24,15 @@ from .open_set_metrics import (
     threshold_at_target_tpr,
     threshold_connected_components,
 )
+from .benchmark_metrics import (
+    b3_metrics,
+    cluster_count_error,
+    clustering_metrics,
+    discovery_metrics,
+    fragmentation_metrics,
+    merge_metrics,
+    pairwise_metrics,
+)
 
 __all__ = [
     "best_gallery_matches",
@@ -48,4 +57,11 @@ __all__ = [
     "top1_accuracy",
     "top5_accuracy",
     "topk_accuracy",
+    "b3_metrics",
+    "cluster_count_error",
+    "clustering_metrics",
+    "discovery_metrics",
+    "fragmentation_metrics",
+    "merge_metrics",
+    "pairwise_metrics",
 ]

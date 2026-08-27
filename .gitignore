@@ -7,3 +7,6 @@ wandb/
 .env.*
 !.env.example
 ApexID_Dataset/
+merged.csv
+apexid_benchmark/
+results/

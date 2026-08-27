@@ -155,6 +155,31 @@ and `val_micro_f1` maps to `mixed/F1`.
 
 ## Common Commands
 
+## Sealed benchmark evaluation
+
+Evaluate an existing ApexID benchmark without rebuilding it:
+
+```bash
+python -m apexid.evaluation.evaluate_apexid_model \
+  --weights outputs/apexid_osnet_arcface/checkpoints/best_backbone.pt \
+  --benchmark-dir apexid_benchmark/open40 \
+  --data-root /path/to/dataset-root \
+  --output-dir results/open40 \
+  --model-config configs/default.yaml \
+  --evaluation-mode both
+```
+
+The evaluator uses only public benchmark manifests for embedding extraction and
+final inference. It tunes thresholds from `development_ground_truth.csv`, saves
+final predictions, and only then opens `final_test_ground_truth.csv` for metrics.
+It never modifies benchmark files. Embeddings are cached under `output-dir/cache`
+by default; use `--force-recompute` after changing weights or preprocessing, or
+`--no-save-embeddings` to avoid retaining cache artifacts.
+
+The model configuration must describe the trained ApexID embedding branch. Full
+trainer checkpoints and backbone-only checkpoints are supported, but incompatible
+embedding tensors fail loudly rather than being silently skipped.
+
 Run evaluation tests:
 
 ```bash
