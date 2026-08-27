@@ -229,6 +229,193 @@ pytest tests/utils
 pytest tests/test_default_config.py
 ```
 
+## Sealed Open-World Benchmark Evaluation
+
+This workflow creates an evaluation-only benchmark from `merged.csv` and
+evaluates an already trained ApexID checkpoint. Run every command from the
+repository root. The benchmark builder and the evaluator are deliberately
+separate from training: building a benchmark does not train a model, and the
+evaluator never changes the benchmark files.
+
+Keep the source CSV, benchmark directory, image data, model checkpoints, and
+evaluation results out of Git. In particular, the benchmark's private ground
+truth is for the evaluator only and must not be published.
+
+### 1. Check the benchmark and evaluator code
+
+Run the focused tests before creating a benchmark or starting an expensive
+inference run:
+
+```bash
+pytest -q tests/data/test_build_apexid_benchmark.py
+pytest -q tests/evaluation/test_evaluate_apexid_model.py
+```
+
+Run the complete project test suite when preparing a reproducible result:
+
+```bash
+pytest -q
+```
+
+### 2. Build the evaluation benchmark
+
+`merged.csv` must contain the columns `path`, `identity`, and `dataset`. Image
+paths should be relative to the image root that will later be passed as
+`--data-root`. The command below deterministically writes `open20`, `open40`,
+and `open60` protocols below the output directory.
+
+```bash
+python data/build_apexid_benchmark.py \
+  --input /path/to/merged.csv \
+  --output-dir /path/to/apexid_benchmark \
+  --seed 42 \
+  --dev-novel-fraction 0.30 \
+  --gallery-encounter-fraction 0.60 \
+  --num-stream-orders 10
+```
+
+Parameter meanings:
+
+- `--input`: source metadata CSV; defaults to `merged.csv` in the repository
+  root.
+- `--output-dir`: destination for all three benchmark protocols; defaults to
+  `apexid_benchmark`.
+- `--seed`: deterministic split and stream-order seed; use the same value to
+  reproduce a build.
+- `--dev-novel-fraction`: fraction of novel identities reserved for development
+  tuning; the remainder is reserved for final testing.
+- `--gallery-encounter-fraction`: target fraction of a known identity's whole
+  encounters used as its database/gallery. Encounters, rather than individual
+  images, are kept together to reduce leakage.
+- `--num-stream-orders`: number of deterministic online final-test streams to
+  produce for each protocol.
+
+For an additional, slower image-content leakage audit, supply the root that
+contains the relative `path` values:
+
+```bash
+python data/build_apexid_benchmark.py \
+  --input /path/to/merged.csv \
+  --output-dir /path/to/apexid_benchmark \
+  --data-root /path/to/dataset-root \
+  --audit-image-hashes
+```
+
+`--data-root` allows the builder to open images; `--audit-image-hashes` adds an
+exact-content hash check and therefore requires every referenced image to be
+mounted and readable. `--species-map-json /path/to/species_map.json` can supply
+dataset-to-species metadata when it is not present in the input. Use
+`--verbose` for detailed encounter-parsing and split diagnostics.
+
+Each protocol includes public image manifests, private development and final
+labels, validation reports, reproducibility metadata, and online stream files.
+The public inference manifests do not contain identity or ground-truth columns.
+Inspect the generated validation report before continuing, for example:
+
+```bash
+python -m json.tool /path/to/apexid_benchmark/open40/validation_report.json
+```
+
+### Optional: Create training splits and train a checkpoint
+
+This is independent of the sealed evaluation benchmark. The existing training
+split script consumes the dataset metadata described in `data/README.md`
+(`metadata.csv`, not the three-column benchmark `merged.csv`) and writes the
+CSV paths used by the default training configuration:
+
+```bash
+python data/make_open_set_splits.py
+python scripts/debug_data_pipeline.py --config configs/default.yaml
+python scripts/train.py --config configs/default.yaml
+```
+
+- `data/make_open_set_splits.py` builds `train.csv`, known validation, and
+  unknown validation files for model development.
+- `--config configs/default.yaml` selects the model, data paths, transforms,
+  optimizer, and validation settings. Copy and edit this file for a new
+  experiment instead of changing a checkpoint's architecture at evaluation
+  time.
+- `debug_data_pipeline.py` verifies CSV paths, labels, and a DataLoader batch
+  before training.
+
+### 3. Run sealed batch and online evaluation
+
+Use the original model configuration that matches the checkpoint. The example
+evaluates the `open40` protocol, tunes all thresholds using development labels,
+then evaluates final test labels only after final predictions have been saved.
+
+```bash
+python -m apexid.evaluation.evaluate_apexid_model \
+  --weights /path/to/checkpoint.pt \
+  --model-config /path/to/original_training_config.yaml \
+  --benchmark-dir /path/to/apexid_benchmark/open40 \
+  --data-root /path/to/dataset-root \
+  --output-dir /path/to/results/open40 \
+  --device cuda \
+  --batch-size 64 \
+  --num-workers 8 \
+  --seed 42 \
+  --evaluation-mode both \
+  --gallery-scoring centroid \
+  --threshold-objective f1 \
+  --discovery-threshold-objective ari \
+  --retrieval-chunk-size 1024 \
+  --bootstrap-samples 1000
+```
+
+Parameter meanings:
+
+- `--weights`: checkpoint to evaluate. Raw model weights, `state_dict`, and
+  `model_state_dict` checkpoints are accepted, but incompatible embedding
+  tensors fail rather than being silently ignored.
+- `--model-config`: YAML that defines the exact ApexID embedding model and
+  evaluation preprocessing used for those weights. It defaults to
+  `configs/default.yaml`; specify the original experiment config whenever the
+  checkpoint differs from that default.
+- `--benchmark-dir`: one built protocol directory, such as `open20`, `open40`,
+  or `open60`.
+- `--data-root`: directory under which paths in the benchmark manifests resolve.
+- `--output-dir`: new directory for caches, predictions, rankings, metrics,
+  plots, and error diagnostics. It never writes into `--benchmark-dir`.
+- `--device`: PyTorch device, usually `cuda` or `cpu`.
+- `--batch-size` and `--num-workers`: image-extraction throughput controls;
+  reduce them if GPU memory or host-memory pressure is high.
+- `--seed`: makes evaluator sampling, development permutations, and bootstrap
+  results reproducible.
+- `--evaluation-mode`: `batch`, `online`, or `both` (the default). `online`
+  evaluates every supplied stream independently and resets discovery state for
+  each stream.
+- `--gallery-scoring`: known-gallery aggregation: `centroid` (default),
+  `max_image`, or `mean_top_k`.
+- `--threshold-objective`: development-set objective for the known/novel
+  decision: `f1` (default), `balanced_accuracy`, or `youden`.
+- `--discovery-threshold-objective`: development-set objective for choosing the
+  novel re-association threshold: `ari` (default) or `b3_f1`.
+- `--retrieval-chunk-size`: number of queries scored per retrieval chunk;
+  lower it to reduce peak memory on large galleries.
+- `--bootstrap-samples`: number of deterministic bootstrap resamples for
+  reported uncertainty; set `0` to skip bootstrapping.
+
+Useful optional evaluator switches:
+
+- `--image-size H W` overrides evaluation resize dimensions. One value creates
+  a square size. It should agree with the checkpoint's training preprocessing.
+- `--force-recompute` ignores otherwise valid embedding cache files after an
+  intentional input or code change.
+- `--no-save-embeddings` disables persistent embedding caches; saving is enabled
+  by default under `OUTPUT_DIR/cache/`.
+- `--no-amp` disables CUDA automatic mixed precision, which can help investigate
+  numerical issues or run a strict CPU comparison.
+- `--update-known-prototypes` is reserved for the optional prototype-update
+  experiment; the documented baseline uses the fixed database gallery.
+- `--verbose` enables detailed progress and diagnostic logging.
+
+Results are written only under `--output-dir`, including cached embeddings,
+development-selected thresholds, final predictions, retrieval rankings, batch
+metrics, individual online-stream metrics, aggregate reports, curves, and
+plots. Do not use final-test ground-truth files to pick a checkpoint, threshold,
+or clustering policy.
+
 ## Contributor Notes
 
 - Keep configuration-driven behavior in sync with `configs/default.yaml`.
