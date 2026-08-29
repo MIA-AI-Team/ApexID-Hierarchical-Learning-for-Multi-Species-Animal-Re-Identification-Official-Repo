@@ -1,83 +1,88 @@
+#!/usr/bin/env python3
+"""Build or validate the ApexID Observation-Aware Split V2."""
+
+from __future__ import annotations
+
 import argparse
-import csv
-import random
-from collections import Counter, defaultdict
+import hashlib
+import json
+import sys
+from collections import Counter
+from dataclasses import fields
 from pathlib import Path
 
-from PIL import Image
+import yaml
+import numpy as np
 
 
-FIELDNAMES = ["identity", "path", "date", "orientation", "species", "dataset"]
-DEFAULT_SOURCE = Path("ApexID_Dataset/metadata.csv")
-DEFAULT_OUTPUT_DIR = Path("ApexID_Dataset/open_set_splits")
-NEW_WHALE_KEY = ("humpback-whale-identification", "new_whale")
-COMPONENT_SPLITS = [
-    "train",
-    "val_known",
-    "val_unknown",
-    "val_unknown_extra",
-    "unlabeled_ood",
-]
-OUTPUT_SPLITS = ["train", "val_known", "val_unknown", "val", "val_unknown_extra", "unlabeled_ood"]
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from apexid.data.split_v2 import (  # noqa: E402
+    COMPONENT_SPLITS,
+    FIELDNAMES,
+    NEAR_DUPLICATE_FIELDS,
+    OUTPUT_SPLITS,
+    FeatureSpec,
+    SplitConfig,
+    annotate_dates,
+    annotate_explicit_groups,
+    annotate_image_hashes,
+    audit_cross_split_near_duplicates,
+    build_features_by_index,
+    build_summary,
+    choose_unknown_keys,
+    group_rows_by_identity,
+    identity_keys,
+    load_or_extract_feature_cache,
+    make_observation_aware_splits,
+    manifest_rows,
+    plan_identity_methods,
+    public_row,
+    read_rows,
+    read_split,
+    sha256_file,
+    validate_splits,
+    validate_written_v2,
+    write_v2_artifacts,
+)
 
 
-def read_rows(source):
-    with source.open(newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        if reader.fieldnames != FIELDNAMES:
-            raise ValueError(f"Unexpected columns in {source}: {reader.fieldnames!r}")
-        rows = []
-        for idx, row in enumerate(reader):
-            row["_idx"] = idx
-            row["_key"] = (row["dataset"], row["identity"])
-            rows.append(row)
-    return rows
+DEFAULT_METADATA = Path("metadata.csv")
+DEFAULT_DATA_ROOT = Path("ApexID_Dataset")
+DEFAULT_OUTPUT_DIR = Path("ApexID_Dataset/open_set_splits_v2")
+DEFAULT_FEATURE_CACHE = Path("ApexID_Dataset/split_v2_feature_cache")
+DEFAULT_BASELINE_DIR = Path("ApexID_Dataset/open_set_splits")
+DEFAULT_CONFIG = Path("data/split_v2.yaml")
 
 
-def public_row(row):
-    return {field: row.get(field, "") for field in FIELDNAMES}
+def load_split_config(path: Path) -> SplitConfig:
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    raw = raw.get("split_v2", raw)
+    feature_values = raw.pop("feature", {})
+    feature = FeatureSpec(**feature_values)
+    allowed = {item.name for item in fields(SplitConfig)} - {"feature"}
+    unexpected = sorted(set(raw) - allowed)
+    if unexpected:
+        raise ValueError(f"Unexpected Split V2 configuration keys: {unexpected}")
+    if "enabled_parsers" in raw:
+        raw["enabled_parsers"] = tuple(raw["enabled_parsers"])
+    return SplitConfig(feature=feature, **raw)
 
 
-def identity_keys(rows):
-    return {(row["dataset"], row["identity"]) for row in rows}
-
-
-def count_new_whale(rows):
-    return sum((row["dataset"], row["identity"]) == NEW_WHALE_KEY for row in rows)
-
-
-def group_rows_by_identity(rows):
-    by_key = defaultdict(list)
-    for row in rows:
-        by_key[row["_key"]].append(row)
-    return by_key
-
-
-def choose_unknown_keys(by_key, seed, unknown_identity_ratio):
-    rng = random.Random(seed)
-    eligible_keys = [
-        key
-        for key, rows in by_key.items()
-        if key != NEW_WHALE_KEY and len(rows) >= 2
-    ]
-    keys_by_dataset = defaultdict(list)
-    for key in eligible_keys:
-        keys_by_dataset[key[0]].append(key)
-
-    unknown_keys = set()
-    for _dataset, keys in sorted(keys_by_dataset.items()):
-        eligible = sorted(keys)
-        if not eligible:
-            continue
-
-        rng.shuffle(eligible)
-        if len(eligible) >= 10:
-            target = max(1, round(len(eligible) * unknown_identity_ratio))
-        else:
-            target = max(0, round(len(eligible) * unknown_identity_ratio))
-        unknown_keys.update(eligible[: min(target, len(eligible))])
-
-    return sorted(eligible_keys), unknown_keys, rng
+def _apply_overrides(config: SplitConfig, args: argparse.Namespace) -> SplitConfig:
+    values = {
+        "seed": args.seed,
+        "unknown_identity_ratio": args.unknown_identity_ratio,
+        "known_image_ratio": args.known_image_ratio,
+        "max_unknown_images_per_identity": args.max_unknown_images_per_identity,
+        "default_similarity_threshold": args.default_similarity_threshold,
+    }
+    for name, value in values.items():
+        if value is not None:
+            setattr(config, name, value)
+    return config
 
 
 def make_splits(
@@ -85,307 +90,315 @@ def make_splits(
     seed=42,
     unknown_identity_ratio=0.125,
     known_image_ratio=0.225,
-    min_train_images_per_known_identity=2,
-    min_val_images_per_known_identity=2,
     max_unknown_images_per_identity=100,
+    features_by_index=None,
+    **_ignored,
 ):
-    by_key = group_rows_by_identity(rows)
-    eligible_keys, unknown_keys, rng = choose_unknown_keys(
-        by_key=by_key,
+    """Compatibility entry point for already annotated programmatic rows."""
+    config = SplitConfig(
         seed=seed,
         unknown_identity_ratio=unknown_identity_ratio,
+        known_image_ratio=known_image_ratio,
+        max_unknown_images_per_identity=max_unknown_images_per_identity,
+    )
+    for row in rows:
+        row.setdefault("_parsed_date", "")
+        row.setdefault("_date_format", "missing")
+        row.setdefault("_image_sha256", f"synthetic-{row['_idx']}")
+        row.setdefault("_duplicate_group_id", "")
+        row.setdefault("_explicit_source", "")
+        row.setdefault("_explicit_group_id", "")
+        row.setdefault("_similarity_cluster_id", "")
+    by_key = group_rows_by_identity(rows)
+    _, unknown = choose_unknown_keys(by_key, seed, unknown_identity_ratio)
+    methods, _ = plan_identity_methods(by_key, unknown)
+    if features_by_index is None:
+        features_by_index = {}
+        fallback_indices = [
+            int(row["_idx"])
+            for key, items in by_key.items()
+            if methods[key] == "similarity_fallback"
+            for row in items
+        ]
+        row_by_index = {int(row["_idx"]): row for row in rows}
+        for index in fallback_indices:
+            digest = hashlib.sha256(
+                str(row_by_index[index]["path"]).encode("utf-8")
+            ).digest()
+            rng = np.random.default_rng(int.from_bytes(digest[:8], "big"))
+            feature = rng.normal(size=64).astype(np.float32)
+            feature /= np.linalg.norm(feature)
+            features_by_index[index] = feature
+    return make_observation_aware_splits(
+        rows, config, methods, unknown, features_by_index
     )
 
-    train = []
-    val_known = []
-    val_unknown = []
-    val_unknown_extra = []
-    unlabeled_ood = []
 
-    for key in sorted(by_key):
-        if key == NEW_WHALE_KEY:
-            unlabeled_ood.extend(by_key[key])
-            continue
-
-        items = by_key[key][:]
-        if len(items) == 1:
-            unlabeled_ood.extend(items)
-            continue
-
-        rng.shuffle(items)
-        if key in unknown_keys:
-            keep = min(len(items), max_unknown_images_per_identity)
-            val_unknown.extend(items[:keep])
-            val_unknown_extra.extend(items[keep:])
-            continue
-
-        if key not in eligible_keys:
-            train.extend(items)
-            continue
-
-        min_total = min_train_images_per_known_identity + min_val_images_per_known_identity
-        if len(items) < min_total:
-            train.extend(items)
-            continue
-
-        n_val = max(
-            min_val_images_per_known_identity,
-            round(len(items) * known_image_ratio),
-        )
-        n_val = min(n_val, len(items) - min_train_images_per_known_identity)
-
-        if n_val < min_val_images_per_known_identity:
-            train.extend(items)
-            continue
-
-        val_known.extend(items[:n_val])
-        train.extend(items[n_val:])
-
-    return {
-        "train": train,
-        "val_known": val_known,
-        "val_unknown": val_unknown,
-        "val": val_known + val_unknown,
-        "val_unknown_extra": val_unknown_extra,
-        "unlabeled_ood": unlabeled_ood,
-    }
-
-
-def clear_output_csvs(output_dir):
-    output_dir.mkdir(parents=True, exist_ok=True)
-    for path in output_dir.glob("*.csv"):
-        path.unlink()
-
-
-def write_csv(path, rows):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(public_row(row))
-
-
-def write_splits(output_dir, splits, clear_existing=True):
-    output_dir = Path(output_dir)
+def write_splits(output_dir, splits, clear_existing=False):
+    """Compatibility writer that never clears arbitrary files."""
     if clear_existing:
-        clear_output_csvs(output_dir)
-    else:
-        output_dir.mkdir(parents=True, exist_ok=True)
+        raise ValueError(
+            "Split V2 never clears an output directory; use explicit atomic overwrite"
+        )
+    output_dir = Path(output_dir)
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise FileExistsError(f"Refusing occupied output directory: {output_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    import csv
 
     for name in OUTPUT_SPLITS:
-        write_csv(output_dir / f"{name}.csv", splits[name])
-
-
-def read_split(path):
-    with path.open(newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        if reader.fieldnames != FIELDNAMES:
-            raise ValueError(f"Unexpected columns in {path}: {reader.fieldnames!r}")
-        return list(reader)
-
-
-def resolve_image_path(path, root_dir):
-    path = Path(path)
-    if path.is_absolute() or path.exists():
-        return path
-    if root_dir is not None:
-        candidate = Path(root_dir) / path
-        if candidate.exists():
-            return candidate
-    return path
-
-
-def assert_readable_images(rows, root_dir=None):
-    bad = []
-    for row in rows:
-        path = resolve_image_path(row["path"], root_dir=root_dir)
-        try:
-            with Image.open(path) as image:
-                image.verify()
-        except Exception as exc:
-            bad.append((str(path), type(exc).__name__))
-            if len(bad) >= 5:
-                break
-    if bad:
-        raise ValueError(f"Unreadable image paths remain: {bad}")
-
-
-def assert_row_accounting(source_rows, splits):
-    source_paths = Counter(row["path"] for row in source_rows)
-    component_paths = Counter(
-        row["path"]
-        for name in COMPONENT_SPLITS
-        for row in splits[name]
-    )
-    if source_paths != component_paths:
-        missing = list((source_paths - component_paths).elements())[:5]
-        extra = list((component_paths - source_paths).elements())[:5]
-        raise ValueError(
-            "Component splits do not account for source rows exactly once. "
-            f"Missing examples: {missing}; extra examples: {extra}"
-        )
+        with (output_dir / f"{name}.csv").open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=FIELDNAMES)
+            writer.writeheader()
+            writer.writerows(public_row(row) for row in splits[name])
 
 
 def validate_outputs(output_dir, source_rows=None, root_dir=None, check_images=True):
-    splits = {
-        name: read_split(output_dir / f"{name}.csv")
-        for name in OUTPUT_SPLITS
-    }
-
-    train = splits["train"]
-    val_known = splits["val_known"]
-    val_unknown = splits["val_unknown"]
-    val_unknown_extra = splits["val_unknown_extra"]
-    unlabeled_ood = splits["unlabeled_ood"]
-    val = splits["val"]
-
-    train_ids = identity_keys(train)
-    val_known_ids = identity_keys(val_known)
-    val_unknown_ids = identity_keys(val_unknown)
-    val_unknown_extra_ids = identity_keys(val_unknown_extra)
-
-    if train_ids & val_unknown_ids:
-        raise ValueError("train and val_unknown share identities")
-    if train_ids & val_unknown_extra_ids:
-        raise ValueError("train and val_unknown_extra share identities")
-    if val_known_ids - train_ids:
-        raise ValueError("val_known contains identities not present in train")
-    if val_known_ids & val_unknown_ids:
-        raise ValueError("val_known and val_unknown share identities")
-    if val != val_known + val_unknown:
+    """Compatibility validation for the six legacy CSVs."""
+    del root_dir, check_images
+    output_dir = Path(output_dir)
+    splits = {name: read_split(output_dir / f"{name}.csv") for name in OUTPUT_SPLITS}
+    if splits["val"] != splits["val_known"] + splits["val_unknown"]:
         raise ValueError("val.csv is not exactly val_known.csv + val_unknown.csv")
-
-    component_paths = [
-        row["path"]
-        for name in COMPONENT_SPLITS
-        for row in splits[name]
-    ]
-    duplicate_paths = [path for path, count in Counter(component_paths).items() if count > 1]
-    if duplicate_paths:
-        raise ValueError(f"Component split paths are not disjoint: {duplicate_paths[:5]}")
-
-    new_whale_counts = {
-        "train": count_new_whale(train),
-        "val_known": count_new_whale(val_known),
-        "val_unknown": count_new_whale(val_unknown),
-        "val_unknown_extra": count_new_whale(val_unknown_extra),
-        "unlabeled_ood": count_new_whale(unlabeled_ood),
-    }
-    expected_new_whale = count_new_whale(source_rows or unlabeled_ood)
-    if new_whale_counts != {
-        "train": 0,
-        "val_known": 0,
-        "val_unknown": 0,
-        "val_unknown_extra": 0,
-        "unlabeled_ood": expected_new_whale,
-    }:
-        raise ValueError(f"Unexpected new_whale counts: {new_whale_counts}")
-
+    train_ids = identity_keys(splits["train"])
+    known_ids = identity_keys(splits["val_known"])
+    unknown_ids = identity_keys(splits["val_unknown"])
+    if train_ids & unknown_ids or known_ids - train_ids:
+        raise ValueError("Identity-disjointness invariants failed")
     if source_rows is not None:
-        source_by_key = group_rows_by_identity(source_rows)
-        singleton_paths = {
-            rows[0]["path"]
-            for key, rows in source_by_key.items()
-            if key != NEW_WHALE_KEY and len(rows) == 1
-        }
-        non_ood_paths = set(component_paths) - {row["path"] for row in unlabeled_ood}
-        misplaced_singletons = singleton_paths & non_ood_paths
-        if misplaced_singletons:
-            raise ValueError(
-                "Singleton identities appeared outside unlabeled_ood: "
-                f"{sorted(misplaced_singletons)[:5]}"
-            )
-        assert_row_accounting(source_rows, splits)
+        source_paths = Counter(str(row["path"]) for row in source_rows)
+        split_paths = Counter(
+            row["path"] for name in COMPONENT_SPLITS for row in splits[name]
+        )
+        if source_paths != split_paths:
+            raise ValueError("Component splits do not account for source rows exactly once")
+    return {f"{name}_rows": len(splits[name]) for name in OUTPUT_SPLITS}
 
-    if check_images:
-        for name in COMPONENT_SPLITS:
-            assert_readable_images(splits[name], root_dir=root_dir)
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Create the ApexID Observation-Aware Open-Set Split V2."
+    )
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument(
+        "--metadata",
+        "--source",
+        dest="metadata",
+        type=Path,
+        default=DEFAULT_METADATA,
+        help="Authoritative metadata CSV; --source is a compatibility alias.",
+    )
+    parser.add_argument("--data-root", type=Path, default=DEFAULT_DATA_ROOT)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--feature-cache", type=Path, default=DEFAULT_FEATURE_CACHE)
+    parser.add_argument("--baseline-dir", type=Path, default=DEFAULT_BASELINE_DIR)
+    parser.add_argument("--feature-checkpoint", type=Path)
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--seed", type=int)
+    parser.add_argument("--unknown-identity-ratio", type=float)
+    parser.add_argument("--known-image-ratio", type=float)
+    parser.add_argument("--max-unknown-images-per-identity", type=int)
+    parser.add_argument("--default-similarity-threshold", type=float)
+    parser.add_argument("--recompute-features", action="store_true")
+    parser.add_argument("--verify-images", action="store_true")
+    parser.add_argument(
+        "--validation-only",
+        action="store_true",
+        help="Validate an existing V2 destination without changing files.",
+    )
+    parser.add_argument(
+        "--overwrite-v2",
+        action="store_true",
+        help="Atomically replace only the named V2 directory; V1 is never touched.",
+    )
+    parser.add_argument("--near-duplicate-audit", action="store_true")
+    parser.add_argument("--dhash-threshold", type=int)
+    parser.add_argument("--phash-threshold", type=int)
+    return parser.parse_args(argv)
+
+
+def _print_summary(summary):
+    for name in OUTPUT_SPLITS:
+        counts = summary["splits"][name]
+        print(f"{name}: rows={counts['rows']} identities={counts['identities']}")
+    print("date_statistics=" + json.dumps(summary["date_statistics"], sort_keys=True))
+    print("method_statistics=" + json.dumps(summary["method_statistics"], sort_keys=True))
+    print("integrity=passed")
+
+
+def _crossing_counts(train_rows, val_rows):
+    exact_groups = {}
+    date_groups = {}
+    for split, items in (("train", train_rows), ("val_known", val_rows)):
+        for row in items:
+            exact_groups.setdefault(row["_image_sha256"], set()).add(split)
+            date = row.get("_parsed_date", "")
+            if date:
+                date_groups.setdefault((row["_key"], date), set()).add(split)
     return {
-        "train_rows": len(train),
-        "val_known_rows": len(val_known),
-        "val_unknown_rows": len(val_unknown),
-        "val_unknown_extra_rows": len(val_unknown_extra),
-        "unlabeled_ood_rows": len(unlabeled_ood),
-        "val_rows": len(val),
-        "train_identities": len(train_ids),
-        "val_known_identities": len(val_known_ids),
-        "val_unknown_identities": len(val_unknown_ids),
-        "val_unknown_extra_identities": len(val_unknown_extra_ids),
-        "unlabeled_ood_identities": len(identity_keys(unlabeled_ood)),
-        "new_whale_counts": new_whale_counts,
+        "exact_content_groups_crossing_train_val_known": sum(
+            values == {"train", "val_known"} for values in exact_groups.values()
+        ),
+        "identity_date_groups_crossing_train_val_known": sum(
+            values == {"train", "val_known"} for values in date_groups.values()
+        ),
     }
 
 
-def print_summary(splits, validation):
-    main_total = len(splits["train"]) + len(splits["val"])
-    train_ratio = len(splits["train"]) / main_total if main_total else 0.0
-    val_ratio = len(splits["val"]) / main_total if main_total else 0.0
-
+def _baseline_comparison(baseline_dir, rows, splits):
+    baseline_dir = Path(baseline_dir)
+    required = [baseline_dir / f"{name}.csv" for name in OUTPUT_SPLITS]
+    if not all(path.is_file() for path in required):
+        return {"available": False, "path": str(baseline_dir)}
+    by_path = {str(row["path"]): row for row in rows}
+    baseline = {}
     for name in OUTPUT_SPLITS:
-        rows = splits[name]
-        dataset_counts = Counter(row["dataset"] for row in rows)
-        print(f"{name}: rows={len(rows)} identities={len(identity_keys(rows))}")
-        print(f"{name}: top_datasets={dataset_counts.most_common(8)}")
+        public = read_split(baseline_dir / f"{name}.csv")
+        missing = [row["path"] for row in public if row["path"] not in by_path]
+        if missing:
+            raise ValueError(f"Baseline contains paths absent from metadata: {missing[:5]}")
+        baseline[name] = [by_path[row["path"]] for row in public]
+    return {
+        "available": True,
+        "path": str(baseline_dir),
+        "v1": {
+            name: {"rows": len(baseline[name]), "identities": len(identity_keys(baseline[name]))}
+            for name in OUTPUT_SPLITS
+        },
+        "v2": {
+            name: {"rows": len(splits[name]), "identities": len(identity_keys(splits[name]))}
+            for name in OUTPUT_SPLITS
+        },
+        "v1_integrity_observations": _crossing_counts(
+            baseline["train"], baseline["val_known"]
+        ),
+        "v2_integrity_observations": _crossing_counts(
+            splits["train"], splits["val_known"]
+        ),
+        "_baseline_splits": baseline,
+    }
 
-    print(f"main_split_ratio=train:{train_ratio:.4f} val:{val_ratio:.4f}")
-    print("validation:")
-    for key, value in validation.items():
-        print(f"{key}={value}")
 
+def main(argv=None):
+    args = parse_args(argv)
+    if args.validation_only:
+        result = validate_written_v2(
+            args.output_dir,
+            args.metadata,
+            data_root=args.data_root,
+            verify_images=args.verify_images,
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    if args.output_dir.exists() and any(args.output_dir.iterdir()) and not args.overwrite_v2:
+        raise FileExistsError(
+            f"Refusing occupied Split V2 destination: {args.output_dir}. "
+            "Use --overwrite-v2 explicitly."
+        )
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Create clean open-set animal re-identification train/validation splits."
+    config = _apply_overrides(load_split_config(args.config), args)
+    metadata_sha256 = sha256_file(args.metadata)
+    rows = read_rows(args.metadata)
+    date_stats = annotate_dates(rows)
+    annotate_explicit_groups(rows, config.enabled_parsers)
+    duplicate_stats = annotate_image_hashes(rows, args.data_root, args.verify_images)
+
+    by_key = group_rows_by_identity(rows)
+    _, unknown_keys = choose_unknown_keys(
+        by_key, config.seed, config.unknown_identity_ratio
     )
-    parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--unknown-identity-ratio", type=float, default=0.125)
-    parser.add_argument("--known-image-ratio", type=float, default=0.225)
-    parser.add_argument("--min-train-images-per-known-identity", type=int, default=2)
-    parser.add_argument("--min-val-images-per-known-identity", type=int, default=2)
-    parser.add_argument("--max-unknown-images-per-identity", type=int, default=100)
-    parser.add_argument(
-        "--keep-existing-csvs",
-        action="store_true",
-        help="Do not delete existing CSV files in the output directory before writing.",
-    )
-    parser.add_argument(
-        "--skip-image-check",
-        action="store_true",
-        help="Skip verifying image readability after writing split files.",
-    )
-    return parser.parse_args()
+    methods, candidate_rows = plan_identity_methods(by_key, unknown_keys)
+    features_by_index = {}
+    if candidate_rows:
+        features = load_or_extract_feature_cache(
+            cache_dir=args.feature_cache,
+            candidate_rows=candidate_rows,
+            metadata_sha256=metadata_sha256,
+            feature=config.feature,
+            data_root=args.data_root,
+            checkpoint=args.feature_checkpoint,
+            device=args.device,
+            batch_size=args.batch_size,
+            recompute=args.recompute_features,
+        )
+        features_by_index = build_features_by_index(candidate_rows, features)
 
-
-def main():
-    args = parse_args()
-    rows = read_rows(args.source)
-    splits = make_splits(
-        rows=rows,
-        seed=args.seed,
-        unknown_identity_ratio=args.unknown_identity_ratio,
-        known_image_ratio=args.known_image_ratio,
-        min_train_images_per_known_identity=args.min_train_images_per_known_identity,
-        min_val_images_per_known_identity=args.min_val_images_per_known_identity,
-        max_unknown_images_per_identity=args.max_unknown_images_per_identity,
+    splits = make_observation_aware_splits(
+        rows, config, methods, unknown_keys, features_by_index
     )
-
-    write_splits(
-        output_dir=args.output_dir,
-        splits=splits,
-        clear_existing=not args.keep_existing_csvs,
+    integrity = validate_splits(rows, splits)
+    integrity["date_statistics"] = dict(date_stats)
+    integrity["duplicate_statistics"] = duplicate_stats
+    summary = build_summary(
+        rows,
+        splits,
+        config,
+        args.metadata,
+        args.feature_cache if candidate_rows else None,
+        integrity,
+        REPO_ROOT,
     )
+    comparison = _baseline_comparison(args.baseline_dir, rows, splits)
+    baseline_splits = comparison.pop("_baseline_splits", None)
+    summary["v1_v2_comparison"] = comparison
+    extras = {}
+    if args.near_duplicate_audit:
+        dhash_threshold = (
+            args.dhash_threshold
+            if args.dhash_threshold is not None
+            else int(config.near_duplicate_audit["dhash_threshold"])
+        )
+        phash_threshold = (
+            args.phash_threshold
+            if args.phash_threshold is not None
+            else int(config.near_duplicate_audit["phash_threshold"])
+        )
+        perceptual_hashes = {}
+        candidates = audit_cross_split_near_duplicates(
+            splits,
+            args.data_root,
+            dhash_threshold=dhash_threshold,
+            phash_threshold=phash_threshold,
+            perceptual_hashes=perceptual_hashes,
+        )
+        extras["near_duplicate_candidates.csv"] = (
+            candidates,
+            NEAR_DUPLICATE_FIELDS,
+        )
+        baseline_candidates = []
+        if baseline_splits:
+            baseline_candidates = audit_cross_split_near_duplicates(
+                baseline_splits,
+                args.data_root,
+                dhash_threshold=dhash_threshold,
+                phash_threshold=phash_threshold,
+                perceptual_hashes=perceptual_hashes,
+            )
+            extras["v1_near_duplicate_candidates.csv"] = (
+                baseline_candidates,
+                NEAR_DUPLICATE_FIELDS,
+            )
+        summary["near_duplicate_audit"] = {
+            "enabled": True,
+            "dhash_threshold": dhash_threshold,
+            "phash_threshold": phash_threshold,
+            "candidate_pairs": len(candidates),
+            "v1_candidate_pairs": len(baseline_candidates) if baseline_splits else None,
+        }
+    else:
+        summary["near_duplicate_audit"] = {"enabled": False}
 
-    validation = validate_outputs(
+    hashes = write_v2_artifacts(
         args.output_dir,
-        source_rows=rows,
-        root_dir=args.source.parent,
-        check_images=not args.skip_image_check,
+        splits,
+        manifest_rows(rows, config),
+        summary,
+        overwrite=args.overwrite_v2,
+        extra_csvs=extras,
     )
-    print_summary(splits, validation)
+    _print_summary(summary)
+    print("output_hashes=" + json.dumps(hashes, sort_keys=True))
 
 
 if __name__ == "__main__":

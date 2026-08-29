@@ -1,8 +1,9 @@
-wildlife-datasets @ git+https://github.com/WildlifeDatasets/wildlife-datasets@main
+wildlife-datasets @ git+https://github.com/WildlifeDatasets/wildlife-datasets@67380d7951b89f02e48c84a7d3546188b9dbec8a
 wildlife-tools @ git+https://github.com/WildlifeDatasets/wildlife-tools
 torch
 torchvision
-timm
+timm==1.0.27
+huggingface-hub
 transformers
 opencv-python-headless
 numpy

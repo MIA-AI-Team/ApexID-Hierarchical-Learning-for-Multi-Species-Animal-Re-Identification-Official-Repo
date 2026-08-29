@@ -1,436 +1,194 @@
-# ApexID — HPI / AISC cluster runbook
+# ApexID Split V2 H100 Runbook
 
-End-to-end commands to regenerate [open-set splits](data/README.md), compute dataset mean/std, and train on **1× H100** using SLURM on the HPI Scientific Compute / AISC cluster.
+This runbook completes the observation-aware split, perceptual audit,
+train-only normalization, and data-pipeline smoke test on the HPI/AISC Slurm
+cluster. The split job uses one H100; normalization stays CPU-only. V1 remains
+untouched.
 
-Official docs: [SCI](https://docs.sc.hpi.de/), [AISC](https://aisc.hpi.de/doc/), [VPN](https://docs.sc.hpi.de/VPN/), [SLURM basics](https://docs.sc.hpi.de/cluster/SLURM/Basics/).
+## Inputs and outputs
 
----
+The cluster defaults used by the supplied jobs are environment variables, so
+no user home directory is committed to a training YAML:
 
-## Paths used on the cluster
+| Variable | Default in the job | Purpose |
+|---|---|---|
+| `METADATA` | shared `apexid-dataset/metadata.csv` | authoritative six-column input |
+| `DATA_ROOT` | shared `apexid-dataset` | resolves `images/...` paths |
+| `OUTPUT_DIR` | `$REPO_ROOT/open_set_splits_v2` | new V2 artifacts |
+| `FEATURE_CACHE` | `$REPO_ROOT/split_v2_feature_cache` | validated memory-mapped DINO cache |
+| `SPLIT_DIR` | `$REPO_ROOT/open_set_splits_v2` | normalization input/output |
+| `CONFIG` | `configs/cluster_home.yaml` | primary config receiving mean/std |
 
-| What | Path |
-|------|------|
-| Login node | `lx01` (hostname after SSH) |
-| Your home | `/sc/home/<username>/` |
-| ApexID repo (example) | `~/ApexID` |
-| Shared dataset root (`DATA_ROOT`) | `/sc/projects/sci-aisc/apex-id/extracted/apexid-dataset` |
-| Shared split CSVs (read-only for most users) | `…/apexid-dataset/open_set_splits/` |
-| Your writable split CSVs | `~/ApexID/open_set_splits/` |
-| Training config | `~/ApexID/configs/cluster_home.yaml` |
-| SLURM logs | `~/logs/` |
-| Checkpoints / outputs | `~/ApexID/outputs/apexid_osnet_arcface_64_0.5/` |
-
-**Images** always load from shared `DATA_ROOT`. **Split CSVs** go in your home if you cannot write to project storage.
-
----
-
-## SLURM scripts in this repo
-
-| Script | Resource | Purpose |
-|--------|----------|---------|
-| [`slurm_make_splits.sh`](slurm_make_splits.sh) | CPU (4 cores, 16G) | Regenerate open-set split CSVs |
-| [`slurm_mean_std.sh`](slurm_mean_std.sh) | CPU (8 cores, 32G) | Compute mean/std, write to config |
-| [`slurm_train_h100.sh`](slurm_train_h100.sh) | **1× H100** (64G) | Install deps + run `scripts/train.py` |
-
-One-time `uv` install (not in repo; copy from `hpi-aisc-gpu-skill/assets/install_uv_slurm.sh` to `~/install_uv_slurm.sh`).
-
----
-
-## Non-negotiable cluster rules
-
-- **`lx01` is for light admin only**: `ssh`, `ls`, `cd`, `sbatch`, `squeue`, `sacct`, `scancel`, `tail`.
-- **Never** run training, `pip install`, or long Python jobs directly on the login node.
-- Use **`uv`**, not bare `python`/`pip`, inside SLURM jobs.
-- Request **`#SBATCH --constraint=ARCH:X86`** for jobs that install wheels.
-- **`scp` from inside an SSH session on lx01 is blocked.** Upload files from your **local laptop** (see step 8) or use base64 paste (step 9).
-
----
-
-## Step-by-step commands
-
-### 1. Connect VPN (local laptop)
-
-Connect your HPI OpenVPN profile **before** SSH.
+The split job verifies that metadata SHA-256 is exactly
+`fd8a921f7ab5566b02fa166bfbbfc948375ee68226b15c29caab8b7fc3ebacf0`.
+Override a path at submission time only when the mounted layout differs:
 
 ```bash
-pgrep -af openvpn    # Linux/macOS — optional check
+sbatch --export=ALL,METADATA=/mounted/metadata.csv,DATA_ROOT=/mounted/apexid \
+  ~/ApexID/slurm_make_splits.sh
 ```
 
-### 2. SSH to the login node (local laptop)
+## 1. Prepare the checkout
 
-Merge a `Host hpi-cluster` block into `~/.ssh/config`, or pass a config file explicitly.
-
-**Windows PowerShell example:**
-
-```powershell
-ssh -F "C:\Users\asus\Desktop\WILDLIFE\GPU_Cluster_Run\hpi-cluster.ssh-config" hpi-cluster
-```
-
-**Verify you landed on the login node:**
+From the login node:
 
 ```bash
-hostname    # expect lx01
-pwd         # expect /sc/home/<username>
-```
-
-### 3. Inspect home and enter the ApexID repo
-
-```bash
-ls
-cd ~/ApexID && pwd && ls -la
-```
-
-You should see `scripts/`, `configs/`, `data/`, `requirements.txt`.
-
-### 4. Confirm training config points at the shared dataset
-
-```bash
-grep -A 8 "^data:" configs/default.yaml
-```
-
-Expected: paths under `/sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/`.
-
-### 5. Verify the shared dataset exists (read-only check)
-
-```bash
-ls /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/metadata.csv
-ls /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/open_set_splits/
-```
-
-### 6. Check whether you can overwrite shared split CSVs
-
-```bash
-test -w /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/open_set_splits \
-  && echo "WRITABLE" || echo "NOT WRITABLE - use \$HOME instead"
-```
-
-If **NOT WRITABLE** (typical), splits and config must use `~/ApexID/open_set_splits/` (steps 7 and 12).
-
-### 7. Create your personal splits output directory
-
-```bash
-mkdir -p ~/ApexID/open_set_splits && ls -la ~/ApexID/open_set_splits
 mkdir -p ~/logs
+cd ~/ApexID
+git status --short
+sha256sum /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/metadata.csv
+bash -n slurm_make_splits.sh slurm_mean_std.sh slurm_train_h100.sh
 ```
 
-### 8. One-time: install `uv` on a compute node
-
-Copy `install_uv_slurm.sh` to `~/install_uv_slurm.sh` (from `hpi-aisc-gpu-skill/assets/`), then:
+If shell files were transferred through a text-only channel, their deployment
+copies decode exactly as follows:
 
 ```bash
-test -x ~/.local/bin/uv && ~/.local/bin/uv --version || echo "uv NOT installed"
+base64 -d slurm_make_splits.sh.b64.txt > /tmp/slurm_make_splits.sh
+base64 -d slurm_mean_std.sh.b64.txt > /tmp/slurm_mean_std.sh
+cmp slurm_make_splits.sh /tmp/slurm_make_splits.sh
+cmp slurm_mean_std.sh /tmp/slurm_mean_std.sh
 ```
 
-If not installed:
+The scientific pins are in `requirements-split-v2.txt` and `data/split_v2.yaml`:
+WildlifeDatasets commit `67380d7951b89f02e48c84a7d3546188b9dbec8a`,
+`timm==1.0.27`, DINOv2 revision
+`4741e1cafbf45415e77074bb0cb42dba76c8684a`, and checkpoint SHA-256
+`0424a5d1b515278cba3c6640ccbeaacc41de59d3a93df0dd5e494285eea2b355`.
 
-```bash
-sbatch --parsable ~/install_uv_slurm.sh
-```
+## 2. Submit Split V2 on one H100
 
-Wait for completion (replace `JOB_ID`):
-
-```bash
-sacct -j JOB_ID --format=JobID,State,Elapsed,ExitCode -n --parsable2
-tail -20 ~/logs/uv_install_JOB_ID.out
-```
-
-Expect `COMPLETED` and `uv 0.x.x`.
-
-### 9. Upload SLURM scripts to the cluster
-
-The three scripts live in this repo: `slurm_make_splits.sh`, `slurm_mean_std.sh`, `slurm_train_h100.sh`.
-
-#### Option A — `scp` from your **local laptop** (recommended)
-
-Open a **new** PowerShell window (not the SSH session):
-
-```powershell
-$CFG = "C:\Users\asus\Desktop\WILDLIFE\GPU_Cluster_Run\hpi-cluster.ssh-config"
-$REPO = "C:\Users\asus\Desktop\WILDLIFE\GPU_Cluster_Run\ApexID"
-
-scp -F $CFG "$REPO\slurm_make_splits.sh"  hpi-cluster:~/ApexID/slurm_make_splits.sh
-scp -F $CFG "$REPO\slurm_mean_std.sh"     hpi-cluster:~/ApexID/slurm_mean_std.sh
-scp -F $CFG "$REPO\slurm_train_h100.sh"    hpi-cluster:~/ApexID/slurm_train_h100.sh
-```
-
-Then on the cluster:
-
-```bash
-chmod +x ~/ApexID/slurm_*.sh
-ls -la ~/ApexID/slurm_*.sh
-```
-
-#### Option B — base64 paste inside SSH
-
-If `scp` from the laptop is unavailable, encode locally and paste on the cluster:
-
-```bash
-# On local machine (PowerShell):
-python -c "import base64; p=r'PATH\\TO\\slurm_train_h100.sh'; print(base64.b64encode(open(p,'rb').read()).decode())"
-```
-
-```bash
-# On cluster (paste full base64 string):
-printf '%s' 'BASE64_STRING_HERE' | base64 -d > ~/ApexID/slurm_train_h100.sh
-chmod +x ~/ApexID/slurm_train_h100.sh
-```
-
-Repeat for each script. Verify line count:
-
-```bash
-wc -l ~/ApexID/slurm_*.sh
-```
-
-### 10. Regenerate open-set splits (SLURM, CPU)
+The default run creates a fresh cache when none exists, rejects a stale or
+incomplete cache, performs the V2 and V1 perceptual audits, writes atomically,
+then executes validation-only mode.
 
 ```bash
 SPLIT_JOB=$(sbatch --parsable ~/ApexID/slurm_make_splits.sh)
-echo "split job: $SPLIT_JOB"
+echo "$SPLIT_JOB"
+squeue -j "$SPLIT_JOB"
 ```
+
+Only when deliberately replacing an existing cache or V2 destination:
+
+```bash
+SPLIT_JOB=$(sbatch --parsable \
+  --export=ALL,RECOMPUTE_FEATURES=1,OVERWRITE_V2=1 \
+  ~/ApexID/slurm_make_splits.sh)
+```
+
+These flags are explicit because silent cache reuse and accidental destination
+replacement are prohibited.
 
 Monitor:
 
 ```bash
-squeue -j SPLIT_JOB -h -o '%T %M %R'
-sacct -j SPLIT_JOB --format=JobID,State,Elapsed,ExitCode -n --parsable2
-tail -30 ~/logs/apexid_splits_SPLIT_JOB.out
+tail -f ~/logs/apexid_splits_${SPLIT_JOB}.out
+tail -f ~/logs/apexid_splits_${SPLIT_JOB}.err
+sacct -j "$SPLIT_JOB" --format=JobID,State,Elapsed,AllocTRES,MaxRSS,ExitCode
 ```
 
-Verify output CSVs:
-
-```bash
-ls ~/ApexID/open_set_splits/
-```
-
-Expected: `train.csv`, `val_known.csv`, `val_unknown.csv`, `val.csv`, etc.
-
-### 11. Create cluster config (home splits + shared images)
-
-`train.py` only accepts `--config`; there are no CLI path overrides. Copy `default.yaml` and repoint split paths to your home directory:
+Successful output must contain the six legacy-schema CSVs plus
+`split_manifest.csv`, `split_summary.json`, `near_duplicate_candidates.csv`,
+and `v1_near_duplicate_candidates.csv`:
 
 ```bash
 cd ~/ApexID
-cp configs/default.yaml configs/cluster_home.yaml
-sed -i "s|/sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/open_set_splits|/sc/home/$(whoami)/ApexID/open_set_splits|g" configs/cluster_home.yaml
-grep -A 10 "^data:" configs/cluster_home.yaml
+python data/make_open_set_splits.py \
+  --metadata /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/metadata.csv \
+  --output-dir open_set_splits_v2 \
+  --validation-only
+python -m json.tool open_set_splits_v2/split_summary.json | less
 ```
 
-- **`data.root_dir`** stays on shared storage (images).
-- **`data.train_path` / `val_*_path`** point to `~/ApexID/open_set_splits/`.
-- **`experiment.output_dir`** stays under the repo (writable).
+Do not proceed unless the summary reports zero train↔`val_known` exact-content
+crossings and zero shared temporal observation groups. Review and explain every
+remaining perceptual candidate; perceptual hashes are an audit signal, not an
+automatic label.
 
-### 12. Submit mean/std (CPU) then training (H100)
+## 3. Run train-only normalization on CPU
 
-Mean/std scans every training image on CPU and can take a long time. Keep it off the GPU job so the H100 is not idle.
-
-**Chain both jobs** (training starts only after mean/std succeeds):
+Submit after the split succeeds:
 
 ```bash
-MEAN_JOB=$(sbatch --parsable ~/ApexID/slurm_mean_std.sh)
-echo "mean/std job: $MEAN_JOB"
-
-TRAIN_JOB=$(sbatch --parsable --dependency=afterok:$MEAN_JOB ~/ApexID/slurm_train_h100.sh)
-echo "train job: $TRAIN_JOB"
+MEAN_JOB=$(sbatch --parsable --dependency=afterok:${SPLIT_JOB} \
+  ~/ApexID/slurm_mean_std.sh)
+echo "$MEAN_JOB"
 ```
 
-**Or submit separately:**
+The job reads only `open_set_splits_v2/train.csv`, writes
+`normalization_stats.json`, and applies the same result to all four 440×440 RGB
+training configs:
+
+- `configs/default.yaml`
+- `configs/cluster_home.yaml`
+- `configs/cluster_pretrained.yaml`
+- `configs/cluster_subcenter_dynamic.yaml`
+
+`normalization_stats.json` records the split-manifest hash, training CSV hash,
+row count, preprocessing, exact command, code revision, mean, and standard
+deviation.
 
 ```bash
-MEAN_JOB=$(sbatch --parsable ~/ApexID/slurm_mean_std.sh)
-# wait until COMPLETED, then:
-sbatch --parsable ~/ApexID/slurm_train_h100.sh
+tail -f ~/logs/apexid_mean_std_${MEAN_JOB}.out
+python -m json.tool ~/ApexID/open_set_splits_v2/normalization_stats.json
 ```
 
-### 13. Monitor jobs
+## 4. Point a local cluster config at V2
 
-**Queue status:**
-
-```bash
-squeue -u $(whoami) -o '%.10i %.12j %.8T %.10M %.20R'
-```
-
-**Single job:**
-
-```bash
-squeue -j JOB_ID -h -o '%T %M %R'
-sacct -j JOB_ID --format=JobID,State,Elapsed,ExitCode,MaxRSS,NodeList -n --parsable2
-```
-
-**Logs** (replace `JOB_ID`):
-
-```bash
-tail -30 ~/logs/apexid_mean_std_JOB_ID.out
-tail -30 ~/logs/apexid_mean_std_JOB_ID.err
-
-tail -30 ~/logs/apexid_train_JOB_ID.out
-tail -30 ~/logs/apexid_train_JOB_ID.err
-```
-
-**Live follow** (Ctrl+C stops tail only; job keeps running):
-
-```bash
-tail -f ~/logs/apexid_train_JOB_ID.out
-```
-
-**Cancel a job:**
-
-```bash
-scancel JOB_ID
-```
-
-### 14. What to expect in the training log
-
-1. Job header (`HOSTNAME=gx…`, `CUDA_VISIBLE_DEVICES=0`)
-2. `nvidia-smi` showing **NVIDIA H100 80GB**
-3. `uv pip install` (quiet for several minutes)
-4. Epoch / loss output from `scripts/train.py`
-
-Mean/std log should end with updated `transforms:` mean/std values written into `configs/cluster_home.yaml`.
-
-### 15. Where outputs land
-
-| Artifact | Location |
-|----------|----------|
-| Split CSVs | `~/ApexID/open_set_splits/` |
-| Updated mean/std | `~/ApexID/configs/cluster_home.yaml` |
-| Checkpoints | `~/ApexID/outputs/apexid_osnet_arcface_64_0.5/checkpoints/` |
-| Training history | `~/ApexID/outputs/apexid_osnet_arcface_64_0.5/history.pt` |
-| SLURM stdout/stderr | `~/logs/apexid_*_<jobid>.out` / `.err` |
-
----
-
-## Full pipeline (copy-paste summary)
-
-Run on **lx01** after steps 1–9 are done:
-
-```bash
-# 1. Splits (CPU)
-SPLIT_JOB=$(sbatch --parsable ~/ApexID/slurm_make_splits.sh)
-
-# 2. Config (once per split regen)
-cp configs/default.yaml configs/cluster_home.yaml
-sed -i "s|/sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/open_set_splits|/sc/home/$(whoami)/ApexID/open_set_splits|g" configs/cluster_home.yaml
-
-# 3. Mean/std (CPU) → Train (1× H100), chained
-MEAN_JOB=$(sbatch --parsable ~/ApexID/slurm_mean_std.sh)
-TRAIN_JOB=$(sbatch --parsable --dependency=afterok:$MEAN_JOB ~/ApexID/slurm_train_h100.sh)
-echo "split=$SPLIT_JOB mean=$MEAN_JOB train=$TRAIN_JOB"
-```
-
-Wait for `SPLIT_JOB` to finish **before** step 3 if you need fresh CSVs for mean/std. Or run splits first, wait, then chain mean→train.
-
----
-
-## Optional: W&B tracking
-
-Set in `configs/cluster_home.yaml`:
+Split paths are environment-specific. Keep them in a local experiment copy,
+not as a committed `/sc/home/<user>` path. Copy the desired training YAML and
+set these four keys to the generated directory:
 
 ```yaml
-tracking:
-  enabled: true
-  provider: wandb
+data:
+  train_path: /sc/home/USER/ApexID/open_set_splits_v2/train.csv
+  val_known_path: /sc/home/USER/ApexID/open_set_splits_v2/val_known.csv
+  val_unknown_path: /sc/home/USER/ApexID/open_set_splits_v2/val_unknown.csv
+  val_path: /sc/home/USER/ApexID/open_set_splits_v2/val.csv
+  root_dir: /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset
 ```
 
-### Secrets file (`~/ApexID/.env`)
+Replace `USER` only in the local copy, for example
+`configs/cluster_v2.local.yaml`, and submit with
+`CONFIG=configs/cluster_v2.local.yaml`.
 
-**Do not run `scp` inside your SSH session on lx01** — it is blocked on the login node.
+## 5. Data-pipeline smoke test and training
 
-#### Option A — upload from Windows PowerShell (new window, VPN on)
-
-```powershell
-cd C:\Users\asus\Desktop\WILDLIFE\GPU_Cluster_Run\ApexID
-.\upload_to_cluster.ps1
-```
-
-Or manually (one line each; type password when prompted):
-
-```powershell
-$CFG = "C:\Users\asus\Desktop\WILDLIFE\GPU_Cluster_Run\hpi-cluster.ssh-config"
-scp -F $CFG "C:\Users\asus\Desktop\WILDLIFE\GPU_Cluster_Run\ApexID\slurm_train_h100.sh" hpi-cluster:~/ApexID/slurm_train_h100.sh
-scp -F $CFG "C:\Users\asus\Desktop\WILDLIFE\GPU_Cluster_Run\.env" hpi-cluster:~/ApexID/.env
-```
-
-#### Option B — create `.env` on the cluster (no scp)
-
-In your **SSH session**:
+Run the smoke test on a compute allocation with the same environment as
+training:
 
 ```bash
-nano ~/ApexID/.env
+cd ~/ApexID
+python scripts/debug_data_pipeline.py --config configs/cluster_v2.local.yaml
 ```
 
-Paste one line:
+Then train only after split, normalization, candidate review, and smoke test
+have succeeded:
 
 ```bash
-WANDB_API_KEY=your_key_here
+TRAIN_JOB=$(sbatch --parsable --dependency=afterok:${MEAN_JOB} \
+  --export=ALL,CONFIG=configs/cluster_v2.local.yaml \
+  ~/ApexID/slurm_train_h100.sh)
+echo "$TRAIN_JOB"
 ```
 
-Save, then:
+## 6. Return the completion artifacts
 
-```bash
-chmod 600 ~/ApexID/.env
+Copy back these files so `SPLIT_V2_REPORT.md` can be finalized with actual
+corpus values:
+
+```text
+open_set_splits_v2/split_summary.json
+open_set_splits_v2/split_manifest.csv
+open_set_splits_v2/normalization_stats.json
+open_set_splits_v2/near_duplicate_candidates.csv
+open_set_splits_v2/v1_near_duplicate_candidates.csv
+logs/apexid_splits_<jobid>.out
+logs/apexid_splits_<jobid>.err
+logs/apexid_mean_std_<jobid>.out
+logs/apexid_mean_std_<jobid>.err
 ```
 
-#### Verify SLURM script loads the env file
-
-On the cluster:
-
-```bash
-grep -n "ENV_FILE" ~/ApexID/slurm_train_h100.sh
-```
-
-You should see lines like `ENV_FILE="${ENV_FILE:-$REPO_ROOT/.env}"` and `source "$ENV_FILE"`.
-
-If missing, either re-upload `slurm_train_h100.sh` (Option A) or paste via base64 (step 9 Option B in this doc), or add this block **before** `cd "$REPO_ROOT"` in `nano ~/ApexID/slurm_train_h100.sh`:
-
-```bash
-ENV_FILE="${ENV_FILE:-$REPO_ROOT/.env}"
-if [ ! -f "$ENV_FILE" ] && [ -f "$HOME/.env.apexid" ]; then
-  ENV_FILE="$HOME/.env.apexid"
-fi
-if [ -f "$ENV_FILE" ]; then
-  set -a
-  source "$ENV_FILE"
-  set +a
-  echo "Loaded env from $ENV_FILE"
-else
-  echo "No env file at $ENV_FILE (optional; scp .env to ~/ApexID/.env)"
-fi
-```
-
-Submit:
-
-```bash
-chmod +x ~/ApexID/slurm_train_h100.sh
-sbatch ~/ApexID/slurm_train_h100.sh
-```
-
-Job log should show: `Loaded env from /sc/home/.../ApexID/.env`
-
----
-
-## Troubleshooting
-
-| Problem | Fix |
-|---------|-----|
-| SSH hangs behind VPN | Add `KexAlgorithms curve25519-sha256` to SSH config |
-| `scp` blocked on lx01 | Run `scp` from **local laptop**, not inside SSH |
-| `scp` hangs / no prompt | Connect VPN first; run in a **new** PowerShell window (not SSH) |
-| `.env` / W&B not loaded | `grep ENV_FILE ~/ApexID/slurm_train_h100.sh` — re-upload script or paste env block via `nano` |
-| Heredoc paste corrupts scripts | Use Option A (`scp`) or base64 (Option B) |
-| `squeue` empty but job done | Use `sacct -j JOB_ID …` (squeue only shows active jobs) |
-| Cannot write shared splits | Use `~/ApexID/open_set_splits/` + `cluster_home.yaml` |
-| GPU idle during mean/std | Use separate `slurm_mean_std.sh` (CPU) and `slurm_train_h100.sh` (GPU) |
-| Training config wrong paths | Train with `--config configs/cluster_home.yaml` only |
-
----
-
-## Navigation cheatsheet
-
-| Goal | Command |
-|------|---------|
-| Login node | `ssh hpi-cluster` (or `-F …/hpi-cluster.ssh-config`) |
-| Home | `cd ~` |
-| Repo | `cd ~/ApexID` |
-| Shared dataset | `cd /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset` |
-| Your splits | `cd ~/ApexID/open_set_splits` |
-| Logs | `ls ~/logs/` |
+Also return the four modified config YAMLs. The report is complete only after
+the actual V2 counts/hashes, V1/V2 comparison, normalization numbers, smoke-test
+result, and candidate dispositions are recorded.

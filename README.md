@@ -44,14 +44,15 @@ scikit-learn, UMAP, matplotlib, W&B, and WildlifeDatasets packages.
 
 ## Train
 
-The default configuration expects these dataset paths:
+After generating Split V2, point an experiment config at these environment-relative
+paths (do not commit a user home directory):
 
 ```yaml
 data:
-  train_path: ApexID_Dataset/open_set_splits/train.csv
-  val_known_path: ApexID_Dataset/open_set_splits/val_known.csv
-  val_unknown_path: ApexID_Dataset/open_set_splits/val_unknown.csv
-  val_path: ApexID_Dataset/open_set_splits/val.csv
+  train_path: ApexID_Dataset/open_set_splits_v2/train.csv
+  val_known_path: ApexID_Dataset/open_set_splits_v2/val_known.csv
+  val_unknown_path: ApexID_Dataset/open_set_splits_v2/val_unknown.csv
+  val_path: ApexID_Dataset/open_set_splits_v2/val.csv
   root_dir: ApexID_Dataset
 ```
 
@@ -318,19 +319,24 @@ python -m json.tool /path/to/apexid_benchmark/open40/validation_report.json
 
 ### Optional: Create training splits and train a checkpoint
 
-This is independent of the sealed evaluation benchmark. The existing training
+This is independent of the sealed evaluation benchmark. The observation-aware training
 split script consumes the dataset metadata described in `data/README.md`
 (`metadata.csv`, not the three-column benchmark `merged.csv`) and writes the
 CSV paths used by the default training configuration:
 
 ```bash
-python data/make_open_set_splits.py
-python scripts/debug_data_pipeline.py --config configs/default.yaml
-python scripts/train.py --config configs/default.yaml
+python data/make_open_set_splits.py \
+  --metadata metadata.csv \
+  --data-root ApexID_Dataset \
+  --output-dir ApexID_Dataset/open_set_splits_v2
+python scripts/debug_data_pipeline.py --config /path/to/config_v2.yaml
+python scripts/train.py --config /path/to/config_v2.yaml
 ```
 
-- `data/make_open_set_splits.py` builds `train.csv`, known validation, and
-  unknown validation files for model development.
+- `data/make_open_set_splits.py` builds observation-aware `train.csv`, known
+  validation, and identity-disjoint unknown validation files without modifying
+  V1. See `data/README.md` and `SPLIT_V2_REPORT.md` for provenance and the H100
+  completion gate.
 - `--config configs/default.yaml` selects the model, data paths, transforms,
   optimizer, and validation settings. Copy and edit this file for a new
   experiment instead of changing a checkpoint's architecture at evaluation

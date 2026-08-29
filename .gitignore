@@ -10,3 +10,5 @@ ApexID_Dataset/
 merged.csv
 apexid_benchmark/
 results/
+metadata.csv
+AUDIT.md

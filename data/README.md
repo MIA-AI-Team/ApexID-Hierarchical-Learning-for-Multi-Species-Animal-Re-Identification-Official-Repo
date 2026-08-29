@@ -8,7 +8,106 @@ The final training-ready master metadata file is:
 metadata.csv
 ```
 
-The final open-set split files are:
+The authoritative input is the repository-root `metadata.csv`. The audited
+corpus has 158,293 rows and SHA-256
+`fd8a921f7ab5566b02fa166bfbbfc948375ee68226b15c29caab8b7fc3ebacf0`.
+`ApexID_Dataset/metadata.csv` is currently byte-identical, but Split V2 defaults
+to the root file so there is one reproducibility anchor.
+
+## Observation-Aware Split V2
+
+Split V2 is generated into a new directory and does not modify the legacy V1
+files:
+
+```text
+ApexID_Dataset/open_set_splits_v2/
+├── train.csv
+├── val_known.csv
+├── val_unknown.csv
+├── val.csv
+├── val_unknown_extra.csv
+├── unlabeled_ood.csv
+├── split_manifest.csv
+├── split_summary.json
+├── near_duplicate_candidates.csv       # optional
+└── normalization_stats.json            # added by the CPU normalization job
+```
+
+The six training CSVs retain the exact six-column schema below, and `val.csv`
+is required to equal `val_known.csv` followed by `val_unknown.csv`. The manifest
+adds source indices, canonical dataset-scoped identities, strict parsed dates,
+image SHA-256 values, assignment methods, stable observation/group IDs, seed,
+and frozen feature provenance.
+
+The assignment hierarchy is:
+
+1. Hash every image. Same-identity exact duplicates are hard must-links;
+   identical bytes with different canonical `(dataset, identity)` labels abort
+   the run with a conflict report.
+2. Preserve dataset-wise unknown-identity selection at seed 42 and ratio 0.125.
+   Cap each unknown identity near 100 images without splitting a hard group;
+   overflow goes to `val_unknown_extra`.
+3. For fully dated known identities with at least two dates, keep same-date
+   observations together and select the closest chronological validation
+   suffix while retaining earlier training data.
+4. For identities fully covered by verified explicit-source parsers, select a
+   deterministic whole-group subset closest to the 0.225 image target.
+5. Send partial, missing, malformed, single-date, and otherwise unresolved
+   identities through DINOv2 similarity fallback. All multi-image connected
+   components stay in training, following WildlifeReID-10k Algorithm 1; only
+   singleton observation components may enter `val_known`. An identity with no
+   independent validation observation remains train-only.
+
+Dates are accepted only as `%Y-%m-%d` or `%d-%m-%Y`. Blank dates remain missing;
+all other nonblank values are malformed. The authoritative metadata contains
+11,857 ISO rows, 39,347 Czech-format rows, 107,089 missing rows, and zero
+malformed rows at the audited revision.
+
+Verified explicit-source parsers:
+
+| Dataset | Stable source evidence |
+|---|---|
+| CTai | `img-id` before the object/prepared index |
+| Giraffes | original image basename before crop index and prepared hash |
+| IPanda50 | `vNNN` video or explicit timestamp session |
+| NDD20 | original numeric filename prefix |
+| NyalaData | numeric capture ID shared by left/right and duplicate copies |
+
+Scientific defaults live in `data/split_v2.yaml`, with exact runtime package
+versions in `requirements-split-v2.txt`. Similarity uses frozen
+`timm/vit_large_patch14_dinov2.lvd142m` features at the pinned Hugging Face
+revision and checkpoint hash. Images are RGB, resized bilinearly to 518×518,
+converted to float32 `[0,1]`, normalized with ImageNet mean/std, and L2
+normalized to 1,024 dimensions. The cache is memory-mappable and is rejected if
+its ordered paths, image hashes, metadata hash, model/checkpoint,
+preprocessing, shape/dtype, or artifact hashes differ.
+
+Canonical local run:
+
+```bash
+python data/make_open_set_splits.py \
+  --metadata metadata.csv \
+  --data-root ApexID_Dataset \
+  --output-dir ApexID_Dataset/open_set_splits_v2 \
+  --feature-cache ApexID_Dataset/split_v2_feature_cache \
+  --near-duplicate-audit
+
+python data/make_open_set_splits.py \
+  --metadata metadata.csv \
+  --output-dir ApexID_Dataset/open_set_splits_v2 \
+  --validation-only
+```
+
+An occupied destination is refused. `--overwrite-v2` authorizes an atomic
+replacement of that exact V2 directory; it never clears arbitrary CSVs and
+never touches V1. `--source` remains an alias for `--metadata`.
+
+The H100 run, actual V1/V2 comparison, and train-only normalization handoff are
+tracked in `SPLIT_V2_REPORT.md` and `CLUSTER_RUN_README.md`.
+
+## Legacy Split V1 Reference
+
+The existing V1 open-set files remain:
 
 ```text
 open_set_splits/train.csv
@@ -53,7 +152,7 @@ The dataset was built through these steps:
 
 The previous special identity `new_whale` from `humpback-whale-identification` is not treated as a real individual whale identity. It is excluded from supervised training and main validation, and is kept only in `unlabeled_ood.csv`.
 
-## Open-Set Split Policy
+## Legacy V1 Open-Set Split Policy
 
 The split script uses deterministic seed `42` and dataset-scoped identity keys: `(dataset, identity)`.
 
@@ -75,13 +174,14 @@ Balancing rules:
 - Overflow rows from capped unknown validation identities are stored in `val_unknown_extra.csv`.
 - Singleton identities and all `new_whale` rows are stored in `unlabeled_ood.csv`.
 
-Recreate the split files:
+Do not use the following command expecting the old random policy: the script
+now creates Split V2. V1 is retained as a frozen comparison baseline.
 
 ```bash
 python data/make_open_set_splits.py
 ```
 
-## Split Integrity
+## Legacy V1 Split Integrity
 
 The generated split files passed these checks:
 

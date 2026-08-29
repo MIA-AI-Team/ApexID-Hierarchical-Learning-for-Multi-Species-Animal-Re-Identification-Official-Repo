@@ -27,6 +27,9 @@ def _make_rows(image_dir, prefix, identities):
                 "dataset": identity.split("_", 1)[0],
                 "identity": identity,
                 "path": image_path.name,
+                "date": "",
+                "orientation": "",
+                "species": identity.split("_", 1)[0],
             }
         )
     return rows
@@ -34,10 +37,12 @@ def _make_rows(image_dir, prefix, identities):
 
 def test_debug_data_pipeline_script_smoke(tmp_path):
     image_dir = tmp_path / "images"
-    train_csv = tmp_path / "train.csv"
-    val_known_csv = tmp_path / "val_known.csv"
-    val_unknown_csv = tmp_path / "val_unknown.csv"
-    val_csv = tmp_path / "val.csv"
+    split_dir = tmp_path / "open_set_splits_v2"
+    split_dir.mkdir()
+    train_csv = split_dir / "train.csv"
+    val_known_csv = split_dir / "val_known.csv"
+    val_unknown_csv = split_dir / "val_unknown.csv"
+    val_csv = split_dir / "val.csv"
     config_path = tmp_path / "config.yaml"
 
     train_rows = _make_rows(
@@ -50,13 +55,10 @@ def test_debug_data_pipeline_script_smoke(tmp_path):
         "val",
         ["lynx_001", "turtle_001", "salamander_001"],
     )
-    val_rows[-1]["val_type"] = "unknown"
-    val_rows[0]["val_type"] = "known"
-    val_rows[1]["val_type"] = "known"
     pd.DataFrame(train_rows).to_csv(train_csv, index=False)
     pd.DataFrame(val_rows).to_csv(val_csv, index=False)
-    pd.DataFrame([row for row in val_rows if row["val_type"] == "known"]).to_csv(val_known_csv, index=False)
-    pd.DataFrame([row for row in val_rows if row["val_type"] == "unknown"]).to_csv(val_unknown_csv, index=False)
+    pd.DataFrame(val_rows[:2]).to_csv(val_known_csv, index=False)
+    pd.DataFrame(val_rows[2:]).to_csv(val_unknown_csv, index=False)
 
     config = {
         "seed": 42,

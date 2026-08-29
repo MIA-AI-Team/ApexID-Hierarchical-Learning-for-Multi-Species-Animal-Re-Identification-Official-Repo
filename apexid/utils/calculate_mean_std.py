@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 import argparse
+import csv
+import hashlib
+import json
+import os
+import shlex
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -59,6 +66,77 @@ def _write_stats_to_config(config_path, mean, std):
 
     with open(config_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, sort_keys=False)
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _git_revision(repo_root):
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result.stdout.strip()
+
+
+def write_normalization_provenance(
+    output_path,
+    config_path,
+    csv_path,
+    manifest_path,
+    mean,
+    std,
+    command=None,
+):
+    """Atomically write train-only normalization provenance for Split V2."""
+    output_path = Path(output_path)
+    config_path = Path(config_path)
+    csv_path = Path(csv_path)
+    manifest_path = Path(manifest_path)
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"Split V2 manifest not found: {manifest_path}")
+    with csv_path.open(newline="", encoding="utf-8-sig") as handle:
+        row_count = sum(1 for _ in csv.DictReader(handle))
+    cfg = load_config(config_path=config_path)
+    data_cfg = _as_dict(cfg.get("data", {}))
+    transforms = _as_dict(data_cfg.get("transforms", {}))
+    payload = {
+        "schema_version": 1,
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": _sha256_file(manifest_path),
+        "train_csv_path": str(csv_path),
+        "train_csv_sha256": _sha256_file(csv_path),
+        "row_count": row_count,
+        "preprocessing": {
+            "color_mode": "RGB",
+            "image_size": data_cfg.get("image_size"),
+            "wavelet": bool(data_cfg.get("wavelet", False)),
+            "transforms": transforms,
+        },
+        "command": command or " ".join(shlex.quote(value) for value in sys.argv),
+        "code_revision": _git_revision(REPO_ROOT),
+        "mean": [float(value) for value in mean],
+        "standard_deviation": [float(value) for value in std],
+    }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{output_path.name}.", dir=output_path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(temporary, output_path)
+    except Exception:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+    return payload
 
 
 def calculate_from_config(
@@ -160,6 +238,22 @@ def parse_args():
         action="store_true",
         help="Write calculated mean/std into data.transforms in the config file.",
     )
+    parser.add_argument(
+        "--additional-config",
+        action="append",
+        default=[],
+        help="Additional config to receive the same mean/std when --write-config is set.",
+    )
+    parser.add_argument(
+        "--provenance-output",
+        default=None,
+        help="Write Split V2 normalization_stats.json with hashes and preprocessing.",
+    )
+    parser.add_argument(
+        "--manifest",
+        default=None,
+        help="Split V2 split_manifest.csv required with --provenance-output.",
+    )
     return parser.parse_args()
 
 
@@ -182,7 +276,29 @@ def main():
     print(f"    mean: {mean}")
     print(f"    std: {std}")
     if args.write_config:
+        for config_path in args.additional_config:
+            _write_stats_to_config(config_path, mean, std)
         print(f"\nUpdated {args.config}")
+        for config_path in args.additional_config:
+            print(f"Updated {config_path}")
+    if args.provenance_output:
+        if not args.manifest:
+            raise ValueError("--manifest is required with --provenance-output")
+        cfg = load_config(config_path=args.config)
+        data_cfg = _as_dict(cfg.get("data", {}))
+        csv_path = _resolve_csv_path(data_cfg, args.split, args.csv)
+        payload = write_normalization_provenance(
+            args.provenance_output,
+            args.config,
+            csv_path,
+            args.manifest,
+            mean,
+            std,
+        )
+        print(
+            f"Wrote {args.provenance_output} "
+            f"(rows={payload['row_count']}, manifest={payload['manifest_sha256']})"
+        )
 
 
 if __name__ == "__main__":
