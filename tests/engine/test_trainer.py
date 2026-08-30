@@ -5,6 +5,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from apexid.engine.checkpoint import load_training_checkpoint
 from apexid.engine.trainer import Trainer
 from apexid.models.heads import SphereFace2Head
 
@@ -853,3 +854,213 @@ def test_head_first_resume_skips_warmup_and_keeps_real_epoch_numbers(tmp_path):
     assert validator.calls == 2
     assert sampler.epochs == [3, 4]
     assert [metrics["epoch"] for metrics, _ in logger.metrics] == [2, 3]
+
+
+class EpochMetricValidator:
+    def __init__(self, values):
+        self.values = list(values)
+        self.calls = []
+
+    def validate(self, val_loader, epoch=None, epochs=None):
+        epoch = int(epoch)
+        self.calls.append(epoch)
+        value = float(self.values[epoch])
+        return {
+            "loss": 1.0 - value,
+            "acc": value,
+            "top1": value,
+            "top5": value,
+            "mAP": value,
+            "micro_f1": value,
+            "num_known": 4,
+            "num_samples": 4,
+        }
+
+
+def _shuffled_loader(seed):
+    images = torch.tensor(
+        [[1.0, 0.0], [0.9, 0.1], [0.0, 1.0], [0.1, 0.9]],
+        dtype=torch.float32,
+    )
+    labels = torch.tensor([0, 0, 1, 1])
+    generator = torch.Generator().manual_seed(seed)
+    return DataLoader(
+        TensorDataset(images, labels, labels),
+        batch_size=2,
+        shuffle=True,
+        generator=generator,
+    )
+
+
+def _resume_trainer(output_dir, metric_values, logger=None, patience=3):
+    torch.manual_seed(2026)
+    backbone = nn.Linear(2, 2)
+    head = TrainHead()
+    optimizer = torch.optim.AdamW(
+        list(backbone.parameters()) + list(head.parameters()),
+        lr=1e-3,
+        weight_decay=1e-4,
+        foreach=False,
+    )
+    scheduler = torch.optim.lr_scheduler.CyclicLR(
+        optimizer,
+        base_lr=1e-4,
+        max_lr=1e-3,
+        step_size_up=2,
+        cycle_momentum=False,
+    )
+    return Trainer(
+        backbone,
+        head,
+        loss=nn.CrossEntropyLoss(),
+        optimizer=optimizer,
+        scheduler=scheduler,
+        validator=EpochMetricValidator(metric_values),
+        device="cpu",
+        progress=False,
+        verbose=False,
+        checkpoint_dir=output_dir,
+        checkpoint_every_n_epochs=1,
+        checkpoint_filename="last_checkpoint.pt",
+        early_stopping_enabled=True,
+        early_stopping_monitor="val_mAP",
+        early_stopping_mode="max",
+        early_stopping_patience=patience,
+        early_stopping_dir=output_dir,
+        experiment_logger=logger,
+    )
+
+
+def _assert_optimizer_state_equal(actual, expected):
+    assert actual["param_groups"] == expected["param_groups"]
+    assert actual["state"].keys() == expected["state"].keys()
+    for parameter_id in actual["state"]:
+        assert actual["state"][parameter_id].keys() == expected["state"][parameter_id].keys()
+        for key, actual_value in actual["state"][parameter_id].items():
+            expected_value = expected["state"][parameter_id][key]
+            if torch.is_tensor(actual_value):
+                torch.testing.assert_close(actual_value, expected_value)
+            else:
+                assert actual_value == expected_value
+
+
+def _load_resume_checkpoint(trainer, checkpoint_path, train_loader, val_loader):
+    return load_training_checkpoint(
+        checkpoint_path,
+        model=trainer.model,
+        optimizer=trainer.optimizer,
+        scheduler=trainer.scheduler,
+        early_stopping=trainer.early_stopping,
+        data_loaders={"train": train_loader, "validation": val_loader},
+    )
+
+
+def test_continuous_and_interrupted_training_have_identical_resume_state(tmp_path):
+    metric_values = [0.60, 0.59, 0.58, 0.57, 0.56]
+
+    continuous_logger = RecordingLogger()
+    continuous = _resume_trainer(tmp_path / "continuous", metric_values, continuous_logger)
+    continuous_train_loader = _shuffled_loader(77)
+    continuous_val_loader = _loader()
+    continuous_history = continuous.train(
+        continuous_train_loader,
+        continuous_val_loader,
+        epochs=5,
+    )
+
+    first_logger = RecordingLogger()
+    interrupted = _resume_trainer(tmp_path / "interrupted", metric_values, first_logger)
+    interrupted_train_loader = _shuffled_loader(77)
+    interrupted_val_loader = _loader()
+    interrupted.train(interrupted_train_loader, interrupted_val_loader, epochs=2)
+    checkpoint_path = tmp_path / "interrupted" / "last_checkpoint.pt"
+    best_before_resume = (tmp_path / "interrupted" / "best_full_model.pt").read_bytes()
+
+    resumed_logger = RecordingLogger()
+    resumed = _resume_trainer(tmp_path / "interrupted", metric_values, resumed_logger)
+    resumed_train_loader = _shuffled_loader(999)
+    resumed_val_loader = _loader()
+    checkpoint = _load_resume_checkpoint(
+        resumed,
+        checkpoint_path,
+        resumed_train_loader,
+        resumed_val_loader,
+    )
+    resumed_history = resumed.train(
+        resumed_train_loader,
+        resumed_val_loader,
+        epochs=5,
+        start_epoch=checkpoint["next_epoch"],
+        resume_history=checkpoint["history"],
+    )
+
+    assert resumed_history == continuous_history
+    assert len(resumed_history["train_loss"]) == 4
+    assert resumed.early_stopping.state_dict() == continuous.early_stopping.state_dict()
+    assert resumed.early_stopping.best_metric == 0.60
+    assert resumed.early_stopping.best_epoch == 0
+    assert resumed.early_stopping.counter == 3
+    assert resumed.early_stopping.early_stop is True
+    assert (tmp_path / "interrupted" / "best_full_model.pt").read_bytes() == best_before_resume
+
+    for key, expected_value in continuous.model.state_dict().items():
+        torch.testing.assert_close(resumed.model.state_dict()[key], expected_value)
+    _assert_optimizer_state_equal(resumed.optimizer.state_dict(), continuous.optimizer.state_dict())
+    assert resumed.scheduler.state_dict() == continuous.scheduler.state_dict()
+
+    continuous_lrs = [metrics["lr"] for metrics, _ in continuous_logger.metrics]
+    resumed_lrs = [metrics["lr"] for metrics, _ in first_logger.metrics + resumed_logger.metrics]
+    assert resumed_lrs == continuous_lrs
+    assert [metrics["epoch"] for metrics, _ in first_logger.metrics + resumed_logger.metrics] == [1, 2, 3, 4]
+
+
+def test_better_metric_after_resume_replaces_historical_best(tmp_path):
+    metric_values = [0.60, 0.59, 0.65]
+    trainer = _resume_trainer(tmp_path, metric_values, patience=4)
+    train_loader = _shuffled_loader(12)
+    val_loader = _loader()
+    trainer.train(train_loader, val_loader, epochs=2)
+    best_before_resume = (tmp_path / "best_full_model.pt").read_bytes()
+
+    resumed = _resume_trainer(tmp_path, metric_values, patience=4)
+    resumed_train_loader = _shuffled_loader(999)
+    resumed_val_loader = _loader()
+    checkpoint = _load_resume_checkpoint(
+        resumed,
+        tmp_path / "last_checkpoint.pt",
+        resumed_train_loader,
+        resumed_val_loader,
+    )
+    resumed.train(
+        resumed_train_loader,
+        resumed_val_loader,
+        epochs=3,
+        start_epoch=checkpoint["next_epoch"],
+        resume_history=checkpoint["history"],
+    )
+
+    assert resumed.early_stopping.best_metric == 0.65
+    assert resumed.early_stopping.best_epoch == 2
+    assert resumed.early_stopping.counter == 0
+    assert (tmp_path / "best_full_model.pt").read_bytes() != best_before_resume
+
+
+def test_resumed_already_stopped_checkpoint_runs_no_additional_epoch(tmp_path):
+    validator = EpochMetricValidator([0.6, 0.5, 0.4])
+    trainer = _resume_trainer(tmp_path, [0.6, 0.5, 0.4], patience=2)
+    trainer.validator = validator
+    trainer.early_stopping(0.6, model=trainer.model, epoch=0)
+    trainer.early_stopping(0.5, model=trainer.model, epoch=1)
+    trainer.early_stopping(0.4, model=trainer.model, epoch=2)
+    history = {key: [1.0] for key in trainer.empty_history()}
+
+    result = trainer.train(
+        _shuffled_loader(2),
+        _loader(),
+        epochs=5,
+        start_epoch=3,
+        resume_history=history,
+    )
+
+    assert result is history
+    assert validator.calls == []

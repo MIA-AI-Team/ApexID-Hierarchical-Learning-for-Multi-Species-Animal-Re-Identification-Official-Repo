@@ -25,6 +25,7 @@ from .open_set_metrics import (
     threshold_connected_components,
 )
 from .benchmark_metrics import (
+    B3_METRIC_VERSION,
     b3_metrics,
     cluster_count_error,
     clustering_metrics,
@@ -35,6 +36,7 @@ from .benchmark_metrics import (
 )
 
 __all__ = [
+    "B3_METRIC_VERSION",
     "best_gallery_matches",
     "cluster_embeddings",
     "compute_dir_at_far",

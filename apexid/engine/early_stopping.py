@@ -8,6 +8,9 @@ import torch
 from torch import nn
 
 
+EARLY_STOPPING_STATE_VERSION = 1
+
+
 class EarlyStopping:
     """Monitor a validation metric and save the best model weights.
 
@@ -163,6 +166,125 @@ class EarlyStopping:
             return metric < (self.best_metric - self.min_delta)
         return metric > (self.best_metric + self.min_delta)
 
+    def state_dict(self):
+        """Return the complete state required to reproduce future decisions."""
+        return {
+            "state_version": EARLY_STOPPING_STATE_VERSION,
+            "monitor": self.monitor,
+            "mode": self.mode,
+            "patience": self.patience,
+            "min_delta": self.min_delta,
+            "best_metric": self.best_metric,
+            "best_score": self.best_score,
+            "best_epoch": self.best_epoch,
+            "counter": self.counter,
+            "early_stop": self.early_stop,
+            "val_loss_min": self.val_loss_min,
+        }
+
+    def load_state_dict(self, state_dict):
+        """Restore state after validating decision-critical configuration.
+
+        Output paths and artifact filenames intentionally remain controlled by
+        the active run configuration, while monitor semantics must match the
+        checkpoint exactly.
+        """
+        if not isinstance(state_dict, Mapping):
+            raise TypeError("EarlyStopping state_dict must be a mapping.")
+
+        required = {
+            "state_version",
+            "monitor",
+            "mode",
+            "patience",
+            "min_delta",
+            "best_metric",
+            "best_score",
+            "best_epoch",
+            "counter",
+            "early_stop",
+            "val_loss_min",
+        }
+        missing = sorted(required.difference(state_dict))
+        if missing:
+            raise KeyError(f"EarlyStopping state is missing fields: {', '.join(missing)}")
+
+        version = int(state_dict["state_version"])
+        if version != EARLY_STOPPING_STATE_VERSION:
+            raise ValueError(
+                "Unsupported EarlyStopping state version "
+                f"{version}; expected {EARLY_STOPPING_STATE_VERSION}."
+            )
+
+        saved_config = {
+            "monitor": str(state_dict["monitor"]),
+            "mode": str(state_dict["mode"]),
+            "patience": int(state_dict["patience"]),
+            "min_delta": float(state_dict["min_delta"]),
+        }
+        active_config = {
+            "monitor": self.monitor,
+            "mode": self.mode,
+            "patience": self.patience,
+            "min_delta": self.min_delta,
+        }
+        mismatches = [
+            f"{key}: checkpoint={saved_config[key]!r}, active={active_config[key]!r}"
+            for key in active_config
+            if saved_config[key] != active_config[key]
+        ]
+        if mismatches:
+            raise ValueError(
+                "EarlyStopping configuration does not match the checkpoint ("
+                + "; ".join(mismatches)
+                + ")."
+            )
+
+        best_metric = state_dict["best_metric"]
+        if best_metric is not None:
+            best_metric = float(best_metric)
+            if not math.isfinite(best_metric):
+                raise ValueError("EarlyStopping best_metric must be finite or None.")
+
+        best_score = state_dict["best_score"]
+        if best_score is not None:
+            best_score = float(best_score)
+            if not math.isfinite(best_score):
+                raise ValueError("EarlyStopping best_score must be finite or None.")
+        expected_score = None if best_metric is None else self._score(best_metric)
+        if best_score != expected_score:
+            raise ValueError(
+                "EarlyStopping best_score is inconsistent with best_metric and mode."
+            )
+
+        best_epoch = state_dict["best_epoch"]
+        if best_epoch is not None:
+            if isinstance(best_epoch, bool):
+                raise TypeError("EarlyStopping best_epoch must be an integer or None.")
+            best_epoch = int(best_epoch)
+
+        counter = state_dict["counter"]
+        if isinstance(counter, bool):
+            raise TypeError("EarlyStopping counter must be a non-negative integer.")
+        counter = int(counter)
+        if counter < 0:
+            raise ValueError("EarlyStopping counter must be >= 0.")
+
+        early_stop = state_dict["early_stop"]
+        if not isinstance(early_stop, bool):
+            raise TypeError("EarlyStopping early_stop must be a bool.")
+
+        val_loss_min = float(state_dict["val_loss_min"])
+        if math.isnan(val_loss_min):
+            raise ValueError("EarlyStopping val_loss_min must not be NaN.")
+
+        self.best_metric = best_metric
+        self.best_score = best_score
+        self.best_epoch = best_epoch
+        self.counter = counter
+        self.early_stop = early_stop
+        self.val_loss_min = val_loss_min
+
     def _find_backbone(self, model=None, backbone=None):
         """Find a backbone module from explicit input or a combined model."""
         if backbone is not None:
@@ -298,4 +420,4 @@ class EarlyStopping:
         return False
 
 
-__all__ = ["EarlyStopping"]
+__all__ = ["EARLY_STOPPING_STATE_VERSION", "EarlyStopping"]

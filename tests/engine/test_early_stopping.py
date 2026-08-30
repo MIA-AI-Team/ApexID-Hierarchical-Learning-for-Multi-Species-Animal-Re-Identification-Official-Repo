@@ -1,9 +1,10 @@
 import json
 
+import pytest
 import torch
 from torch import nn
 
-from apexid.engine.early_stopping import EarlyStopping
+from apexid.engine.early_stopping import EARLY_STOPPING_STATE_VERSION, EarlyStopping
 
 
 def test_early_stopping_saves_full_model_and_backbone_weights(tmp_path):
@@ -84,3 +85,65 @@ def test_early_stopping_can_save_from_separate_backbone_and_head(tmp_path):
     assert all(key.startswith(("backbone.", "head.")) for key in full_state)
     assert not any(key.startswith("head.") for key in backbone_state)
     assert "0.weight" in backbone_state
+
+
+@pytest.mark.parametrize(
+    ("mode", "values"),
+    [
+        ("max", [0.6, 0.5]),
+        ("min", [0.4, 0.5]),
+    ],
+)
+def test_early_stopping_state_dict_round_trip_preserves_decisions(tmp_path, mode, values):
+    model = nn.ModuleDict({"backbone": nn.Linear(2, 2), "head": nn.Linear(2, 2)})
+    original = EarlyStopping(
+        monitor="score",
+        mode=mode,
+        patience=3,
+        min_delta=0.01,
+        output_dir=tmp_path / "original",
+    )
+    assert original(values[0], model=model, epoch=4) is True
+    assert original(values[1], model=model, epoch=5) is False
+
+    state = original.state_dict()
+    restored = EarlyStopping(
+        monitor="score",
+        mode=mode,
+        patience=3,
+        min_delta=0.01,
+        output_dir=tmp_path / "restored",
+    )
+    restored.load_state_dict(state)
+
+    assert state["state_version"] == EARLY_STOPPING_STATE_VERSION
+    assert restored.state_dict() == state
+
+
+@pytest.mark.parametrize(
+    ("override", "expected_field"),
+    [
+        ({"monitor": "other"}, "monitor"),
+        ({"mode": "min"}, "mode"),
+        ({"patience": 4}, "patience"),
+        ({"min_delta": 0.2}, "min_delta"),
+    ],
+)
+def test_early_stopping_rejects_incompatible_resume_configuration(
+    tmp_path,
+    override,
+    expected_field,
+):
+    source = EarlyStopping(
+        monitor="score",
+        mode="max",
+        patience=3,
+        min_delta=0.1,
+        output_dir=tmp_path / "source",
+    )
+    config = {"monitor": "score", "mode": "max", "patience": 3, "min_delta": 0.1}
+    config.update(override)
+    target = EarlyStopping(output_dir=tmp_path / "target", **config)
+
+    with pytest.raises(ValueError, match=expected_field):
+        target.load_state_dict(source.state_dict())

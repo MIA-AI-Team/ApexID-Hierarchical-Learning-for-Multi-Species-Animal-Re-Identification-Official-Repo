@@ -51,6 +51,28 @@ always-known or always-unknown behavior. OSCR AUC jointly evaluates known
 identification and unknown rejection. DIR@FAR reports identification quality
 under strict false-accept limits.
 
+## Standard B³ Metric
+
+The sealed benchmark uses B³ version `standard_item_averaged_v2`. For contingency
+cell count `n_ij`, predicted-cluster size `|C_j|`, true-cluster size `|T_i|`, and
+`N` evaluated images:
+
+```text
+B3 precision = (1/N) * sum_ij(n_ij^2 / |C_j|)
+B3 recall    = (1/N) * sum_ij(n_ij^2 / |T_i|)
+B3 F1        = harmonic mean of precision and recall
+```
+
+This is the standard item-averaged definition. Empty scenario subsets produce
+`NaN`, matching the evaluator's unavailable-metric convention; they never
+produce a successful score.
+
+All B³ values produced before this version are invalid. If B³ was only reported,
+the existing predictions may be retained but B³-bearing metrics and tables must
+be regenerated. If `b3_f1` selected either discovery threshold, retune on the
+development split and regenerate final predictions and metrics. This correction
+does not invalidate ARI, mAP, or other unrelated metrics.
+
 Diagnostics run every 5 epochs by default to reduce validation cost. The
 intra/inter gap checks whether same identities are closer than different
 identities. Embedding norms detect collapse or instability. Alignment measures
@@ -179,6 +201,9 @@ by default; use `--force-recompute` after changing weights or preprocessing, or
 The model configuration must describe the trained ApexID embedding branch. Full
 trainer checkpoints and backbone-only checkpoints are supported, but incompatible
 embedding tensors fail loudly rather than being silently skipped.
+
+Corrected runs record the B³ version in `run_config.json`,
+`evaluation_results.json`, and `paper_main_results.csv`.
 
 Run evaluation tests:
 

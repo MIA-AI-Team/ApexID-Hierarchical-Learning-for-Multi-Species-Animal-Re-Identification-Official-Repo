@@ -39,6 +39,12 @@ Important sections:
   artifacts.
 - `tracking`: W&B logging settings.
 
+`checkpoint.resume_path` accepts an explicit last-checkpoint path or `auto`.
+Checkpoint format version 2 validates that `early_stopping.monitor`, `mode`,
+`patience`, and `min_delta` still match before resuming. Changing those values
+requires a new run rather than silently reinterpreting saved patience state.
+Legacy checkpoints remain loadable with a visible reproducibility warning.
+
 ## Common Commands
 
 Train with the default config:

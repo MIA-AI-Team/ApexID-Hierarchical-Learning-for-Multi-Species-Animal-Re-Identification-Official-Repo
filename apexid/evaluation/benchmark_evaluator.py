@@ -35,7 +35,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from apexid.data import build_eval_transforms
-from apexid.evaluation.benchmark_metrics import discovery_metrics, clustering_metrics
+from apexid.evaluation.benchmark_metrics import B3_METRIC_VERSION, discovery_metrics, clustering_metrics
 from apexid.evaluation.open_set_metrics import compute_known_retrieval_metrics, compute_oscr_auc
 from apexid.models import build_model
 from apexid.utils.config import DEFAULT_CONFIG_PATH, load_config
@@ -406,19 +406,29 @@ def _online_assign(embeddings: np.ndarray, threshold: float) -> tuple[list[str],
 def tune_discovery_threshold(
     embeddings: np.ndarray, labels: Sequence[str], objective: str, seed: int, permutations: int = 10
 ) -> tuple[float, pd.DataFrame]:
+    if objective not in {"ari", "b3_f1"}:
+        raise ValueError("discovery threshold objective must be ari or b3_f1")
     labels = np.asarray(labels, dtype=str)
     candidates = np.linspace(0.0, 1.0, 51)
     rows = []
     best_threshold, best_value = 0.5, -np.inf
     for threshold in candidates:
-        values = []
+        ari_values = []
+        b3_values = []
         for order_seed in range(seed, seed + permutations):
             order = np.random.default_rng(order_seed).permutation(len(labels))
             predicted, _, _ = _online_assign(embeddings[order], float(threshold))
             metrics = discovery_metrics(labels[order], predicted)
-            values.append(metrics["ari"] if objective == "ari" else metrics["b3_f1"])
+            ari_values.append(metrics["ari"])
+            b3_values.append(metrics["b3_f1"])
+        values = ari_values if objective == "ari" else b3_values
         value = float(np.nanmean(values))
-        rows.append({"threshold": float(threshold), "objective": value, "mean_ari": float(np.nanmean(values))})
+        rows.append({
+            "threshold": float(threshold),
+            "objective": value,
+            "mean_ari": float(np.nanmean(ari_values)),
+            "mean_b3_f1": float(np.nanmean(b3_values)),
+        })
         if value > best_value or (value == best_value and threshold > best_threshold):
             best_threshold, best_value = float(threshold), value
     return best_threshold, pd.DataFrame(rows)
@@ -435,6 +445,8 @@ def cluster_rejected(embeddings: np.ndarray, threshold: float) -> np.ndarray:
 
 
 def tune_cluster_threshold(embeddings: np.ndarray, labels: Sequence[str], objective: str) -> tuple[float, pd.DataFrame]:
+    if objective not in {"ari", "b3_f1"}:
+        raise ValueError("discovery threshold objective must be ari or b3_f1")
     candidates = np.linspace(0.0, 1.0, 31)
     rows = []
     best_threshold, best_value = 0.5, -np.inf
@@ -707,9 +719,10 @@ def run_evaluation(config: EvaluationConfig) -> dict[str, Any]:
     write_json(config.output_dir / "thresholds.json", thresholds)
     final_embeddings, final_public = extract_with_cache("final_test", frames["final_test"], adapter, config, transform)
     embedding_by_id = {str(image_id): embedding for image_id, embedding in zip(final_public.image_id, final_embeddings)}
-    run_config = asdict(config) | {"model": model_info, "benchmark_config": json.loads((config.benchmark_dir / "config.json").read_text()) if (config.benchmark_dir / "config.json").is_file() else {}, "thresholds": thresholds, "torch": torch.__version__, "cuda": torch.version.cuda}
+    metric_versions = {"b3": B3_METRIC_VERSION}
+    run_config = asdict(config) | {"model": model_info, "benchmark_config": json.loads((config.benchmark_dir / "config.json").read_text()) if (config.benchmark_dir / "config.json").is_file() else {}, "thresholds": thresholds, "metric_versions": metric_versions, "torch": torch.__version__, "cuda": torch.version.cuda}
     write_json(config.output_dir / "run_config.json", run_config)
-    results: dict[str, Any] = {"model": model_info, "thresholds": thresholds}
+    results: dict[str, Any] = {"model": model_info, "thresholds": thresholds, "metric_versions": metric_versions}
     if config.evaluation_mode in {"batch", "both"}:
         batch_dir = config.output_dir / "batch"; batch_dir.mkdir(exist_ok=True)
         predictions, retrieval, final_scores = infer_batch(final_public, final_embeddings, gallery, thresholds, config)
@@ -729,7 +742,7 @@ def run_evaluation(config: EvaluationConfig) -> dict[str, Any]:
             predictions.to_csv(target / "predictions.csv", index=False); retrieval.to_csv(target / "retrieval_predictions.csv", index=False)
             dataset_metrics.to_csv(target / "dataset_metrics.csv", index=False); species_metrics.to_csv(target / "species_metrics.csv", index=False)
             scenario_metrics.to_csv(target / "scenario_metrics.csv", index=False); ci.to_csv(target / "paper_main_results_with_ci.csv", index=False)
-        paper = {"Model": config.weights.stem, "Protocol": config.benchmark_dir.name, **metrics["retrieval"], "Known_E2E_Accuracy": metrics["known_identity"]["known_end_to_end_accuracy"], "Novelty_AUROC": metrics["novelty_detection"]["Novelty_AUROC"], "Novelty_AUPR": metrics["novelty_detection"]["Novelty_AUPR"], "Novelty_FPR95": metrics["novelty_detection"]["Novelty_FPR95"], "OSCR_AUC": metrics["novelty_detection"]["OSCR_AUC"], "Novel_KnownSpecies_ARI": metrics["novel_known_species"]["ari"], "DiscoveryOnly_ARI": metrics["discovery_only"]["ari"], "Overall_ARI": metrics["overall"]["ari"], "B3_F1": metrics["overall"]["b3_f1"]}
+        paper = {"Model": config.weights.stem, "Protocol": config.benchmark_dir.name, **metrics["retrieval"], "Known_E2E_Accuracy": metrics["known_identity"]["known_end_to_end_accuracy"], "Novelty_AUROC": metrics["novelty_detection"]["Novelty_AUROC"], "Novelty_AUPR": metrics["novelty_detection"]["Novelty_AUPR"], "Novelty_FPR95": metrics["novelty_detection"]["Novelty_FPR95"], "OSCR_AUC": metrics["novelty_detection"]["OSCR_AUC"], "Novel_KnownSpecies_ARI": metrics["novel_known_species"]["ari"], "DiscoveryOnly_ARI": metrics["discovery_only"]["ari"], "Overall_ARI": metrics["overall"]["ari"], "B3_F1": metrics["overall"]["b3_f1"], "B3_Metric_Version": B3_METRIC_VERSION}
         paper["Macro_Dataset_ARI"] = metrics["overall"]["macro_dataset_ari"]
         pd.DataFrame([paper]).to_csv(batch_dir / "paper_main_results.csv", index=False)
         pd.DataFrame([paper]).to_csv(config.output_dir / "paper_main_results.csv", index=False)

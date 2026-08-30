@@ -75,6 +75,13 @@ Training builds datasets, transforms, a P x K sampler, an ApexID model, the
 configured head/loss, optimizer, scheduler, validator, checkpoint writer, early
 stopping, optional W&B logging, and optional UMAP embedding plots.
 
+`last_checkpoint.pt` is the resumable checkpoint. Format version 2 restores the
+model, optimizer, scheduler, epoch/history, RNG state, early-stopping decisions,
+and explicit DataLoader generators. `best_full_model.pt` and
+`best_backbone.pt` remain the best-model artifacts selected by the configured
+metric. Historical checkpoints without early-stopping state load with a visible
+warning and cannot provide exact patience or best-model continuity.
+
 To run a ConvNeXt experiment, keep the same ApexID model wrapper and choose a
 registered TorchVision ConvNeXt backbone in the config:
 
@@ -242,6 +249,13 @@ Keep the source CSV, benchmark directory, image data, model checkpoints, and
 evaluation results out of Git. In particular, the benchmark's private ground
 truth is for the evaluator only and must not be published.
 
+The benchmark evaluator now identifies B³ as
+`standard_item_averaged_v2`. All B³ values from older evaluator code are invalid.
+Reporting-only runs need metric regeneration; runs that used `b3_f1` for
+development threshold selection need threshold retuning plus regenerated final
+predictions and metrics. ARI, mAP, and unrelated metrics are unaffected by this
+specific correction.
+
 ### 1. Check the benchmark and evaluator code
 
 Run the focused tests before creating a benchmark or starting an expensive
@@ -249,6 +263,7 @@ inference run:
 
 ```bash
 pytest -q tests/data/test_build_apexid_benchmark.py
+pytest -q tests/evaluation/test_benchmark_metrics.py
 pytest -q tests/evaluation/test_evaluate_apexid_model.py
 ```
 

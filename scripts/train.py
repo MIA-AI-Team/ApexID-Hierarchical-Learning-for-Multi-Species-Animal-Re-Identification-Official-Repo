@@ -43,7 +43,12 @@ from torch.utils.data import DataLoader
 from apexid.data import build_eval_transforms, build_train_transforms
 from apexid.data.datasets.dataset import ApexID_Dataset
 from apexid.data.samplers import PKBatchSampler
-from apexid.engine import Trainer, build_experiment_logger, load_training_checkpoint
+from apexid.engine import (
+    LegacyCheckpointWarning,
+    Trainer,
+    build_experiment_logger,
+    load_training_checkpoint,
+)
 from apexid.models import build_components
 from apexid.training.finetune import (
     apply_finetune_phase,
@@ -60,6 +65,10 @@ from apexid.utils.device import get_device
 from apexid.utils.embedding_umap import EmbeddingUMAPPlotter
 from apexid.utils.lr_range_test import run_lr_range_test, write_lr_range_test_artifacts
 from apexid.utils.seed import DEFAULT_SEED, make_torch_generator, seed_everything, seed_worker
+
+
+# Keep this scientific-resume warning visible despite third-party warning suppression.
+warnings.filterwarnings("always", category=LegacyCheckpointWarning)
 
 
 def _as_dict(value):
@@ -730,6 +739,8 @@ def train_from_config(cfg):
             optimizer=trainer.optimizer,
             scheduler=trainer.scheduler,
             map_location=device,
+            early_stopping=trainer.early_stopping,
+            data_loaders={"train": train_loader, "validation": validation_loaders},
         )
         start_epoch = int(checkpoint.get("next_epoch", checkpoint.get("epoch", -1) + 1))
         resume_history = checkpoint.get("history")

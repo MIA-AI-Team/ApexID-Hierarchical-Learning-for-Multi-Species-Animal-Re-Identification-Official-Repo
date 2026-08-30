@@ -1,10 +1,20 @@
 import random
 import warnings
 from collections import OrderedDict
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
 import torch
+
+
+CHECKPOINT_FORMAT_VERSION = 2
+EARLY_STOPPING_STATE_KEY = "early_stopping"
+DATA_LOADER_GENERATOR_STATES_KEY = "data_loader_generators"
+
+
+class LegacyCheckpointWarning(RuntimeWarning):
+    """Warn that a historical checkpoint cannot provide exact resume semantics."""
 
 
 def _unwrap_module(module):
@@ -111,6 +121,58 @@ def restore_rng_state(rng_state):
         )
 
 
+def collect_data_loader_generator_states(data_loaders):
+    """Collect explicit ``torch.Generator`` states from nested DataLoaders."""
+    if isinstance(data_loaders, Mapping):
+        return {
+            key: collect_data_loader_generator_states(loader)
+            for key, loader in data_loaders.items()
+        }
+
+    generator = getattr(data_loaders, "generator", None)
+    if generator is None:
+        return None
+    if not isinstance(generator, torch.Generator):
+        raise TypeError("DataLoader generator must be a torch.Generator or None.")
+    return _as_byte_rng_tensor(generator.get_state())
+
+
+def restore_data_loader_generator_states(data_loaders, generator_states):
+    """Restore nested DataLoader generators with strict topology validation."""
+    if isinstance(data_loaders, Mapping):
+        if not isinstance(generator_states, Mapping):
+            raise ValueError("Saved DataLoader generator state does not match loader mapping topology.")
+        current_keys = set(data_loaders)
+        saved_keys = set(generator_states)
+        if current_keys != saved_keys:
+            raise ValueError(
+                "Saved DataLoader generator state keys do not match current loaders: "
+                f"checkpoint={sorted(str(key) for key in saved_keys)}, "
+                f"active={sorted(str(key) for key in current_keys)}."
+            )
+        for key, loader in data_loaders.items():
+            restore_data_loader_generator_states(loader, generator_states[key])
+        return
+
+    if isinstance(generator_states, Mapping):
+        raise ValueError("Saved DataLoader generator mapping does not match a loader leaf.")
+
+    generator = getattr(data_loaders, "generator", None)
+    if generator_states is None:
+        if generator is not None:
+            raise ValueError("Checkpoint has no generator state for a DataLoader that now has one.")
+        return
+    if not isinstance(generator, torch.Generator):
+        raise ValueError("Checkpoint has generator state for a DataLoader without a torch.Generator.")
+    generator.set_state(_as_byte_rng_tensor(generator_states))
+
+
+def _has_explicit_data_loader_generator(data_loaders):
+    if isinstance(data_loaders, Mapping):
+        return any(_has_explicit_data_loader_generator(loader) for loader in data_loaders.values())
+    return isinstance(getattr(data_loaders, "generator", None), torch.Generator)
+
+
 def should_save_checkpoint(epoch, every_n_epochs):
     """Return whether the current epoch should produce a checkpoint.
 
@@ -137,6 +199,8 @@ def build_checkpoint_state(
     metrics=None,
     extra_state=None,
     include_rng=True,
+    early_stopping=None,
+    data_loaders=None,
 ):
     """Build a full training checkpoint state.
 
@@ -154,6 +218,10 @@ def build_checkpoint_state(
         extra_state (dict, optional): Additional user metadata such as config,
             scaler state, best metric, or experiment id.
         include_rng (bool): Whether to store Python/NumPy/PyTorch RNG states.
+        early_stopping (optional): Object exposing ``state_dict()``. Its state is
+            stored under ``extra_state`` for exact model-selection resume.
+        data_loaders (optional): DataLoader or nested mapping of DataLoaders whose
+            explicit ``torch.Generator`` states should be preserved.
 
     Returns:
         dict: Serializable checkpoint containing full model weights, optimizer
@@ -161,7 +229,27 @@ def build_checkpoint_state(
         to continue training from ``epoch + 1``.
     """
     model = _unwrap_module(model)
+    serialized_extra_state = dict(extra_state or {})
+    if early_stopping is not None:
+        if EARLY_STOPPING_STATE_KEY in serialized_extra_state:
+            raise ValueError(
+                f"extra_state already contains reserved key '{EARLY_STOPPING_STATE_KEY}'."
+            )
+        state_dict = getattr(early_stopping, "state_dict", None)
+        if state_dict is None:
+            raise TypeError("early_stopping must expose state_dict().")
+        serialized_extra_state[EARLY_STOPPING_STATE_KEY] = state_dict()
+    if data_loaders is not None:
+        if DATA_LOADER_GENERATOR_STATES_KEY in serialized_extra_state:
+            raise ValueError(
+                f"extra_state already contains reserved key '{DATA_LOADER_GENERATOR_STATES_KEY}'."
+            )
+        serialized_extra_state[DATA_LOADER_GENERATOR_STATES_KEY] = (
+            collect_data_loader_generator_states(data_loaders)
+        )
+
     state = {
+        "checkpoint_format_version": CHECKPOINT_FORMAT_VERSION,
         "epoch": int(epoch),
         "next_epoch": int(epoch) + 1,
         "model_state_dict": _state_dict_to_cpu(model.state_dict()),
@@ -169,7 +257,7 @@ def build_checkpoint_state(
         "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
         "history": history,
         "metrics": metrics,
-        "extra_state": dict(extra_state or {}),
+        "extra_state": serialized_extra_state,
         "rng_state": collect_rng_state() if include_rng else None,
     }
     return state
@@ -200,6 +288,8 @@ def save_training_checkpoint(
     delete_previous=True,
     delete_patterns=("checkpoint_epoch_*.pt", "last_checkpoint*.pt"),
     include_rng=True,
+    early_stopping=None,
+    data_loaders=None,
 ):
     """Save the latest resumable training checkpoint every ``n`` epochs.
 
@@ -225,6 +315,9 @@ def save_training_checkpoint(
         delete_patterns (tuple[str, ...]): Glob patterns for removable checkpoint
             files inside ``output_dir``.
         include_rng (bool): Whether to save RNG states for reproducibility.
+        early_stopping (optional): Early-stopping object to serialize.
+        data_loaders (optional): DataLoader or nested mapping whose explicit
+            generator states should be serialized.
 
     Returns:
         pathlib.Path or None: Path to the saved checkpoint, or ``None`` when the
@@ -247,6 +340,8 @@ def save_training_checkpoint(
         metrics=metrics,
         extra_state=extra_state,
         include_rng=include_rng,
+        early_stopping=early_stopping,
+        data_loaders=data_loaders,
     )
 
     tmp_path = checkpoint_path.with_name(f".{checkpoint_path.name}.tmp")
@@ -267,6 +362,8 @@ def load_training_checkpoint(
     map_location="cpu",
     strict=True,
     restore_rng=True,
+    early_stopping=None,
+    data_loaders=None,
 ):
     """Load a resumable training checkpoint.
 
@@ -282,6 +379,10 @@ def load_training_checkpoint(
             ``torch.load``.
         strict (bool): Strictness passed to ``model.load_state_dict``.
         restore_rng (bool): Whether to restore saved RNG state.
+        early_stopping (optional): Active early-stopping object whose state must
+            match and receive the checkpoint state.
+        data_loaders (optional): Active DataLoader or nested mapping whose
+            explicit generator states should be restored.
 
     Returns:
         dict: Loaded checkpoint dictionary. Use ``checkpoint["next_epoch"]`` as
@@ -290,6 +391,20 @@ def load_training_checkpoint(
     checkpoint = _torch_load(checkpoint_path, map_location=map_location)
     if "model_state_dict" not in checkpoint:
         raise KeyError("Checkpoint is missing 'model_state_dict'.")
+
+    extra_state = checkpoint.get("extra_state")
+    if not isinstance(extra_state, Mapping):
+        extra_state = {}
+    missing_resume_state = []
+    if early_stopping is not None:
+        early_stopping_state = extra_state.get(EARLY_STOPPING_STATE_KEY)
+        if early_stopping_state is None:
+            missing_resume_state.append("early-stopping state")
+        else:
+            load_state_dict = getattr(early_stopping, "load_state_dict", None)
+            if load_state_dict is None:
+                raise TypeError("early_stopping must expose load_state_dict().")
+            load_state_dict(early_stopping_state)
 
     model = _unwrap_module(model)
     model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
@@ -302,6 +417,27 @@ def load_training_checkpoint(
 
     if restore_rng:
         restore_rng_state(checkpoint.get("rng_state"))
+
+    if data_loaders is not None:
+        if DATA_LOADER_GENERATOR_STATES_KEY not in extra_state:
+            if _has_explicit_data_loader_generator(data_loaders):
+                missing_resume_state.append("DataLoader generator state")
+        else:
+            restore_data_loader_generator_states(
+                data_loaders,
+                extra_state[DATA_LOADER_GENERATOR_STATES_KEY],
+            )
+
+    if missing_resume_state:
+        warnings.warn(
+            "Legacy checkpoint does not contain "
+            + " and ".join(missing_resume_state)
+            + ". Available model/optimizer/scheduler/history/RNG state was restored, "
+            "but resume is not guaranteed equivalent to uninterrupted training; "
+            "missing resume state is not reconstructed.",
+            LegacyCheckpointWarning,
+            stacklevel=2,
+        )
 
     return checkpoint
 
@@ -404,11 +540,15 @@ def save_backbone_weights(backbone, output_dir="checkpoints", filename="backbone
 
 
 __all__ = [
+    "CHECKPOINT_FORMAT_VERSION",
+    "LegacyCheckpointWarning",
     "build_checkpoint_state",
+    "collect_data_loader_generator_states",
     "collect_rng_state",
     "load_checkpoint",
     "load_training_checkpoint",
     "restore_rng_state",
+    "restore_data_loader_generator_states",
     "save_backbone_weights",
     "save_checkpoint",
     "save_training_checkpoint",

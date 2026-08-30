@@ -1,4 +1,5 @@
 import importlib.util
+import warnings
 from pathlib import Path
 
 import cv2
@@ -11,6 +12,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from apexid.models.heads import ArcFaceSubCenterDynamicHead, SphereFace2Head
 from apexid.engine.loggers import NullLogger
+from apexid.engine.checkpoint import LegacyCheckpointWarning
 
 
 def _load_train_script():
@@ -484,6 +486,18 @@ def test_train_script_resolve_resume_path_auto_returns_none_when_missing(tmp_pat
     }
 
     assert train_script._resolve_resume_path(cfg, repo_root=tmp_path) is None
+
+
+def test_train_script_keeps_legacy_checkpoint_warning_visible():
+    _load_train_script()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.warn("legacy resume", LegacyCheckpointWarning)
+
+    assert any(
+        warning.category is LegacyCheckpointWarning and "legacy resume" in str(warning.message)
+        for warning in caught
+    )
 
 
 def test_train_script_frequency_bin_margins_respect_explicit_margins(tmp_path):

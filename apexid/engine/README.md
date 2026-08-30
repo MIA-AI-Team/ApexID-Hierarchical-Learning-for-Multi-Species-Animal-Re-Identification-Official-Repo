@@ -33,6 +33,33 @@ known and unknown embeddings instead of running a separate mixed forward pass.
 The evaluator also reuses gallery-match scores for mixed metrics, so full
 validation remains exact while avoiding duplicated work.
 
+## Checkpoints and Resume
+
+- `last_checkpoint.pt` is checkpoint format version 2 and is the resumable state.
+  It stores the full model, AdamW/other optimizer state, scheduler, completed and
+  next epoch, history, latest metrics, process RNG states, early-stopping state,
+  and explicit DataLoader-generator states.
+- `best_full_model.pt` and `best_backbone.pt` are model-selection artifacts for
+  the best value of the configured early-stopping metric. They are not resume
+  checkpoints.
+- `best_metadata.json` records the monitored metric and best epoch.
+
+Early-stopping resume restores its best metric/score, best epoch, patience
+counter, stop flag, and loss compatibility field before the next validation.
+The active monitor, direction, patience, and minimum delta must match the saved
+configuration; incompatible resumes fail instead of silently changing decisions.
+
+Historical checkpoints without early-stopping state remain loadable, but emit a
+`LegacyCheckpointWarning`. Their missing state is not inferred from history, so
+model-selection and patience behavior cannot be claimed equivalent to an
+uninterrupted run. The training CLI deliberately keeps this warning visible.
+
+The P x K sampler remains deterministic from seed plus epoch. Explicit
+DataLoader generators are serialized recursively. Bitwise data trajectories are
+still not guaranteed with persistent worker processes, stochastic state held
+inside workers, or hardware-dependent CUDA kernels; deterministic single-process
+or non-persistent-worker pipelines are covered by resume regression tests.
+
 ## Common Commands
 
 Run engine tests:
@@ -57,7 +84,8 @@ from apexid.engine import save_training_checkpoint, load_training_checkpoint
 ## Contributor Notes
 
 - Keep checkpoint formats backward-compatible when possible; resume training
-  depends on saved model, optimizer, scheduler, history, metrics, and RNG state.
+  depends on saved model, optimizer, scheduler, history, metrics, RNG,
+  early-stopping, and DataLoader-generator state.
 - Keep validation metric keys aligned with config names such as
   `mixed/NormAcc`, `known/mAP`, and the legacy `val_*` aliases.
 - Preserve `classification_ignore_index` and `metric_ignore_index` behavior for

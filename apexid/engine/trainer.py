@@ -692,6 +692,11 @@ class Trainer:
         warmup_epochs = self._head_first_warmup_epochs()
 
         try:
+            if self.early_stopping is not None and self.early_stopping.early_stop:
+                if self.verbose:
+                    print("Early stopping was already triggered in the resumed checkpoint.")
+                return history
+
             if int(start_epoch) == 0 and warmup_epochs > 0:
                 scheduler_start_lrs = self._optimizer_lrs()
                 self._set_optimizer_lrs(self._optimizer_base_lrs())
@@ -784,6 +789,8 @@ class Trainer:
                         "classification_ignore_index": self.classification_ignore_index,
                         "metric_ignore_index": self.metric_ignore_index,
                     },
+                    early_stopping=self.early_stopping,
+                    data_loaders={"train": train_loader, "validation": val_loader},
                 )
 
                 if self.early_stopping is not None and self.early_stopping.early_stop:

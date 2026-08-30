@@ -14,29 +14,57 @@ import numpy as np
 from sklearn.metrics import adjusted_mutual_info_score, adjusted_rand_score, normalized_mutual_info_score
 
 
+B3_METRIC_VERSION = "standard_item_averaged_v2"
+
+
 def _finite(value: float) -> float:
     return float(value) if math.isfinite(float(value)) else float("nan")
 
 
+def _label_array(labels: Iterable[object], name: str) -> np.ndarray:
+    """Return a one-dimensional object array of hashable cluster labels."""
+    if isinstance(labels, np.ndarray) and labels.ndim != 1:
+        raise ValueError(f"{name} must be a 1D sequence")
+
+    values = list(labels)
+    result = np.empty(len(values), dtype=object)
+    result[:] = values
+    for index, value in enumerate(values):
+        try:
+            hash(value)
+        except TypeError as exc:
+            raise TypeError(f"{name}[{index}] must be hashable, got {type(value).__name__}") from exc
+    return result
+
+
 def _validate(true_labels: Iterable[object], predicted_labels: Iterable[object]) -> tuple[np.ndarray, np.ndarray]:
-    true = np.asarray(list(true_labels), dtype=object)
-    predicted = np.asarray(list(predicted_labels), dtype=object)
-    if true.ndim != 1 or predicted.ndim != 1 or true.shape != predicted.shape:
+    true = _label_array(true_labels, "true_labels")
+    predicted = _label_array(predicted_labels, "predicted_labels")
+    if true.shape != predicted.shape:
         raise ValueError("true_labels and predicted_labels must be same-length 1D sequences")
     return true, predicted
 
 
 def b3_metrics(true_labels: Iterable[object], predicted_labels: Iterable[object]) -> dict[str, float]:
-    """Return B³ precision, recall, and F1 without materializing pair matrices."""
+    """Return standard item-averaged B³ precision, recall, and F1.
+
+    Empty inputs return NaN values because benchmark scenario aggregation uses
+    empty subsets to represent unavailable metrics.
+    """
     true, predicted = _validate(true_labels, predicted_labels)
     if true.size == 0:
         return {"b3_precision": float("nan"), "b3_recall": float("nan"), "b3_f1": float("nan")}
     contingency = Counter(zip(true.tolist(), predicted.tolist()))
     true_sizes = Counter(true.tolist())
     predicted_sizes = Counter(predicted.tolist())
-    overlap_square_sum = sum(count * count for count in contingency.values())
-    precision = overlap_square_sum / sum(count * count for count in predicted_sizes.values())
-    recall = overlap_square_sum / sum(count * count for count in true_sizes.values())
+    precision = sum(
+        count * count / predicted_sizes[predicted_label]
+        for (_true_label, predicted_label), count in contingency.items()
+    ) / true.size
+    recall = sum(
+        count * count / true_sizes[true_label]
+        for (true_label, _predicted_label), count in contingency.items()
+    ) / true.size
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     return {"b3_precision": float(precision), "b3_recall": float(recall), "b3_f1": float(f1)}
 
@@ -130,6 +158,6 @@ def discovery_metrics(true_labels: Iterable[object], predicted_labels: Iterable[
 
 
 __all__ = [
-    "b3_metrics", "cluster_count_error", "clustering_metrics", "discovery_metrics",
+    "B3_METRIC_VERSION", "b3_metrics", "cluster_count_error", "clustering_metrics", "discovery_metrics",
     "fragmentation_metrics", "merge_metrics", "pairwise_metrics",
 ]
