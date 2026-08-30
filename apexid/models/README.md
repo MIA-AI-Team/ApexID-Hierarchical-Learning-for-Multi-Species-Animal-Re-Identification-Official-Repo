@@ -24,6 +24,12 @@ Backbone names are selected through `model.backbone.name`; ConvNeXt aliases
 include `convnext_tiny`, `convnext_small`, `convnext_base`, `convnext_large`,
 and pretrained-default `_pt` variants.
 
+Pretrained wrappers pin provider revisions and verify weight SHA-256 where the
+artifact is external to TorchVision. TorchVision weight enums record their
+resolved URL and cached checksum. The resulting model provenance is included in
+training/evaluation run manifests; see `backbones/README.md` and
+`THIRD_PARTY_PROVENANCE.md`.
+
 ## Common Commands
 
 Run model tests:

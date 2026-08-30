@@ -10,9 +10,8 @@ point is `default.yaml`.
   shape, backbone, head, loss, optimizer, scheduler, LR range test, finetune
   profile, training behavior, validation metrics, embedding plots, checkpoints,
   early stopping, and experiment tracking.
-- `cluster_home.yaml`: cluster paths for scratch training (e.g. ConvNeXt-Large
-  from random init). Uses CyclicLR + LR range test when the backbone is not
-  pretrained.
+- `cluster_home.yaml`: DINOv3 ConvNeXt Small pretrained fine-tuning with an
+  immutable Hugging Face revision and expected weight SHA-256.
 - `cluster_pretrained.yaml`: cluster paths for ImageNet-pretrained fine-tuning
   (e.g. `osnet_x1_0_pt`). Auto-switches to cosine + warmup when
   `finetune.enabled: auto`.
@@ -44,6 +43,21 @@ Checkpoint format version 2 validates that `early_stopping.monitor`, `mode`,
 `patience`, and `min_delta` still match before resuming. Changing those values
 requires a new run rather than silently reinterpreting saved patience state.
 Legacy checkpoints remain loadable with a visible reproducibility warning.
+
+## Portable roots
+
+`load_config` recursively expands `${VAR}` and `${VAR:-fallback}` in mappings
+and lists and raises on unresolved variables. Every active YAML uses:
+
+```bash
+export APEXID_DATA_ROOT=/mounted/ApexID_Dataset
+export APEXID_SPLIT_ROOT="$APEXID_DATA_ROOT/open_set_splits_v2"
+export APEXID_OUTPUT_ROOT=/mounted/apexid-results
+```
+
+The unset split fallback remains `ApexID_Dataset/open_set_splits` (V1) for
+compatibility. Final-paper commands must explicitly point
+`APEXID_SPLIT_ROOT` at the frozen V2 directory.
 
 ## Common Commands
 
@@ -246,7 +260,7 @@ finetune:
 Scratch on cluster (ConvNeXt-Large, no wavelet):
 
 ```bash
-# configs/cluster_home.yaml — scratch backbone, cyclic_lr + lr_range_test
+# configs/cluster_home.yaml — pinned DINOv3 ConvNeXt Small fine-tuning
 sbatch slurm_train_h100.sh
 ```
 

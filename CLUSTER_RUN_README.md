@@ -1,194 +1,104 @@
-# ApexID Split V2 H100 Runbook
+# ApexID Portable Cluster Runbook
 
-This runbook completes the observation-aware split, perceptual audit,
-train-only normalization, and data-pipeline smoke test on the HPI/AISC Slurm
-cluster. The split job uses one H100; normalization stays CPU-only. V1 remains
-untouched.
+The supplied Slurm jobs use portable working-directory logs and derive the
+repository root from the script location. Site-specific account, partition, and
+constraint directives may be overridden with `sbatch` options. No committed
+configuration contains a user home directory.
 
-## Inputs and outputs
+## Required variables
 
-The cluster defaults used by the supplied jobs are environment variables, so
-no user home directory is committed to a training YAML:
+Set paths for the mounted prepared corpus and results:
 
-| Variable | Default in the job | Purpose |
-|---|---|---|
-| `METADATA` | shared `apexid-dataset/metadata.csv` | authoritative six-column input |
-| `DATA_ROOT` | shared `apexid-dataset` | resolves `images/...` paths |
-| `OUTPUT_DIR` | `$REPO_ROOT/open_set_splits_v2` | new V2 artifacts |
-| `FEATURE_CACHE` | `$REPO_ROOT/split_v2_feature_cache` | validated memory-mapped DINO cache |
-| `SPLIT_DIR` | `$REPO_ROOT/open_set_splits_v2` | normalization input/output |
-| `CONFIG` | `configs/cluster_home.yaml` | primary config receiving mean/std |
+```bash
+export APEXID_DATA_ROOT=/mounted/ApexID_Dataset
+export APEXID_SPLIT_ROOT="$APEXID_DATA_ROOT/open_set_splits_v2"
+export APEXID_OUTPUT_ROOT=/mounted/apexid-results
+export UV_BIN=/path/to/uv
+```
 
-The split job verifies that metadata SHA-256 is exactly
+Active YAMLs retain the V1-relative split fallback when
+`APEXID_SPLIT_ROOT` is unset. Final-paper runs must set it explicitly to the
+frozen V2 directory. Prepared images, metadata, split manifests, normalization
+statistics, and model weights are external inputs and are not bundled here.
+
+Use submission-time paths for logs when desired:
+
+```bash
+sbatch --output=/mounted/logs/train_%j.out \
+  --error=/mounted/logs/train_%j.err slurm_train_h100.sh
+```
+
+## Split V2 on one H100
+
+The splitter uses its dedicated `requirements-split-v2.txt` lock. The default
+authoritative input is repository-root `metadata.csv`; override `METADATA` only
+for a different mount. It verifies SHA-256
 `fd8a921f7ab5566b02fa166bfbbfc948375ee68226b15c29caab8b7fc3ebacf0`.
-Override a path at submission time only when the mounted layout differs:
-
-```bash
-sbatch --export=ALL,METADATA=/mounted/metadata.csv,DATA_ROOT=/mounted/apexid \
-  ~/ApexID/slurm_make_splits.sh
-```
-
-## 1. Prepare the checkout
-
-From the login node:
-
-```bash
-mkdir -p ~/logs
-cd ~/ApexID
-git status --short
-sha256sum /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/metadata.csv
-bash -n slurm_make_splits.sh slurm_mean_std.sh slurm_train_h100.sh
-```
-
-If shell files were transferred through a text-only channel, their deployment
-copies decode exactly as follows:
-
-```bash
-base64 -d slurm_make_splits.sh.b64.txt > /tmp/slurm_make_splits.sh
-base64 -d slurm_mean_std.sh.b64.txt > /tmp/slurm_mean_std.sh
-cmp slurm_make_splits.sh /tmp/slurm_make_splits.sh
-cmp slurm_mean_std.sh /tmp/slurm_mean_std.sh
-```
-
-The scientific pins are in `requirements-split-v2.txt` and `data/split_v2.yaml`:
-WildlifeDatasets commit `67380d7951b89f02e48c84a7d3546188b9dbec8a`,
-`timm==1.0.27`, DINOv2 revision
-`4741e1cafbf45415e77074bb0cb42dba76c8684a`, and checkpoint SHA-256
-`0424a5d1b515278cba3c6640ccbeaacc41de59d3a93df0dd5e494285eea2b355`.
-
-## 2. Submit Split V2 on one H100
-
-The default run creates a fresh cache when none exists, rejects a stale or
-incomplete cache, performs the V2 and V1 perceptual audits, writes atomically,
-then executes validation-only mode.
-
-```bash
-SPLIT_JOB=$(sbatch --parsable ~/ApexID/slurm_make_splits.sh)
-echo "$SPLIT_JOB"
-squeue -j "$SPLIT_JOB"
-```
-
-Only when deliberately replacing an existing cache or V2 destination:
 
 ```bash
 SPLIT_JOB=$(sbatch --parsable \
-  --export=ALL,RECOMPUTE_FEATURES=1,OVERWRITE_V2=1 \
-  ~/ApexID/slurm_make_splits.sh)
+  --export=ALL,METADATA=/mounted/metadata.csv \
+  slurm_make_splits.sh)
 ```
 
-These flags are explicit because silent cache reuse and accidental destination
-replacement are prohibited.
+Only set `RECOMPUTE_FEATURES=1` or `OVERWRITE_V2=1` when deliberately replacing
+those artifacts. The job writes the six legacy CSVs, `split_manifest.csv`,
+`split_summary.json`, and optional perceptual-audit CSVs, then runs
+validation-only mode. V1 remains untouched.
 
-Monitor:
+Do not proceed unless validation reports zero train↔`val_known` exact-content
+crossings and zero shared temporal observation groups. Perceptual candidates
+must be reviewed and explained.
 
-```bash
-tail -f ~/logs/apexid_splits_${SPLIT_JOB}.out
-tail -f ~/logs/apexid_splits_${SPLIT_JOB}.err
-sacct -j "$SPLIT_JOB" --format=JobID,State,Elapsed,AllocTRES,MaxRSS,ExitCode
-```
-
-Successful output must contain the six legacy-schema CSVs plus
-`split_manifest.csv`, `split_summary.json`, `near_duplicate_candidates.csv`,
-and `v1_near_duplicate_candidates.csv`:
-
-```bash
-cd ~/ApexID
-python data/make_open_set_splits.py \
-  --metadata /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/metadata.csv \
-  --output-dir open_set_splits_v2 \
-  --validation-only
-python -m json.tool open_set_splits_v2/split_summary.json | less
-```
-
-Do not proceed unless the summary reports zero train↔`val_known` exact-content
-crossings and zero shared temporal observation groups. Review and explain every
-remaining perceptual candidate; perceptual hashes are an audit signal, not an
-automatic label.
-
-## 3. Run train-only normalization on CPU
-
-Submit after the split succeeds:
+## Train-only normalization on CPU
 
 ```bash
 MEAN_JOB=$(sbatch --parsable --dependency=afterok:${SPLIT_JOB} \
-  ~/ApexID/slurm_mean_std.sh)
-echo "$MEAN_JOB"
+  slurm_mean_std.sh)
 ```
 
-The job reads only `open_set_splits_v2/train.csv`, writes
-`normalization_stats.json`, and applies the same result to all four 440×440 RGB
-training configs:
+This job installs the canonical lock with CPU PyTorch 2.10.0/TorchVision 0.25.0,
+reads only `train.csv`, writes `normalization_stats.json`, and updates the four
+440×440 RGB configs. The statistics record train/manifest hashes, row count,
+preprocessing, command, code revision, mean, and standard deviation.
 
-- `configs/default.yaml`
-- `configs/cluster_home.yaml`
-- `configs/cluster_pretrained.yaml`
-- `configs/cluster_subcenter_dynamic.yaml`
+## Offline and data-pipeline smoke tests
 
-`normalization_stats.json` records the split-manifest hash, training CSV hash,
-row count, preprocessing, exact command, code revision, mean, and standard
-deviation.
+The first command needs no data, downloads, or private labels:
 
 ```bash
-tail -f ~/logs/apexid_mean_std_${MEAN_JOB}.out
-python -m json.tool ~/ApexID/open_set_splits_v2/normalization_stats.json
+python scripts/repro_smoke.py --output /tmp/apexid-repro-smoke.json
+python scripts/debug_data_pipeline.py --config configs/cluster_home.yaml
 ```
 
-## 4. Point a local cluster config at V2
+## H100 training handoff
 
-Split paths are environment-specific. Keep them in a local experiment copy,
-not as a committed `/sc/home/<user>` path. Copy the desired training YAML and
-set these four keys to the generated directory:
-
-```yaml
-data:
-  train_path: /sc/home/USER/ApexID/open_set_splits_v2/train.csv
-  val_known_path: /sc/home/USER/ApexID/open_set_splits_v2/val_known.csv
-  val_unknown_path: /sc/home/USER/ApexID/open_set_splits_v2/val_unknown.csv
-  val_path: /sc/home/USER/ApexID/open_set_splits_v2/val.csv
-  root_dir: /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset
-```
-
-Replace `USER` only in the local copy, for example
-`configs/cluster_v2.local.yaml`, and submit with
-`CONFIG=configs/cluster_v2.local.yaml`.
-
-## 5. Data-pipeline smoke test and training
-
-Run the smoke test on a compute allocation with the same environment as
-training:
-
-```bash
-cd ~/ApexID
-python scripts/debug_data_pipeline.py --config configs/cluster_v2.local.yaml
-```
-
-Then train only after split, normalization, candidate review, and smoke test
-have succeeded:
+The CPU lock is verified. The exact CUDA/H100 combination is not yet verified.
+On the target node, set `APEXID_TORCH_BACKEND` to the site's supported uv
+backend (or leave `auto`), install the same lock through the Slurm job, and
+return `environment.json`, `run_manifest.json`, `nvidia-smi`, and smoke/test
+logs before claiming CUDA reproducibility.
 
 ```bash
 TRAIN_JOB=$(sbatch --parsable --dependency=afterok:${MEAN_JOB} \
-  --export=ALL,CONFIG=configs/cluster_v2.local.yaml \
-  ~/ApexID/slurm_train_h100.sh)
-echo "$TRAIN_JOB"
+  --export=ALL,CONFIG=configs/cluster_home.yaml \
+  slurm_train_h100.sh)
 ```
 
-## 6. Return the completion artifacts
+Training writes `config_resolved.yaml`, `environment.json`, and
+`run_manifest.json`. Add `--require-clean-git` after committing the intended
+scientific changes when producing a release run. Persistent worker-internal RNG
+and hardware-dependent CUDA kernels may still prevent bitwise equivalence.
 
-Copy back these files so `SPLIT_V2_REPORT.md` can be finalized with actual
-corpus values:
+## Deployment-copy verification
 
-```text
-open_set_splits_v2/split_summary.json
-open_set_splits_v2/split_manifest.csv
-open_set_splits_v2/normalization_stats.json
-open_set_splits_v2/near_duplicate_candidates.csv
-open_set_splits_v2/v1_near_duplicate_candidates.csv
-logs/apexid_splits_<jobid>.out
-logs/apexid_splits_<jobid>.err
-logs/apexid_mean_std_<jobid>.out
-logs/apexid_mean_std_<jobid>.err
+```bash
+for script in slurm_make_splits.sh slurm_mean_std.sh slurm_train_h100.sh; do
+  base64 -d "$script.b64.txt" > "/tmp/$script"
+  cmp "$script" "/tmp/$script"
+done
 ```
 
-Also return the four modified config YAMLs. The report is complete only after
-the actual V2 counts/hashes, V1/V2 comparison, normalization numbers, smoke-test
-result, and candidate dispositions are recorded.
+Return Split V2 summaries/audits, normalization statistics, Slurm logs, and the
+training environment/manifest. This implementation does not itself execute the
+private-corpus H100 jobs.

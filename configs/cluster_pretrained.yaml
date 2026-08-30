@@ -1,20 +1,20 @@
 experiment:
   name: apexid_osnet_pt_arcface_finetune
-  output_dir: outputs/apexid_osnet_pt_arcface_finetune
+  output_dir: "${APEXID_OUTPUT_ROOT:-outputs}/apexid_osnet_pt_arcface_finetune"
 seed: 42
 device:
   prefer_gpu: true
   gpu_index: 0
 data:
-  train_path: /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/open_set_splits/train.csv
-  val_known_path: /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/open_set_splits/val_known.csv
-  val_unknown_path: /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/open_set_splits/val_unknown.csv
-  val_path: /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/open_set_splits/val.csv
+  train_path: "${APEXID_SPLIT_ROOT:-ApexID_Dataset/open_set_splits}/train.csv"
+  val_known_path: "${APEXID_SPLIT_ROOT:-ApexID_Dataset/open_set_splits}/val_known.csv"
+  val_unknown_path: "${APEXID_SPLIT_ROOT:-ApexID_Dataset/open_set_splits}/val_unknown.csv"
+  val_path: "${APEXID_SPLIT_ROOT:-ApexID_Dataset/open_set_splits}/val.csv"
   train_csv: null
   val_known_csv: null
   val_unknown_csv: null
   val_csv: null
-  root_dir: /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/
+  root_dir: "${APEXID_DATA_ROOT:-ApexID_Dataset}"
   image_size:
   - 440
   - 440
@@ -167,7 +167,7 @@ embedding_plot:
   filename_template: epoch_{epoch_number:03d}_umap.png
   best_filename: best_embedding_space.png
 checkpoint:
-  output_dir: outputs/apexid_osnet_pt_arcface_finetune/checkpoints
+  output_dir: "${APEXID_OUTPUT_ROOT:-outputs}/apexid_osnet_pt_arcface_finetune/checkpoints"
   every_n_epochs: 1
   filename: last_checkpoint.pt
   delete_previous: true
@@ -178,7 +178,7 @@ early_stopping:
   mode: max
   patience: 10
   min_delta: 0.0
-  output_dir: outputs/apexid_osnet_pt_arcface_finetune/checkpoints
+  output_dir: "${APEXID_OUTPUT_ROOT:-outputs}/apexid_osnet_pt_arcface_finetune/checkpoints"
   full_model_name: best_full_model.pt
   backbone_name: best_backbone.pt
   metadata_name: best_metadata.json

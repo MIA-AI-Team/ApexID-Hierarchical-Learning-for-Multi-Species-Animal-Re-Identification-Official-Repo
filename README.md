@@ -9,7 +9,7 @@ embedding-space plots.
 Run commands from the repository root:
 
 ```bash
-cd /home/seifelkerdany/PC/MIA/ApexID
+cd /path/to/ApexID
 ```
 
 ## Project Map
@@ -33,28 +33,36 @@ folder.
 
 ## Setup
 
-Install dependencies:
+The canonical environment is Python 3.13.5 with an exact CPU-validated lock:
 
 ```bash
-pip install -r requirements.txt
+python3.13 -m venv .venv
+. .venv/bin/activate
+pip install --index-url https://download.pytorch.org/whl/cpu \
+  torch==2.10.0 torchvision==0.25.0
+pip install --no-deps -r requirements-lock.txt
+pip check
 ```
 
-The requirements include PyTorch, TorchVision, timm, OpenCV, Albumentations,
-scikit-learn, UMAP, matplotlib, W&B, and WildlifeDatasets packages.
+`requirements.txt` is the readable dependency input. `requirements-lock.txt`
+is the exact training/evaluation environment; `requirements-split-v2.txt`
+remains the dedicated splitter environment. The CPU combination is tested.
+CUDA/H100 validation is a separate handoff and is not claimed here.
 
 ## Train
 
-After generating Split V2, point an experiment config at these environment-relative
-paths (do not commit a user home directory):
+All active configs expand `${VAR}` and `${VAR:-fallback}` recursively. Set the
+three portable roots for a final-paper Split V2 run:
 
-```yaml
-data:
-  train_path: ApexID_Dataset/open_set_splits_v2/train.csv
-  val_known_path: ApexID_Dataset/open_set_splits_v2/val_known.csv
-  val_unknown_path: ApexID_Dataset/open_set_splits_v2/val_unknown.csv
-  val_path: ApexID_Dataset/open_set_splits_v2/val.csv
-  root_dir: ApexID_Dataset
+```bash
+export APEXID_DATA_ROOT=/mounted/ApexID_Dataset
+export APEXID_SPLIT_ROOT="$APEXID_DATA_ROOT/open_set_splits_v2"
+export APEXID_OUTPUT_ROOT=/mounted/apexid-results
 ```
+
+When unset, configs deliberately retain the V1-relative fallback
+`ApexID_Dataset/open_set_splits`; selecting V2 is therefore explicit and does
+not silently change historical membership.
 
 The train and validation CSV files must contain at least:
 
@@ -381,7 +389,11 @@ python -m apexid.evaluation.evaluate_apexid_model \
   --threshold-objective f1 \
   --discovery-threshold-objective ari \
   --retrieval-chunk-size 1024 \
-  --bootstrap-samples 1000
+  --bootstrap-samples 1000 \
+  --bootstrap-seed 42 \
+  --bootstrap-confidence-level 0.95 \
+  --bootstrap-method percentile \
+  --bootstrap-min-valid-fraction 0.90
 ```
 
 Parameter meanings:
@@ -401,8 +413,7 @@ Parameter meanings:
 - `--device`: PyTorch device, usually `cuda` or `cpu`.
 - `--batch-size` and `--num-workers`: image-extraction throughput controls;
   reduce them if GPU memory or host-memory pressure is high.
-- `--seed`: makes evaluator sampling, development permutations, and bootstrap
-  results reproducible.
+- `--seed`: makes evaluator sampling and development permutations reproducible.
 - `--evaluation-mode`: `batch`, `online`, or `both` (the default). `online`
   evaluates every supplied stream independently and resets discovery state for
   each stream.
@@ -416,6 +427,8 @@ Parameter meanings:
   lower it to reduce peak memory on large galleries.
 - `--bootstrap-samples`: number of deterministic bootstrap resamples for
   reported uncertainty; set `0` to skip bootstrapping.
+- `--bootstrap-seed`, `--bootstrap-confidence-level`, `--bootstrap-method`, and
+  `--bootstrap-min-valid-fraction`: configure identity-block percentile CIs.
 
 Useful optional evaluator switches:
 
@@ -427,8 +440,10 @@ Useful optional evaluator switches:
   by default under `OUTPUT_DIR/cache/`.
 - `--no-amp` disables CUDA automatic mixed precision, which can help investigate
   numerical issues or run a strict CPU comparison.
-- `--update-known-prototypes` is reserved for the optional prototype-update
-  experiment; the documented baseline uses the fixed database gallery.
+- `--update-known-prototypes` remains parseable for compatibility but fails
+  clearly because the protocol keeps known gallery prototypes static.
+- `--require-clean-git` rejects dirty or unverifiable Git state. Without it,
+  dirty paths are recorded in `run_manifest.json`.
 - `--verbose` enables detailed progress and diagnostic logging.
 
 Results are written only under `--output-dir`, including cached embeddings,
@@ -436,6 +451,13 @@ development-selected thresholds, final predictions, retrieval rankings, batch
 metrics, individual online-stream metrics, aggregate reports, curves, and
 plots. Do not use final-test ground-truth files to pick a checkpoint, threshold,
 or clustering policy.
+
+Training and evaluation both write `config_resolved.yaml`, `environment.json`,
+and `run_manifest.json`. Online prototype updates are versioned as
+`unnormalized_vector_sum_v2`; bootstrap intervals use
+`identity_block_occurrence_layers_v2`. Online metrics and historical bootstrap
+intervals must be regenerated. Batch predictions are unaffected by the online
+prototype correction.
 
 ## Contributor Notes
 

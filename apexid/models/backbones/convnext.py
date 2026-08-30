@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import importlib.metadata
+from pathlib import Path
+from urllib.parse import urlparse
+
+import torch
 from torch import nn
 from torchvision import models
+
+from apexid.utils.provenance import sha256_file
 
 from .osnet_pt import WaveletStem
 
@@ -84,6 +91,19 @@ class ConvNeXtBackbone(nn.Module):
         builder = _builder_for_variant(self.variant)
         self.stem = WaveletStem() if self.pretrained and self.input_channels == 6 else nn.Identity()
         self.model = builder(weights=weights, progress=progress, **kwargs)
+        self.pretrained_provenance = None
+        if weights is not None:
+            filename = Path(urlparse(weights.url).path).name
+            cached_path = Path(torch.hub.get_dir()) / "checkpoints" / filename
+            self.pretrained_provenance = {
+                "provider": "torchvision",
+                "torchvision_version": importlib.metadata.version("torchvision"),
+                "weights_enum": f"{type(weights).__name__}.{weights.name}",
+                "url": weights.url,
+                "cached_file": str(cached_path),
+                "sha256": sha256_file(cached_path) if cached_path.is_file() else None,
+                "filename_hash_prefix": filename.rsplit("-", 1)[-1].removesuffix(".pth") if "-" in filename else None,
+            }
 
         if not self.pretrained and self.input_channels != 3:
             self._replace_input_conv(self.input_channels)

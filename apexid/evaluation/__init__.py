@@ -34,9 +34,17 @@ from .benchmark_metrics import (
     merge_metrics,
     pairwise_metrics,
 )
+from .benchmark_evaluator import (
+    BOOTSTRAP_VERSION,
+    EVALUATOR_VERSION,
+    ONLINE_PROTOTYPE_UPDATE_VERSION,
+)
 
 __all__ = [
     "B3_METRIC_VERSION",
+    "BOOTSTRAP_VERSION",
+    "EVALUATOR_VERSION",
+    "ONLINE_PROTOTYPE_UPDATE_VERSION",
     "best_gallery_matches",
     "cluster_embeddings",
     "compute_dir_at_far",

@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from apexid.models import ApexID, build_model
@@ -124,3 +125,12 @@ def test_build_model_auto_uses_pretrained_backbone_with_wavelet_channels():
 
     assert model.input_channels == 6
     assert model.backbone.backbone.conv1.conv.in_channels == 3
+
+
+def test_osnet_rejects_pinned_weight_hash_mismatch(tmp_path, monkeypatch):
+    weight = tmp_path / "osnet_x0_25_imagenet.pth"
+    weight.write_bytes(b"not-the-pinned-weight")
+    monkeypatch.setattr(osnet_pt, "_hf_hub_download", lambda **kwargs: weight)
+    model = build_backbone("osnet_x0_25", embedding_dim=16, input_channels=3)
+    with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
+        osnet_pt.init_pretrained_weights(model, "osnet_x0_25")

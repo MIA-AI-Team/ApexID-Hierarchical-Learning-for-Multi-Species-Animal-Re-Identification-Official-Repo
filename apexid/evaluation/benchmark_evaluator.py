@@ -39,9 +39,23 @@ from apexid.evaluation.benchmark_metrics import B3_METRIC_VERSION, discovery_met
 from apexid.evaluation.open_set_metrics import compute_known_retrieval_metrics, compute_oscr_auc
 from apexid.models import build_model
 from apexid.utils.config import DEFAULT_CONFIG_PATH, load_config
+from apexid.utils.provenance import (
+    artifact_hashes,
+    capture_environment,
+    capture_git_state,
+    command_record,
+    require_clean_git,
+    sha256_file as provenance_sha256_file,
+    utc_now,
+    write_json_atomic,
+    write_yaml_atomic,
+)
 
 
 LOGGER = logging.getLogger(__name__)
+EVALUATOR_VERSION = "sealed_open_world_v2"
+ONLINE_PROTOTYPE_UPDATE_VERSION = "unnormalized_vector_sum_v2"
+BOOTSTRAP_VERSION = "identity_block_occurrence_layers_v2"
 REQUIRED_BENCHMARK_FILES = (
     "database.csv", "development.csv", "development_ground_truth.csv", "final_test.csv",
     "final_test_no_species.csv", "final_test_ground_truth.csv", "known_identity_registry.csv",
@@ -72,18 +86,21 @@ class EvaluationConfig:
     discovery_threshold_objective: str = "ari"
     retrieval_chunk_size: int = 1024
     bootstrap_samples: int = 1000
+    bootstrap_seed: int | None = None
+    bootstrap_confidence_level: float = 0.95
+    bootstrap_method: str = "percentile"
+    bootstrap_min_valid_fraction: float = 0.90
     force_recompute: bool = False
     save_embeddings: bool = True
     update_known_prototypes: bool = False
     amp: bool = True
+    require_clean_git: bool = False
+    command: tuple[str, ...] | None = None
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    """Compatibility wrapper around the shared provenance hasher."""
+    return provenance_sha256_file(path)
 
 
 def _frame_hash(frame: pd.DataFrame) -> str:
@@ -101,8 +118,8 @@ def _json_default(value: Any) -> Any:
 
 
 def write_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True, default=_json_default) + "\n", encoding="utf-8")
+    """Compatibility wrapper using atomic provenance writes."""
+    write_json_atomic(path, value)
 
 
 def seed_everything(seed: int) -> None:
@@ -222,6 +239,7 @@ class ApexIDModelAdapter:
             "embedding_dim": int(self.model.embedding_dim),
             "parameter_count": int(sum(parameter.numel() for parameter in self.model.parameters())),
             "device": str(self.device),
+            "pretrained_artifact": getattr(self.model.backbone, "pretrained_provenance", None),
         }
         return self.checkpoint_metadata
 
@@ -380,25 +398,55 @@ def tune_known_threshold(scores: np.ndarray, scenarios: Sequence[str], objective
     return best_threshold, pd.DataFrame(rows)
 
 
+@dataclass
+class DiscoveredPrototypeState:
+    """Causal discovered-identity state backed by an unnormalized vector sum."""
+
+    vector_sum: np.ndarray
+    count: int
+
+    @classmethod
+    def from_embedding(cls, embedding: np.ndarray) -> "DiscoveredPrototypeState":
+        vector = np.asarray(embedding, dtype=np.float64)
+        if vector.ndim != 1 or not np.isfinite(vector).all():
+            raise ValueError("Prototype embeddings must be finite one-dimensional vectors")
+        if np.linalg.norm(vector) <= 1e-12:
+            raise ValueError("Prototype embeddings must have non-zero norm")
+        return cls(vector_sum=vector.copy(), count=1)
+
+    def update(self, embedding: np.ndarray) -> None:
+        vector = np.asarray(embedding, dtype=np.float64)
+        if vector.shape != self.vector_sum.shape or not np.isfinite(vector).all():
+            raise ValueError("Prototype update shape must match the finite vector sum")
+        self.vector_sum += vector
+        self.count += 1
+
+    @property
+    def scoring_view(self) -> np.ndarray:
+        norm = float(np.linalg.norm(self.vector_sum))
+        if norm <= 1e-12:
+            raise ValueError("Discovered prototype vector sum has zero norm")
+        return self.vector_sum / norm
+
+
 def _online_assign(embeddings: np.ndarray, threshold: float) -> tuple[list[str], list[float], list[bool]]:
-    centroids: list[np.ndarray] = []
-    counts: list[int] = []
+    prototypes: list[DiscoveredPrototypeState] = []
     labels: list[str] = []
     scores: list[float] = []
     created: list[bool] = []
-    for embedding in l2_normalize(embeddings):
-        if centroids:
-            similarities = np.asarray(centroids) @ embedding
+    for embedding in l2_normalize(embeddings).astype(np.float64, copy=False):
+        if prototypes:
+            similarities = np.vstack([state.scoring_view for state in prototypes]) @ embedding
             index = int(np.argmax(similarities)); score = float(similarities[index])
         else:
             index, score = -1, float("nan")
         if index >= 0 and score >= threshold:
             label = f"NEW_{index + 1:06d}"
-            centroids[index] = l2_normalize((centroids[index] * counts[index] + embedding)[None, :])[0]
-            counts[index] += 1
+            prototypes[index].update(embedding)
             created.append(False)
         else:
-            centroids.append(embedding.copy()); counts.append(1); label = f"NEW_{len(centroids):06d}"; created.append(True)
+            prototypes.append(DiscoveredPrototypeState.from_embedding(embedding))
+            label = f"NEW_{len(prototypes):06d}"; created.append(True)
         labels.append(label); scores.append(score)
     return labels, scores, created
 
@@ -500,6 +548,11 @@ def infer_batch(public_final: pd.DataFrame, embeddings: np.ndarray, gallery: Gal
 
 
 def infer_online(public_stream: pd.DataFrame, embeddings_by_id: Mapping[str, np.ndarray], gallery: Gallery, thresholds: Mapping[str, float], config: EvaluationConfig) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if config.update_known_prototypes:
+        raise ValueError(
+            "update_known_prototypes=true is unsupported by the ApexID protocol; "
+            "known gallery prototypes are static during inference"
+        )
     stream = public_stream.sort_values("arrival_index").reset_index(drop=True)
     embeddings = np.vstack([embeddings_by_id[str(image_id)] for image_id in stream["image_id"]])
     scores, ranks, ranked_scores = score_gallery(embeddings, gallery, config.gallery_scoring, config.retrieval_chunk_size)
@@ -543,13 +596,28 @@ def _fpr95(y_true: np.ndarray, scores: np.ndarray) -> float:
     return float(eligible.min()) if len(eligible) else float("nan")
 
 
-def _known_query_metrics(merged: pd.DataFrame, embeddings_by_id: Mapping[str, np.ndarray], gallery: Gallery) -> dict[str, float]:
+def _known_query_metrics(
+    merged: pd.DataFrame,
+    embeddings_by_id: Mapping[str, np.ndarray],
+    gallery: Gallery,
+) -> tuple[dict[str, float], pd.DataFrame]:
     known = merged[merged.scenario.eq(SCENARIO_KNOWN)].reset_index(drop=True)
     if known.empty:
-        return {"Known_R1": float("nan"), "Known_R5": float("nan"), "Known_R10": float("nan"), "Known_mAP": float("nan")}
+        metrics = {"Known_R1": float("nan"), "Known_R5": float("nan"), "Known_R10": float("nan"), "Known_mAP": float("nan")}
+        return metrics, pd.DataFrame(columns=["image_id", "_known_r1", "_known_ap"])
     embeddings = np.vstack([embeddings_by_id[str(image_id)] for image_id in known.image_id])
-    metrics = compute_known_retrieval_metrics(embeddings, known.known_database_id.astype(str).to_numpy(), gallery.image_embeddings, gallery.image_database_ids, top_k=(1, 5, 10), cmc_ranks=(), chunk_size=1024)
-    return {"Known_R1": metrics["known/top1"], "Known_R5": metrics["known/top5"], "Known_R10": metrics["known/top10"], "Known_mAP": metrics["known/mAP"]}
+    metrics, query_values = compute_known_retrieval_metrics(
+        embeddings, known.known_database_id.astype(str).to_numpy(), gallery.image_embeddings,
+        gallery.image_database_ids, top_k=(1, 5, 10), cmc_ranks=(), chunk_size=1024,
+        return_query_values=True,
+    )
+    contributions = pd.DataFrame({
+        "image_id": known.image_id.astype(str),
+        "_known_r1": query_values["rank1"],
+        "_known_ap": query_values["average_precision"],
+    })
+    headline = {"Known_R1": metrics["known/top1"], "Known_R5": metrics["known/top5"], "Known_R10": metrics["known/top10"], "Known_mAP": metrics["known/mAP"]}
+    return headline, contributions
 
 
 def _online_metrics(merged: pd.DataFrame) -> dict[str, float]:
@@ -609,7 +677,8 @@ def evaluate_final(predictions: pd.DataFrame, final_ground_truth_path: Path, emb
     known = merged[known_mask]
     known_e2e = known.predicted_identity.astype(str).eq(known.known_database_id.astype(str)) & known.predicted_status.eq("known")
     known_precision, known_recall, known_f1, _ = precision_recall_fscore_support(known_mask, ~predicted_novel, average="binary", zero_division=0)
-    known_raw = _known_query_metrics(merged, embeddings_by_id, gallery)
+    known_raw, known_contributions = _known_query_metrics(merged, embeddings_by_id, gallery)
+    merged = merged.merge(known_contributions, on="image_id", how="left", validate="one_to_one")
     known_scores = known.top1_similarity.to_numpy(dtype=float)
     unknown_scores = merged.loc[~known_mask, "top1_similarity"].to_numpy(dtype=float)
     known_correct = known.top1_database_id.astype(str).eq(known.known_database_id.astype(str)).to_numpy()
@@ -639,23 +708,129 @@ def group_metrics(merged: pd.DataFrame, group_column: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def bootstrap_headlines(merged: pd.DataFrame, samples: int, seed: int) -> pd.DataFrame:
-    if samples <= 0:
-        return pd.DataFrame(columns=["metric", "estimate", "ci_lower", "ci_upper", "bootstrap_samples"])
+_BOOTSTRAP_COLUMNS = [
+    "metric", "estimate", "ci_lower", "ci_upper", "bootstrap_samples",
+    "requested_replicates", "valid_replicates", "invalid_replicates", "reliable",
+    "bootstrap_seed", "confidence_level", "interval_method", "minimum_valid_fraction",
+    "resampling_unit", "bootstrap_version",
+]
+
+
+def occurrence_layer_sample(merged: pd.DataFrame, chosen_identities: Sequence[str]) -> pd.DataFrame:
+    """Copy identity blocks and relabel predicted clusters by occurrence rank.
+
+    Copies of one sampled identity cannot interact with each other.  Distinct
+    identities retain the maximum possible overlap through shared predicted
+    clusters at equal occurrence ranks, while each block's fragmentation stays
+    intact.
+    """
+    source_identity = merged.true_identity.astype(str)
+    occurrence_counts: dict[str, int] = {}
+    predicted_codes: dict[tuple[str, int], int] = {}
+    copies: list[pd.DataFrame] = []
+    for true_code, identity in enumerate(map(str, chosen_identities)):
+        rank = occurrence_counts.get(identity, 0)
+        occurrence_counts[identity] = rank + 1
+        block = merged.loc[source_identity.eq(identity)].copy()
+        if block.empty:
+            raise ValueError(f"Bootstrap identity {identity!r} is absent from the source frame")
+        block["_bootstrap_true_label"] = true_code
+        block["_bootstrap_predicted_label"] = [
+            predicted_codes.setdefault((str(label), rank), len(predicted_codes))
+            for label in block.predicted_identity
+        ]
+        copies.append(block)
+    if not copies:
+        return merged.iloc[0:0].assign(
+            _bootstrap_true_label=pd.Series(dtype=np.int64),
+            _bootstrap_predicted_label=pd.Series(dtype=np.int64),
+        )
+    return pd.concat(copies, ignore_index=True)
+
+
+def _safe_bootstrap_auroc(sample: pd.DataFrame) -> float:
+    truth = ~sample.scenario.eq(SCENARIO_KNOWN).to_numpy()
+    if len(np.unique(truth)) < 2:
+        return float("nan")
+    return float(roc_auc_score(truth, sample.novelty_score.to_numpy(dtype=float)))
+
+
+def _bootstrap_metric_values(sample: pd.DataFrame) -> dict[str, float]:
+    partition = clustering_metrics(sample._bootstrap_true_label, sample._bootstrap_predicted_label)
+    known = sample[sample.scenario.eq(SCENARIO_KNOWN)]
+    correct = known.predicted_status.eq("known") & known.predicted_identity.astype(str).eq(known.known_database_id.astype(str))
+    return {
+        "Overall_ARI": float(partition["ari"]),
+        "Overall_B3_F1": float(partition["b3_f1"]),
+        "Known_R1": float(known._known_r1.mean()) if len(known) else float("nan"),
+        "Known_mAP": float(known._known_ap.mean()) if len(known) else float("nan"),
+        "Known_E2E_Accuracy": float(correct.mean()) if len(known) else float("nan"),
+        "Novelty_AUROC": _safe_bootstrap_auroc(sample),
+    }
+
+
+def bootstrap_headlines(
+    merged: pd.DataFrame,
+    samples: int,
+    seed: int,
+    confidence_level: float = 0.95,
+    method: str = "percentile",
+    minimum_valid_fraction: float = 0.90,
+) -> pd.DataFrame:
+    """Identity-block percentile intervals with occurrence-layer relabeling."""
+    samples = int(samples)
+    if samples < 0:
+        raise ValueError("bootstrap samples cannot be negative")
+    if not 0.0 < float(confidence_level) < 1.0:
+        raise ValueError("bootstrap confidence level must be strictly between 0 and 1")
+    if method != "percentile":
+        raise ValueError("bootstrap method must be 'percentile'")
+    if not 0.0 <= float(minimum_valid_fraction) <= 1.0:
+        raise ValueError("bootstrap minimum-valid fraction must be between 0 and 1")
+    if samples == 0:
+        return pd.DataFrame(columns=_BOOTSTRAP_COLUMNS)
+    required = {"true_identity", "predicted_identity", "scenario", "novelty_score", "predicted_status", "known_database_id", "_known_r1", "_known_ap"}
+    missing = required - set(merged)
+    if missing:
+        raise ValueError(f"Bootstrap frame is missing columns: {sorted(missing)}")
+
     rng = np.random.default_rng(seed)
-    identities = np.asarray(sorted(merged.true_identity.astype(str).unique()))
-    estimates = {"Overall_ARI": clustering_metrics(merged.true_identity, merged.predicted_identity)["ari"]}
-    known = merged[merged.scenario.eq(SCENARIO_KNOWN)]
-    if len(known): estimates["Known_E2E_Accuracy"] = float((known.predicted_identity.astype(str).eq(known.known_database_id.astype(str)) & known.predicted_status.eq("known")).mean())
+    identities = np.asarray(sorted(merged.true_identity.astype(str).unique()), dtype=str)
+    if not len(identities):
+        raise ValueError("Bootstrap requires at least one true identity block")
+    point_sample = occurrence_layer_sample(merged, identities)
+    estimates = _bootstrap_metric_values(point_sample)
     values: dict[str, list[float]] = {key: [] for key in estimates}
     for _ in range(samples):
         chosen = rng.choice(identities, size=len(identities), replace=True)
-        sample = pd.concat([merged[merged.true_identity.astype(str).eq(identity)] for identity in chosen], ignore_index=True)
-        values["Overall_ARI"].append(clustering_metrics(sample.true_identity, sample.predicted_identity)["ari"])
-        if "Known_E2E_Accuracy" in values:
-            sample_known = sample[sample.scenario.eq(SCENARIO_KNOWN)]
-            values["Known_E2E_Accuracy"].append(float((sample_known.predicted_identity.astype(str).eq(sample_known.known_database_id.astype(str)) & sample_known.predicted_status.eq("known")).mean()) if len(sample_known) else float("nan"))
-    return pd.DataFrame([{"metric": key, "estimate": estimate, "ci_lower": float(np.nanquantile(values[key], 0.025)), "ci_upper": float(np.nanquantile(values[key], 0.975)), "bootstrap_samples": samples} for key, estimate in estimates.items()])
+        replicate = _bootstrap_metric_values(occurrence_layer_sample(merged, chosen))
+        for key, value in replicate.items():
+            values[key].append(float(value))
+
+    alpha = (1.0 - float(confidence_level)) / 2.0
+    rows = []
+    for metric, estimate in estimates.items():
+        finite = np.asarray(values[metric], dtype=np.float64)
+        finite = finite[np.isfinite(finite)]
+        valid = int(finite.size)
+        reliable = valid >= 2 and valid / samples >= float(minimum_valid_fraction)
+        if reliable:
+            lower, upper = np.quantile(finite, [alpha, 1.0 - alpha])
+        else:
+            lower = upper = float("nan")
+            LOGGER.warning(
+                "Unreliable bootstrap interval for %s: %d/%d valid replicates (minimum %.3f)",
+                metric, valid, samples, minimum_valid_fraction,
+            )
+        rows.append({
+            "metric": metric, "estimate": estimate, "ci_lower": float(lower), "ci_upper": float(upper),
+            "bootstrap_samples": samples, "requested_replicates": samples,
+            "valid_replicates": valid, "invalid_replicates": samples - valid, "reliable": reliable,
+            "bootstrap_seed": int(seed), "confidence_level": float(confidence_level),
+            "interval_method": method, "minimum_valid_fraction": float(minimum_valid_fraction),
+            "resampling_unit": "true_identity", "bootstrap_version": BOOTSTRAP_VERSION,
+        })
+    return pd.DataFrame(rows, columns=_BOOTSTRAP_COLUMNS)
 
 
 def save_plots(output_dir: Path, merged: pd.DataFrame, known_curve: pd.DataFrame, retrieval: pd.DataFrame) -> None:
@@ -696,16 +871,63 @@ def save_plots(output_dir: Path, merged: pd.DataFrame, known_curve: pd.DataFrame
     fig, ax = plt.subplots(); ax.plot(oscr["FPR"], oscr["CCR"]); ax.set(xlabel="False positive rate", ylabel="Correct classification rate"); fig.tight_layout(); fig.savefig(plots / "oscr_curve.png", dpi=180); fig.savefig(plots / "oscr_curve.pdf"); plt.close(fig)
 
 
+def _benchmark_artifact_paths(config: EvaluationConfig, private: bool) -> dict[str, Path]:
+    private_names = {
+        "development_ground_truth.csv", "final_test_ground_truth.csv", "private_identity_mapping.csv",
+    }
+    names = private_names if private else set(REQUIRED_BENCHMARK_FILES) - private_names
+    paths = {f"benchmark/{name}": config.benchmark_dir / name for name in sorted(names)}
+    paths["model/weights"] = config.weights
+    paths["model/config"] = config.model_config
+    lock_path = Path(__file__).resolve().parents[2] / "requirements-lock.txt"
+    if lock_path.is_file():
+        paths["environment/requirements_lock"] = lock_path
+    return paths
+
+
 def run_evaluation(config: EvaluationConfig) -> dict[str, Any]:
     """Run development tuning, sealed final inference, then final evaluation."""
     if config.evaluation_mode not in {"batch", "online", "both"}:
         raise ValueError("evaluation_mode must be batch, online, or both")
+    if config.update_known_prototypes:
+        raise ValueError(
+            "update_known_prototypes=true is unsupported by the ApexID protocol; "
+            "known gallery prototypes are static during inference"
+        )
+    if config.bootstrap_samples < 0:
+        raise ValueError("bootstrap samples cannot be negative")
+    if not 0.0 < config.bootstrap_confidence_level < 1.0:
+        raise ValueError("bootstrap confidence level must be strictly between 0 and 1")
+    if config.bootstrap_method != "percentile":
+        raise ValueError("bootstrap method must be 'percentile'")
+    if not 0.0 <= config.bootstrap_min_valid_fraction <= 1.0:
+        raise ValueError("bootstrap minimum-valid fraction must be between 0 and 1")
+
+    git_state = capture_git_state(Path(__file__).resolve().parents[2])
+    if config.require_clean_git:
+        require_clean_git(git_state)
     seed_everything(config.seed)
     config.output_dir.mkdir(parents=True, exist_ok=True)
     frames = validate_benchmark_directory(config.benchmark_dir)
     model_cfg = load_config(config_path=config.model_config)
     if config.image_size is not None:
         model_cfg = copy.deepcopy(model_cfg); model_cfg.setdefault("data", {})["image_size"] = list(config.image_size)
+    environment = capture_environment()
+    write_json_atomic(config.output_dir / "environment.json", environment)
+    write_yaml_atomic(config.output_dir / "config_resolved.yaml", {"evaluation": asdict(config), "model": model_cfg})
+    run_manifest: dict[str, Any] = {
+        "schema_version": 1,
+        "run_type": "evaluation",
+        "status": "running",
+        "started_at_utc": utc_now(),
+        "command": command_record(config.command),
+        "git": git_state,
+        "seed": config.seed,
+        "input_artifacts": artifact_hashes(_benchmark_artifact_paths(config, private=False)),
+        "private_artifacts_hashed_after_prediction": False,
+        "dataset_counts": {name: int(len(frame)) for name, frame in frames.items()},
+    }
+    write_json_atomic(config.output_dir / "run_manifest.json", run_manifest)
     device = torch.device(config.device if config.device != "cuda" or torch.cuda.is_available() else "cpu")
     adapter = ApexIDModelAdapter(model_cfg, device, config.amp)
     model_info = adapter.load_weights(config.weights)
@@ -719,15 +941,37 @@ def run_evaluation(config: EvaluationConfig) -> dict[str, Any]:
     write_json(config.output_dir / "thresholds.json", thresholds)
     final_embeddings, final_public = extract_with_cache("final_test", frames["final_test"], adapter, config, transform)
     embedding_by_id = {str(image_id): embedding for image_id, embedding in zip(final_public.image_id, final_embeddings)}
-    metric_versions = {"b3": B3_METRIC_VERSION}
-    run_config = asdict(config) | {"model": model_info, "benchmark_config": json.loads((config.benchmark_dir / "config.json").read_text()) if (config.benchmark_dir / "config.json").is_file() else {}, "thresholds": thresholds, "metric_versions": metric_versions, "torch": torch.__version__, "cuda": torch.version.cuda}
+    metric_versions = {
+        "b3": B3_METRIC_VERSION,
+        "evaluator": EVALUATOR_VERSION,
+        "online_prototype_update": ONLINE_PROTOTYPE_UPDATE_VERSION,
+        "bootstrap": BOOTSTRAP_VERSION,
+    }
+    bootstrap_seed = config.seed if config.bootstrap_seed is None else config.bootstrap_seed
+    bootstrap_config = {
+        "version": BOOTSTRAP_VERSION,
+        "requested_replicates": config.bootstrap_samples,
+        "seed": bootstrap_seed,
+        "confidence_level": config.bootstrap_confidence_level,
+        "method": config.bootstrap_method,
+        "minimum_valid_fraction": config.bootstrap_min_valid_fraction,
+        "resampling_unit": "true_identity",
+    }
+    run_manifest["model"] = model_info
+    run_manifest["metric_versions"] = metric_versions
+    run_manifest["bootstrap"] = bootstrap_config
+    write_json_atomic(config.output_dir / "run_manifest.json", run_manifest)
+    run_config = asdict(config) | {"model": model_info, "benchmark_config": json.loads((config.benchmark_dir / "config.json").read_text()) if (config.benchmark_dir / "config.json").is_file() else {}, "thresholds": thresholds, "metric_versions": metric_versions, "bootstrap": bootstrap_config, "torch": torch.__version__, "cuda": torch.version.cuda}
     write_json(config.output_dir / "run_config.json", run_config)
-    results: dict[str, Any] = {"model": model_info, "thresholds": thresholds, "metric_versions": metric_versions}
+    results: dict[str, Any] = {"model": model_info, "thresholds": thresholds, "metric_versions": metric_versions, "bootstrap": bootstrap_config}
     if config.evaluation_mode in {"batch", "both"}:
         batch_dir = config.output_dir / "batch"; batch_dir.mkdir(exist_ok=True)
         predictions, retrieval, final_scores = infer_batch(final_public, final_embeddings, gallery, thresholds, config)
         assert_prediction_integrity(predictions, final_public, gallery)
         predictions.to_csv(batch_dir / "predictions.csv", index=False); retrieval.to_csv(batch_dir / "retrieval_predictions.csv", index=False)
+        run_manifest["input_artifacts"].update(artifact_hashes(_benchmark_artifact_paths(config, private=True)))
+        run_manifest["private_artifacts_hashed_after_prediction"] = True
+        write_json_atomic(config.output_dir / "run_manifest.json", run_manifest)
         # The next call is intentionally after prediction persistence.
         metrics, merged = evaluate_final(predictions, config.benchmark_dir / "final_test_ground_truth.csv", embedding_by_id, gallery)
         dataset_metrics = group_metrics(merged, "dataset")
@@ -737,7 +981,13 @@ def run_evaluation(config: EvaluationConfig) -> dict[str, Any]:
         metrics["overall"]["macro_dataset_b3_f1"] = float(dataset_metrics["B3_F1"].mean())
         results["batch"] = metrics
         scenario_metrics = pd.DataFrame([{"scenario": name, **values} for name, values in (("overall", metrics["overall"]), (SCENARIO_NOVEL, metrics["novel_known_species"]), (SCENARIO_DISCOVERY, metrics["discovery_only"]))])
-        ci = bootstrap_headlines(merged, config.bootstrap_samples, config.seed)
+        ci = bootstrap_headlines(
+            merged, config.bootstrap_samples, bootstrap_seed,
+            confidence_level=config.bootstrap_confidence_level,
+            method=config.bootstrap_method,
+            minimum_valid_fraction=config.bootstrap_min_valid_fraction,
+        )
+        results["bootstrap"] = bootstrap_config | {"metrics": ci.to_dict(orient="records")}
         for target in (batch_dir, config.output_dir):
             predictions.to_csv(target / "predictions.csv", index=False); retrieval.to_csv(target / "retrieval_predictions.csv", index=False)
             dataset_metrics.to_csv(target / "dataset_metrics.csv", index=False); species_metrics.to_csv(target / "species_metrics.csv", index=False)
@@ -771,17 +1021,36 @@ def run_evaluation(config: EvaluationConfig) -> dict[str, Any]:
             predictions, retrieval = infer_online(stream, embedding_by_id, gallery, thresholds, config)
             assert_prediction_integrity(predictions, final_public, gallery)
             predictions.to_csv(online_dir / f"{stream_path.stem}_predictions.csv", index=False); retrieval.to_csv(online_dir / f"{stream_path.stem}_retrieval_predictions.csv", index=False)
+            if not run_manifest["private_artifacts_hashed_after_prediction"]:
+                run_manifest["input_artifacts"].update(artifact_hashes(_benchmark_artifact_paths(config, private=True)))
+                run_manifest["private_artifacts_hashed_after_prediction"] = True
+                write_json_atomic(config.output_dir / "run_manifest.json", run_manifest)
             metrics, _merged = evaluate_final(predictions, config.benchmark_dir / "final_test_ground_truth.csv", embedding_by_id, gallery, include_online=True)
             online_rows.append({"stream_seed": int(stream_path.stem.removeprefix("stream_seed_")), "overall_ari": metrics["overall"]["ari"], "known_end_to_end_accuracy": metrics["known_identity"]["known_end_to_end_accuracy"], "novelty_f1": metrics["novelty_detection"]["novel_f1"], "novel_known_species_ari": metrics["novel_known_species"]["ari"], "discovery_only_ari": metrics["discovery_only"]["ari"], "novel_reassociation_accuracy": metrics["online"]["novel_reassociation_accuracy"], "predicted_novel_clusters": _merged.loc[_merged.predicted_status.eq("novel"), "predicted_identity"].nunique()})
         per_seed = pd.DataFrame(online_rows); per_seed.to_csv(online_dir / "online_results_per_seed.csv", index=False)
         summary = per_seed.drop(columns="stream_seed").agg(["mean", "std", "min", "max"]).T.reset_index(names="metric") if len(per_seed) else pd.DataFrame(columns=["metric", "mean", "std", "min", "max"])
         summary.to_csv(online_dir / "online_results_summary.csv", index=False); results["online"] = {"per_seed": online_rows, "summary": summary.to_dict(orient="records")}
     write_json(config.output_dir / "evaluation_results.json", results)
+    run_manifest["status"] = "completed"
+    run_manifest["completed_at_utc"] = utc_now()
+    run_manifest["output_artifacts"] = artifact_hashes({
+        "evaluation_results": config.output_dir / "evaluation_results.json",
+        "run_config": config.output_dir / "run_config.json",
+        "thresholds": config.output_dir / "thresholds.json",
+        "batch_predictions": config.output_dir / "predictions.csv",
+        "online_summary": config.output_dir / "online" / "online_results_summary.csv",
+        "paper_results": config.output_dir / "paper_main_results.csv",
+        "paper_results_with_ci": config.output_dir / "paper_main_results_with_ci.csv",
+        "resolved_config": config.output_dir / "config_resolved.yaml",
+        "environment": config.output_dir / "environment.json",
+    })
+    write_json_atomic(config.output_dir / "run_manifest.json", run_manifest)
     return results
 
 
 __all__ = [
-    "ApexIDModelAdapter", "EvaluationConfig", "Gallery", "assert_prediction_integrity", "build_gallery", "cluster_rejected",
-    "evaluate_final", "extract_with_cache", "infer_batch", "infer_online", "l2_normalize", "run_evaluation", "score_gallery",
+    "BOOTSTRAP_VERSION", "EVALUATOR_VERSION", "ONLINE_PROTOTYPE_UPDATE_VERSION",
+    "ApexIDModelAdapter", "DiscoveredPrototypeState", "EvaluationConfig", "Gallery", "assert_prediction_integrity", "bootstrap_headlines", "build_gallery", "cluster_rejected",
+    "evaluate_final", "extract_with_cache", "infer_batch", "infer_online", "l2_normalize", "occurrence_layer_sample", "run_evaluation", "score_gallery",
     "tune_cluster_threshold", "tune_discovery_threshold", "tune_known_threshold", "validate_benchmark_directory",
 ]

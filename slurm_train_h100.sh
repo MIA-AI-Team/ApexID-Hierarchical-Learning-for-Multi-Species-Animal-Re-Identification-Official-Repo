@@ -9,8 +9,8 @@
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:h100:1
 #SBATCH --time=48:00:00
-#SBATCH --output=/sc/home/%u/logs/apexid_train_%j.out
-#SBATCH --error=/sc/home/%u/logs/apexid_train_%j.err
+#SBATCH --output=apexid_train_%j.out
+#SBATCH --error=apexid_train_%j.err
 
 set -euo pipefail
 
@@ -19,8 +19,12 @@ if [ -z "${SLURM_JOB_ID:-}" ]; then
   exit 2
 fi
 
-REPO_ROOT="$HOME/ApexID"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$SCRIPT_DIR}"
 CONFIG="${CONFIG:-configs/cluster_home.yaml}"
+export APEXID_DATA_ROOT="${APEXID_DATA_ROOT:-$REPO_ROOT/ApexID_Dataset}"
+export APEXID_SPLIT_ROOT="${APEXID_SPLIT_ROOT:-$APEXID_DATA_ROOT/open_set_splits}"
+export APEXID_OUTPUT_ROOT="${APEXID_OUTPUT_ROOT:-$REPO_ROOT/outputs}"
 
 echo "SLURM_JOB_ID=$SLURM_JOB_ID"
 echo "HOSTNAME=$(hostname)"
@@ -31,18 +35,18 @@ echo "CONFIG=$CONFIG"
 WORKDIR="${SLURM_TMPDIR:-/tmp}/apexid_train_${SLURM_JOB_ID}"
 mkdir -p "$WORKDIR"
 
-cp -f "$HOME/.local/bin/uv" "$WORKDIR/uv"
-chmod +x "$WORKDIR/uv"
-UV="$WORKDIR/uv"
+UV="${UV_BIN:-$(command -v uv || true)}"
+if [ -z "$UV" ]; then
+  echo "ERROR: uv is not on PATH; set UV_BIN to its executable."
+  exit 3
+fi
 
 VENV="$WORKDIR/venv"
 $UV venv --no-project "$VENV"
 PY="$VENV/bin/python"
 
-$UV pip install --python "$PY" --torch-backend=cu124 -r "$REPO_ROOT/requirements.txt"
-# GPU nodes are headless; opencv-python needs libGL.so.1. Reinstall cv2 via headless only.
-$UV pip uninstall --python "$PY" -y opencv-python opencv-python-headless 2>/dev/null || true
-$UV pip install --python "$PY" opencv-python-headless
+$UV pip install --python "$PY" --torch-backend="${APEXID_TORCH_BACKEND:-auto}" torch==2.10.0 torchvision==0.25.0
+$UV pip install --python "$PY" --no-deps -r "$REPO_ROOT/requirements-lock.txt"
 $PY -c "import cv2; print('cv2', cv2.__version__)"
 
 export HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
@@ -66,4 +70,8 @@ fi
 cd "$REPO_ROOT"
 nvidia-smi || true
 
-$UV run --no-project -p "$PY" python scripts/train.py --config "$CONFIG"
+TRAIN_ARGS=(--config "$CONFIG")
+if [ "${REQUIRE_CLEAN_GIT:-0}" = "1" ]; then
+  TRAIN_ARGS+=(--require-clean-git)
+fi
+$UV run --no-project -p "$PY" python scripts/train.py "${TRAIN_ARGS[@]}"

@@ -18,6 +18,7 @@ from apexid.evaluation.benchmark_evaluator import (
     tune_discovery_threshold,
     tune_known_threshold,
 )
+from apexid.evaluation.open_set_metrics import compute_known_retrieval_metrics
 from apexid.evaluation.benchmark_metrics import (
     b3_metrics,
     cluster_count_error,
@@ -142,3 +143,18 @@ def test_discovery_threshold_and_clustering_are_deterministic():
     assert threshold_a == threshold_b
     clusters = cluster_rejected(embeddings, threshold_a)
     assert len(clusters) == len(labels)
+
+
+def test_retrieval_query_contributions_match_existing_aggregates():
+    gallery = _gallery()
+    queries = np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    metrics, values = compute_known_retrieval_metrics(
+        queries,
+        np.asarray(["DB_A", "DB_B"]),
+        gallery.image_embeddings,
+        gallery.image_database_ids,
+        return_query_values=True,
+    )
+    assert metrics["known/top1"] == np.mean(values["rank1"])
+    assert metrics["known/mAP"] == np.mean(values["average_precision"])
+    assert values["valid"].all()

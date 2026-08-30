@@ -8,8 +8,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=08:00:00
-#SBATCH --output=/sc/home/%u/logs/apexid_mean_std_%j.out
-#SBATCH --error=/sc/home/%u/logs/apexid_mean_std_%j.err
+#SBATCH --output=apexid_mean_std_%j.out
+#SBATCH --error=apexid_mean_std_%j.err
 
 set -euo pipefail
 
@@ -18,10 +18,11 @@ if [ -z "${SLURM_JOB_ID:-}" ]; then
   exit 2
 fi
 
-REPO_ROOT="$HOME/ApexID"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$SCRIPT_DIR}"
 CONFIG="${CONFIG:-configs/cluster_home.yaml}"
-DATA_ROOT="${DATA_ROOT:-/sc/projects/sci-aisc/apex-id/extracted/apexid-dataset}"
-SPLIT_DIR="${SPLIT_DIR:-$REPO_ROOT/open_set_splits_v2}"
+DATA_ROOT="${APEXID_DATA_ROOT:-$REPO_ROOT/ApexID_Dataset}"
+SPLIT_DIR="${APEXID_SPLIT_ROOT:-$DATA_ROOT/open_set_splits_v2}"
 
 echo "SLURM_JOB_ID=$SLURM_JOB_ID"
 echo "HOSTNAME=$(hostname)"
@@ -33,16 +34,19 @@ echo "SPLIT_DIR=$SPLIT_DIR"
 WORKDIR="${SLURM_TMPDIR:-/tmp}/apexid_mean_std_${SLURM_JOB_ID}"
 mkdir -p "$WORKDIR"
 
-cp -f "$HOME/.local/bin/uv" "$WORKDIR/uv"
-chmod +x "$WORKDIR/uv"
-UV="$WORKDIR/uv"
+UV="${UV_BIN:-$(command -v uv || true)}"
+if [ -z "$UV" ]; then
+  echo "ERROR: uv is not on PATH; set UV_BIN to its executable."
+  exit 3
+fi
 
 VENV="$WORKDIR/venv"
 $UV venv --no-project "$VENV"
 PY="$VENV/bin/python"
 
-# CPU-only deps for mean/std (torch needed because apexid/__init__.py imports device.py).
-$UV pip install --python "$PY" numpy pandas opencv-python-headless PyYAML albumentations torch --torch-backend=cpu
+# Use the canonical exact lock on CPU; H100 validation is a separate handoff.
+$UV pip install --python "$PY" --torch-backend=cpu torch==2.10.0 torchvision==0.25.0
+$UV pip install --python "$PY" --no-deps -r "$REPO_ROOT/requirements-lock.txt"
 
 cd "$REPO_ROOT"
 

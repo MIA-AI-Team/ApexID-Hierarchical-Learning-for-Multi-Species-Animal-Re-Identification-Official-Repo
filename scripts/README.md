@@ -11,6 +11,8 @@ are thin orchestration layers around the `apexid/` package.
 - `debug_data_pipeline.py`: audits CSV paths, identity mappings, known/unknown
   validation labels, sampler shape, and optionally one transformed DataLoader
   batch.
+- `repro_smoke.py`: fully offline synthetic config, model-forward, checkpoint,
+  online-assignment, and evaluator-metric smoke test.
 - `evaluate.py`: placeholder file; no CLI behavior is implemented yet.
 - `extract_embeddings.py`: placeholder file; no CLI behavior is implemented yet.
 - `infer.py`: placeholder file; no CLI behavior is implemented yet.
@@ -27,6 +29,12 @@ Train:
 
 ```bash
 python scripts/train.py --config configs/default.yaml
+```
+
+Run the offline reproduction smoke without private data or downloads:
+
+```bash
+python scripts/repro_smoke.py --output /tmp/apexid-repro-smoke.json
 ```
 
 Debug the data pipeline:

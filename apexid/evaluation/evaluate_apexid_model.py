@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 
 from .benchmark_evaluator import EvaluationConfig, run_evaluation
@@ -38,9 +39,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--discovery-threshold-objective", choices=("ari", "b3_f1"), default="ari")
     parser.add_argument("--retrieval-chunk-size", type=int, default=1024)
     parser.add_argument("--bootstrap-samples", type=int, default=1000)
+    parser.add_argument("--bootstrap-seed", type=int, default=None)
+    parser.add_argument("--bootstrap-confidence-level", type=float, default=0.95)
+    parser.add_argument("--bootstrap-method", choices=("percentile",), default="percentile")
+    parser.add_argument("--bootstrap-min-valid-fraction", type=float, default=0.90)
     parser.add_argument("--force-recompute", action="store_true")
     parser.add_argument("--save-embeddings", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--update-known-prototypes", action="store_true")
+    parser.add_argument(
+        "--update-known-prototypes", action="store_true",
+        help="Compatibility flag; true is rejected because gallery prototypes are static",
+    )
+    parser.add_argument("--require-clean-git", action="store_true")
     parser.add_argument("--no-amp", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
@@ -50,6 +59,10 @@ def main() -> None:
     args = parse_args()
     if args.batch_size <= 0 or args.num_workers < 0 or args.retrieval_chunk_size <= 0 or args.bootstrap_samples < 0:
         raise ValueError("Batch size/chunk size must be positive; workers and bootstrap samples cannot be negative")
+    if not 0.0 < args.bootstrap_confidence_level < 1.0:
+        raise ValueError("Bootstrap confidence level must be strictly between 0 and 1")
+    if not 0.0 <= args.bootstrap_min_valid_fraction <= 1.0:
+        raise ValueError("Bootstrap minimum-valid fraction must be between 0 and 1")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -64,8 +77,13 @@ def main() -> None:
         gallery_scoring=args.gallery_scoring, threshold_objective=args.threshold_objective,
         discovery_threshold_objective=args.discovery_threshold_objective,
         retrieval_chunk_size=args.retrieval_chunk_size, bootstrap_samples=args.bootstrap_samples,
+        bootstrap_seed=args.bootstrap_seed,
+        bootstrap_confidence_level=args.bootstrap_confidence_level,
+        bootstrap_method=args.bootstrap_method,
+        bootstrap_min_valid_fraction=args.bootstrap_min_valid_fraction,
         force_recompute=args.force_recompute, save_embeddings=args.save_embeddings,
         update_known_prototypes=args.update_known_prototypes, amp=not args.no_amp,
+        require_clean_git=args.require_clean_git, command=tuple(sys.argv),
     )
     results = run_evaluation(config)
     print("=" * 60)

@@ -244,8 +244,14 @@ def compute_known_retrieval_metrics(
     chunk_size=1024,
     compute_map=True,
     return_matches=False,
+    return_query_values=False,
 ):
-    """Compute known-identity retrieval metrics using train embeddings as gallery."""
+    """Compute known-identity retrieval metrics using train embeddings as gallery.
+
+    ``return_query_values`` additively exposes the existing per-query Rank-1 and
+    average-precision contributions.  The aggregate formulas and default return
+    type are unchanged.
+    """
     query_embeddings, query_labels = _validate_embedding_labels(
         query_embeddings,
         query_labels,
@@ -276,12 +282,21 @@ def compute_known_retrieval_metrics(
 
     num_queries = int(query_labels.shape[0])
     num_gallery = int(gallery_labels.shape[0])
+    query_values = {
+        "valid": np.zeros(num_queries, dtype=bool),
+        "rank1": np.full(num_queries, np.nan, dtype=np.float64),
+        "average_precision": np.full(num_queries, np.nan, dtype=np.float64),
+    }
     if return_matches:
         best_scores = np.full(num_queries, -np.inf, dtype=np.float32)
         best_labels = np.full(num_queries, -1, dtype=gallery_labels.dtype)
     if num_queries == 0 or num_gallery == 0:
+        if return_matches and return_query_values:
+            return result, best_scores, best_labels, query_values
         if return_matches:
             return result, best_scores, best_labels
+        if return_query_values:
+            return result, query_values
         return result
 
     chunk_size = _chunk_size(chunk_size, num_queries)
@@ -315,6 +330,7 @@ def compute_known_retrieval_metrics(
             continue
 
         valid_queries += int(np.sum(has_positive))
+        query_values["valid"][start:stop] = has_positive
 
         if max_rank > 0:
             rank_limit = min(max_rank, num_gallery)
@@ -331,6 +347,7 @@ def compute_known_retrieval_metrics(
                 top_indices = np.take_along_axis(top_indices, top_order, axis=1)
             top_relevance = gallery_labels[top_indices] == labels_chunk[:, None]
             top1_correct[start:stop] = top_relevance[:, :1].any(axis=1).astype(np.float64)
+            query_values["rank1"][start:stop][has_positive] = top1_correct[start:stop][has_positive]
             for k in ranks:
                 k_eff = min(k, rank_limit)
                 top_hits[k] += int(top_relevance[has_positive, :k_eff].any(axis=1).sum())
@@ -367,11 +384,17 @@ def compute_known_retrieval_metrics(
                     np.arange(1, positive_ranks.size + 1, dtype=np.float64)
                     / positive_ranks.astype(np.float64)
                 )
-                ap_values.append(float(np.mean(precision_at_hits)))
+                average_precision = float(np.mean(precision_at_hits))
+                ap_values.append(average_precision)
+                query_values["average_precision"][start + row_offset] = average_precision
 
     if valid_queries == 0:
+        if return_matches and return_query_values:
+            return result, best_scores, best_labels, query_values
         if return_matches:
             return result, best_scores, best_labels
+        if return_query_values:
+            return result, query_values
         return result
 
     for k in top_k:
@@ -381,8 +404,12 @@ def compute_known_retrieval_metrics(
     if compute_map:
         result["known/mAP"] = _safe_mean(ap_values)
     result["known/BAKS"] = _balanced_mean_by_label(query_labels, top1_correct)
+    if return_matches and return_query_values:
+        return result, best_scores, best_labels, query_values
     if return_matches:
         return result, best_scores, best_labels
+    if return_query_values:
+        return result, query_values
     return result
 
 

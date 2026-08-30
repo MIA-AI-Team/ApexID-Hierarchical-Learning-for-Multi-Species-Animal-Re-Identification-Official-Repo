@@ -9,8 +9,8 @@
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:h100:1
 #SBATCH --time=48:00:00
-#SBATCH --output=/sc/home/%u/logs/apexid_splits_%j.out
-#SBATCH --error=/sc/home/%u/logs/apexid_splits_%j.err
+#SBATCH --output=apexid_splits_%j.out
+#SBATCH --error=apexid_splits_%j.err
 
 set -euo pipefail
 
@@ -19,25 +19,28 @@ if [ -z "${SLURM_JOB_ID:-}" ]; then
   exit 2
 fi
 
-REPO_ROOT="$HOME/ApexID"
-METADATA="${METADATA:-/sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/metadata.csv}"
-DATA_ROOT="${DATA_ROOT:-/sc/projects/sci-aisc/apex-id/extracted/apexid-dataset}"
-OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/open_set_splits_v2}"
-FEATURE_CACHE="${FEATURE_CACHE:-$REPO_ROOT/split_v2_feature_cache}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$SCRIPT_DIR}"
+METADATA="${METADATA:-$REPO_ROOT/metadata.csv}"
+DATA_ROOT="${APEXID_DATA_ROOT:-$REPO_ROOT/ApexID_Dataset}"
+OUTPUT_DIR="${APEXID_SPLIT_ROOT:-$DATA_ROOT/open_set_splits_v2}"
+FEATURE_CACHE="${FEATURE_CACHE:-$OUTPUT_DIR.feature_cache}"
 EXPECTED_METADATA_SHA256="fd8a921f7ab5566b02fa166bfbbfc948375ee68226b15c29caab8b7fc3ebacf0"
 
 WORKDIR="${SLURM_TMPDIR:-/tmp}/apexid_splits_${SLURM_JOB_ID}"
 mkdir -p "$WORKDIR"
 
-cp -f "$HOME/.local/bin/uv" "$WORKDIR/uv"
-chmod +x "$WORKDIR/uv"
-UV="$WORKDIR/uv"
+UV="${UV_BIN:-$(command -v uv || true)}"
+if [ -z "$UV" ]; then
+  echo "ERROR: uv is not on PATH; set UV_BIN to its executable."
+  exit 3
+fi
 
 VENV="$WORKDIR/venv"
 $UV venv --no-project "$VENV"
 PY="$VENV/bin/python"
 
-$UV pip install --python "$PY" --torch-backend=cu124 -r "$REPO_ROOT/requirements-split-v2.txt"
+$UV pip install --python "$PY" --torch-backend="${APEXID_TORCH_BACKEND:-auto}" -r "$REPO_ROOT/requirements-split-v2.txt"
 $UV pip uninstall --python "$PY" -y opencv-python opencv-python-headless 2>/dev/null || true
 $UV pip install --python "$PY" opencv-python-headless==4.13.0.92
 

@@ -73,6 +73,29 @@ be regenerated. If `b3_f1` selected either discovery threshold, retune on the
 development split and regenerate final predictions and metrics. This correction
 does not invalidate ARI, mAP, or other unrelated metrics.
 
+## Causal Online Discovery and Uncertainty
+
+Known gallery prototypes are static. Each discovered identity stores a float64
+unnormalized embedding sum plus count; only its scoring view is L2-normalized.
+This is versioned as `unnormalized_vector_sum_v2`. Streams follow arrival order,
+state is empty at each stream start, and future images cannot affect earlier
+assignments. Passing `update_known_prototypes=true` is an unsupported-protocol
+error.
+
+Headline intervals use `identity_block_occurrence_layers_v2`. Each replicate
+samples true-identity blocks with replacement. Every occurrence receives a new
+true label, while predicted clusters are relabeled by predicted cluster and
+occurrence rank. Duplicate copies of one identity cannot interact; distinct
+identities sharing a predicted cluster retain maximum possible overlap, and
+each copied block retains its original fragmentation.
+
+Percentile intervals cover Overall ARI, Overall B³ F1, known Rank-1, known mAP,
+known end-to-end accuracy, and novelty AUROC. Requested, valid, and invalid
+replicate counts plus a reliability flag are recorded. Fewer than two valid
+replicates or a valid fraction below 0.90 produces `NaN` bounds and a warning.
+Online permutation mean/std/min/max remains stream-order sensitivity, not a
+bootstrap interval or training-seed uncertainty.
+
 Diagnostics run every 5 epochs by default to reduce validation cost. The
 intra/inter gap checks whether same identities are closer than different
 identities. Embedding norms detect collapse or instability. Alignment measures

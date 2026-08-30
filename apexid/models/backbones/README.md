@@ -7,6 +7,8 @@ This folder contains feature extractors that produce ApexID embeddings.
 - `osnet.py`: OSNet architecture variants adapted for configurable input
   channels and embedding dimensions.
 - `osnet_pt.py`: pretrained OSNet wrappers and the six-channel wavelet adapter.
+- `dinov3_convnext.py`: Hugging Face DINOv3 ConvNeXt wrappers with immutable
+  revision and full-file SHA-256 verification support.
 - `convnext.py`: TorchVision ConvNeXt wrappers with ApexID embedding projection,
   random-init and ImageNet-pretrained options.
 - `registry.py`: backbone registration and lookup helpers.
@@ -43,6 +45,15 @@ The `_pt` aliases default to ImageNet pretrained weights. Pretrained ConvNeXt
 supports RGB input directly and six-channel wavelet input through the same
 `WaveletStem` adapter used by pretrained OSNet. Random-init ConvNeXt can replace
 the first convolution for any positive `input_channels`.
+
+Pretrained artifacts are auditable rather than moving downloads. OSNet uses
+`kaiyangzhou/osnet` revision
+`a5c5cc037c24235cda3b21085b93ad77c9616224` and verifies per-variant SHA-256.
+The active DINOv3 Small config uses revision
+`421020015aa4266363db803b6049a529999afb1e` and SHA-256
+`8182492b73345ceb449ed6be0de486d778a73afb273ba2684de785a71ef1da9d`.
+TorchVision ConvNeXt records the installed TorchVision version, weight enum,
+resolved URL, cached-file SHA-256, and filename hash prefix.
 
 ## Common Commands
 

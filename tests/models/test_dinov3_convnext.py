@@ -1,5 +1,7 @@
 from types import SimpleNamespace
+import hashlib
 
+import pytest
 import torch
 from torch import nn
 
@@ -119,3 +121,42 @@ def test_apexid_normalizes_dinov3_convnext_embeddings(monkeypatch):
 
     assert tuple(embeddings.shape) == (2, 16)
     assert torch.allclose(embeddings.norm(dim=1), torch.ones(2), atol=1e-5)
+
+
+def test_dinov3_pinned_revision_and_hash_are_verified(tmp_path, monkeypatch):
+    calls = []
+    weight = tmp_path / "model.safetensors"
+    weight.write_bytes(b"verified-dino-weight")
+    digest = hashlib.sha256(weight.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        "apexid.models.backbones.dinov3_convnext._transformers_classes",
+        lambda: _fake_transformers(calls),
+    )
+    monkeypatch.setattr(
+        "apexid.models.backbones.dinov3_convnext._hf_hub_download",
+        lambda **kwargs: weight,
+    )
+    model = build_backbone(
+        "dinov3_convnext_small_pt", embedding_dim=4,
+        revision="immutable", expected_sha256=digest,
+    )
+    assert calls[0][2]["revision"] == "immutable"
+    assert model.pretrained_provenance["sha256"] == digest
+
+
+def test_dinov3_rejects_weight_hash_mismatch(tmp_path, monkeypatch):
+    weight = tmp_path / "model.safetensors"
+    weight.write_bytes(b"wrong")
+    monkeypatch.setattr(
+        "apexid.models.backbones.dinov3_convnext._transformers_classes",
+        lambda: _fake_transformers([]),
+    )
+    monkeypatch.setattr(
+        "apexid.models.backbones.dinov3_convnext._hf_hub_download",
+        lambda **kwargs: weight,
+    )
+    with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
+        build_backbone(
+            "dinov3_convnext_small_pt", embedding_dim=4,
+            revision="immutable", expected_sha256="0" * 64,
+        )

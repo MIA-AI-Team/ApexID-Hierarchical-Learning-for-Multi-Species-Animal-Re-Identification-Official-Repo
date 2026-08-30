@@ -5,6 +5,8 @@ from collections.abc import Mapping
 import torch
 from torch import nn
 
+from apexid.utils.provenance import sha256_file
+
 from .osnet_pt import WaveletStem
 
 __all__ = [
@@ -26,6 +28,8 @@ _DINOV3_CONVNEXT_REPOS = {
     "base": "facebook/dinov3-convnext-base-pretrain-lvd1689m",
     "large": "facebook/dinov3-convnext-large-pretrain-lvd1689m",
 }
+DINO_SMALL_REVISION = "421020015aa4266363db803b6049a529999afb1e"
+DINO_SMALL_WEIGHT_SHA256 = "8182492b73345ceb449ed6be0de486d778a73afb273ba2684de785a71ef1da9d"
 
 
 def _transformers_classes():
@@ -37,6 +41,37 @@ def _transformers_classes():
             "Install the dependencies from requirements.txt."
         ) from exc
     return AutoConfig, AutoModel
+
+
+def _hf_hub_download(**kwargs):
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as exc:
+        raise ImportError("Pinned DINOv3 weights require the 'huggingface-hub' package.") from exc
+    return hf_hub_download(**kwargs)
+
+
+def _verify_pretrained_artifact(
+    repo_id: str,
+    revision: str | None,
+    expected_sha256: str | None,
+    filename: str,
+    download_kwargs: Mapping[str, object],
+) -> dict[str, str | None]:
+    if expected_sha256 is None:
+        return {"repo_id": repo_id, "revision": revision, "filename": filename, "sha256": None, "path": None}
+    if not revision:
+        raise ValueError("An immutable Hugging Face revision is required when expected_sha256 is set")
+    supported = {"cache_dir", "force_download", "local_files_only", "token"}
+    kwargs = {key: value for key, value in download_kwargs.items() if key in supported}
+    path = _hf_hub_download(repo_id=repo_id, filename=filename, revision=revision, **kwargs)
+    actual_sha256 = sha256_file(path)
+    if actual_sha256.lower() != str(expected_sha256).lower():
+        raise RuntimeError(
+            f"DINOv3 weight SHA-256 mismatch for {repo_id}@{revision}/{filename}: "
+            f"expected {expected_sha256}, got {actual_sha256}"
+        )
+    return {"repo_id": repo_id, "revision": revision, "filename": filename, "sha256": actual_sha256, "path": str(path)}
 
 
 def _repo_for_variant(variant: str) -> str:
@@ -81,6 +116,9 @@ class DINOv3ConvNeXtBackbone(nn.Module):
         pretrained: bool = False,
         model_name: str | None = None,
         repo_id: str | None = None,
+        revision: str | None = None,
+        expected_sha256: str | None = None,
+        weight_filename: str = "model.safetensors",
         **kwargs,
     ):
         super().__init__()
@@ -90,6 +128,9 @@ class DINOv3ConvNeXtBackbone(nn.Module):
         self.input_channels = int(input_channels)
         self.pretrained = bool(pretrained)
         self.model_name = str(repo_id or model_name or _repo_for_variant(self.variant))
+        self.revision = revision
+        self.expected_sha256 = expected_sha256
+        self.weight_filename = str(weight_filename)
 
         if self.embedding_dim <= 0:
             raise ValueError("DINOv3 ConvNeXt embedding_dim must be a positive integer.")
@@ -101,10 +142,20 @@ class DINOv3ConvNeXtBackbone(nn.Module):
 
         AutoConfig, AutoModel = _transformers_classes()
         if self.pretrained:
-            self.model = AutoModel.from_pretrained(self.model_name, **kwargs)
+            self.pretrained_provenance = _verify_pretrained_artifact(
+                self.model_name, self.revision, self.expected_sha256, self.weight_filename, kwargs,
+            )
+            pretrained_kwargs = dict(kwargs)
+            if self.revision is not None:
+                pretrained_kwargs["revision"] = self.revision
+            self.model = AutoModel.from_pretrained(self.model_name, **pretrained_kwargs)
         else:
-            config = AutoConfig.from_pretrained(self.model_name, **kwargs)
+            config_kwargs = dict(kwargs)
+            if self.revision is not None:
+                config_kwargs["revision"] = self.revision
+            config = AutoConfig.from_pretrained(self.model_name, **config_kwargs)
             self.model = AutoModel.from_config(config)
+            self.pretrained_provenance = None
 
         self.stem = WaveletStem() if self.input_channels == 6 else nn.Identity()
         pooled_dim = _pooled_feature_dim(self.model.config)

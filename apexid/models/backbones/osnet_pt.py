@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import os
 import warnings
 from collections import OrderedDict
+from pathlib import Path
 
 import torch
 from torch import nn
+
+from apexid.utils.provenance import sha256_file
 
 from .osnet import (
     osnet_ibn_x1_0,
@@ -26,13 +28,23 @@ __all__ = [
     "osnet_x1_0_pt",
 ]
 
-PRETRAINED_URLS = {
-    "osnet_x1_0": "https://drive.google.com/uc?id=1LaG1EJpHrxdAxKnSCJ_i0u-nbxSAeiFY",
-    "osnet_x0_75": "https://drive.google.com/uc?id=1uwA9fElHOk3ZogwbeY5GkLI6QPTX70Hq",
-    "osnet_x0_5": "https://drive.google.com/uc?id=16DGLbZukvVYgINws8u8deSaOqjybZ83i",
-    "osnet_x0_25": "https://drive.google.com/uc?id=1rb8UN5ZzPKRc_xvtHlyDh-cSz88YX9hs",
-    "osnet_ibn_x1_0": "https://drive.google.com/uc?id=1sr90V6irlYYDd4_4ISU2iruoRG8J__6l",
+OSNET_HF_REPO = "kaiyangzhou/osnet"
+OSNET_HF_REVISION = "a5c5cc037c24235cda3b21085b93ad77c9616224"
+PRETRAINED_ARTIFACTS = {
+    "osnet_x1_0": ("osnet_x1_0_imagenet.pth", "fe2d63f9157c28a4a8d8ca29bec12d5b2988ac0346d712025789ea9174968e79"),
+    "osnet_x0_75": ("osnet_x0_75_imagenet.pth", "37add23d2ebc7a22584203d6c22976fdda0f7f29c7b7d79257ac22ae20aec809"),
+    "osnet_x0_5": ("osnet_x0_5_imagenet.pth", "f10ea9e26ee55b1a65cee3c6e88aa1ae105fe981af3e37692fa68a72fc64bf8e"),
+    "osnet_x0_25": ("osnet_x0_25_imagenet.pth", "f54941a66bad4ddd07f2907f498c810ce639ce7a1abeaf2a151f8da118d84693"),
+    "osnet_ibn_x1_0": ("osnet_ibn_x1_0_imagenet.pth", "4e6fbaa3f5e31170aae76372a9ebbe36551e4011a4ed88b139d50bc98729e23a"),
 }
+
+
+def _hf_hub_download(**kwargs):
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as exc:
+        raise ImportError("Loading pinned pretrained OSNet weights requires 'huggingface-hub'.") from exc
+    return hf_hub_download(**kwargs)
 
 
 class WaveletStem(nn.Module):
@@ -94,24 +106,26 @@ class PretrainedOSNet(nn.Module):
         return self.backbone(x)
 
 
-def init_pretrained_weights(model, key: str):
+def init_pretrained_weights(
+    model,
+    key: str,
+    *,
+    repo_id: str = OSNET_HF_REPO,
+    revision: str = OSNET_HF_REVISION,
+    expected_sha256: str | None = None,
+):
     """Load ImageNet-pretrained weights where parameter names and shapes match."""
-    if key not in PRETRAINED_URLS:
+    if key not in PRETRAINED_ARTIFACTS:
         raise ValueError(f"Unknown pretrained OSNet key '{key}'.")
-
-    try:
-        import gdown
-    except ImportError as exc:
-        raise ImportError(
-            "Loading pretrained OSNet weights requires the 'gdown' package."
-        ) from exc
-
-    cache_dir = os.path.join(torch.hub.get_dir(), "checkpoints")
-    os.makedirs(cache_dir, exist_ok=True)
-    cached_file = os.path.join(cache_dir, f"{key}_imagenet.pth")
-
-    if not os.path.exists(cached_file):
-        gdown.download(PRETRAINED_URLS[key], cached_file, quiet=False)
+    filename, pinned_sha256 = PRETRAINED_ARTIFACTS[key]
+    expected_sha256 = pinned_sha256 if expected_sha256 is None else expected_sha256
+    cached_file = Path(_hf_hub_download(repo_id=repo_id, filename=filename, revision=revision))
+    actual_sha256 = sha256_file(cached_file)
+    if actual_sha256.lower() != str(expected_sha256).lower():
+        raise RuntimeError(
+            f"OSNet weight SHA-256 mismatch for {repo_id}@{revision}/{filename}: "
+            f"expected {expected_sha256}, got {actual_sha256}"
+        )
 
     state_dict = torch.load(cached_file, map_location="cpu", weights_only=False)
     model_dict = model.state_dict()
@@ -134,7 +148,10 @@ def init_pretrained_weights(model, key: str):
             "no parameter shapes matched."
         )
         return {
-            "cached_file": cached_file,
+            "cached_file": str(cached_file),
+            "repo_id": repo_id,
+            "revision": revision,
+            "sha256": actual_sha256,
             "matched_layers": matched_layers,
             "discarded_layers": discarded_layers,
         }
@@ -142,7 +159,10 @@ def init_pretrained_weights(model, key: str):
     model_dict.update(new_state_dict)
     model.load_state_dict(model_dict)
     return {
-        "cached_file": cached_file,
+        "cached_file": str(cached_file),
+        "repo_id": repo_id,
+        "revision": revision,
+        "sha256": actual_sha256,
         "matched_layers": matched_layers,
         "discarded_layers": discarded_layers,
     }
@@ -151,9 +171,12 @@ def init_pretrained_weights(model, key: str):
 def _make_pretrained_builder(base_builder, weight_key: str):
     def builder(embedding_dim=512, input_channels=3, pretrained=True, **kwargs):
         core = base_builder(embedding_dim=embedding_dim, input_channels=3, **kwargs)
+        provenance = None
         if pretrained:
-            init_pretrained_weights(core, key=weight_key)
-        return PretrainedOSNet(core, input_channels=input_channels)
+            provenance = init_pretrained_weights(core, key=weight_key)
+        wrapped = PretrainedOSNet(core, input_channels=input_channels)
+        wrapped.pretrained_provenance = provenance
+        return wrapped
 
     return builder
 

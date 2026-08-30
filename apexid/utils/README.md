@@ -5,7 +5,9 @@ training, and visualization.
 
 ## Main Files
 
-- `config.py`: YAML config loading and default config path.
+- `config.py`: YAML loading plus recursive environment-variable expansion.
+- `provenance.py`: atomic JSON/YAML, SHA-256, environment/Git capture, strict
+  clean-Git checks, artifact records, and normalization validation.
 - `device.py`: CUDA/CPU device selection and device-info helpers.
 - `seed.py`: reproducibility helpers for Python, NumPy, PyTorch, workers, and
   generators.
@@ -47,6 +49,10 @@ from apexid.utils.config import load_config
 from apexid.utils.device import get_device
 from apexid.utils.seed import seed_everything
 ```
+
+Training and sealed evaluation write `config_resolved.yaml`, `environment.json`,
+and `run_manifest.json`. Capture is graceful without Git or CUDA;
+`--require-clean-git` turns unavailable or dirty Git state into an error.
 
 ## Contributor Notes
 

@@ -64,6 +64,17 @@ from apexid.utils.config import DEFAULT_CONFIG_PATH, load_config
 from apexid.utils.device import get_device
 from apexid.utils.embedding_umap import EmbeddingUMAPPlotter
 from apexid.utils.lr_range_test import run_lr_range_test, write_lr_range_test_artifacts
+from apexid.utils.provenance import (
+    artifact_hashes,
+    capture_environment,
+    capture_git_state,
+    command_record,
+    require_clean_git,
+    utc_now,
+    validate_normalization_stats,
+    write_json_atomic,
+    write_yaml_atomic,
+)
 from apexid.utils.seed import DEFAULT_SEED, make_torch_generator, seed_everything, seed_worker
 
 
@@ -659,7 +670,7 @@ def build_trainer(
     )
 
 
-def train_from_config(cfg):
+def train_from_config(cfg, *, config_path=None, command=None, require_clean_git_state=False):
     """Run a full training job from a loaded config dictionary.
 
     Args:
@@ -669,6 +680,9 @@ def train_from_config(cfg):
         dict: Training history returned by ``Trainer.train``.
     """
     cfg = resolve_training_profile(cfg)
+    git_state = capture_git_state(REPO_ROOT)
+    if require_clean_git_state:
+        require_clean_git(git_state)
     seed = int(cfg.get("seed", DEFAULT_SEED) or DEFAULT_SEED)
     seed_everything(seed)
 
@@ -681,8 +695,58 @@ def train_from_config(cfg):
     output_dir = Path(_as_dict(cfg.get("experiment", {})).get("output_dir", "outputs/apexid_run"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    write_json_atomic(output_dir / "environment.json", capture_environment())
+    write_yaml_atomic(output_dir / "config_resolved.yaml", cfg)
+    data_cfg = _as_dict(cfg.get("data", {}))
+    train_path = Path(_data_path(data_cfg, "train_path", "train_csv"))
+    split_root = train_path.parent
+    normalization_path = data_cfg.get("normalization_stats_path")
+    if normalization_path in {None, ""}:
+        normalization_path = split_root / "normalization_stats.json"
+    split_manifest_path = split_root / "split_manifest.csv"
+    normalization_record = None
+    if Path(normalization_path).is_file():
+        normalization_record = validate_normalization_stats(
+            normalization_path,
+            train_csv=train_path,
+            split_manifest=split_manifest_path,
+        )
+        normalization_record = dict(normalization_record) | {
+            "validated_stats_file": True,
+            "path": str(normalization_path),
+        }
+    run_manifest = {
+        "schema_version": 1,
+        "run_type": "training",
+        "status": "running",
+        "started_at_utc": utc_now(),
+        "command": command_record(command),
+        "git": git_state,
+        "seed": seed,
+        "input_artifacts": artifact_hashes({
+            "config": Path(config_path) if config_path else None,
+            "requirements_lock": REPO_ROOT / "requirements-lock.txt",
+            "train_csv": train_path,
+            "val_known_csv": data_cfg.get("val_known_path") or data_cfg.get("val_known_csv"),
+            "val_unknown_csv": data_cfg.get("val_unknown_path") or data_cfg.get("val_unknown_csv"),
+            "val_csv": data_cfg.get("val_path") or data_cfg.get("val_csv"),
+            "split_manifest": split_manifest_path,
+            "split_summary": split_root / "split_summary.json",
+            "normalization_stats": normalization_path,
+            "metadata_data_root": Path(data_cfg.get("root_dir", "ApexID_Dataset")) / "metadata.csv",
+            "metadata_repository_root": REPO_ROOT / "metadata.csv",
+        }),
+        "normalization": normalization_record or {
+            "mean": _as_dict(data_cfg.get("transforms", {})).get("mean"),
+            "std": _as_dict(data_cfg.get("transforms", {})).get("std"),
+            "validated_stats_file": False,
+        },
+    }
+    write_json_atomic(output_dir / "run_manifest.json", run_manifest)
+
     train_dataset, validation_datasets, num_classes = build_datasets(cfg)
     cfg = _apply_subcenter_margin_config(cfg, train_dataset, num_classes)
+    write_yaml_atomic(output_dir / "config_resolved.yaml", cfg)
     train_loader, validation_loaders = build_dataloaders(cfg, train_dataset, validation_datasets, device)
 
     checkpoint_cfg = _as_dict(cfg.get("checkpoint", {}))
@@ -699,8 +763,22 @@ def train_from_config(cfg):
         "device": str(device),
         "resume_path": resume_path,
     }
+    run_manifest["dataset_counts"] = {
+        "classes": int(num_classes),
+        "train": int(len(train_dataset)),
+        "gallery": int(len(validation_datasets["gallery"])),
+        "val_known": int(len(validation_datasets["known"])),
+        "val_unknown": int(len(validation_datasets["unknown"])),
+        "val": int(len(validation_datasets["mixed"])),
+    }
 
     model, head, criterion = build_components(cfg, num_classes=num_classes)
+    run_manifest["model"] = {
+        "backbone": _as_dict(cfg.get("model", {})).get("backbone"),
+        "embedding_dim": _as_dict(cfg.get("model", {})).get("embedding_dim"),
+        "pretrained_artifact": getattr(model.backbone, "pretrained_provenance", None),
+    }
+    write_json_atomic(output_dir / "run_manifest.json", run_manifest)
     model.to(device)
     head.to(device)
     apply_finetune_phase(model, head, cfg, epoch=0)
@@ -753,6 +831,20 @@ def train_from_config(cfg):
         resume_history=resume_history,
     )
     torch.save(history, output_dir / "history.pt")
+    checkpoint_dir = Path(_as_dict(cfg.get("checkpoint", {})).get("output_dir", output_dir / "checkpoints"))
+    early_dir = Path(_as_dict(cfg.get("early_stopping", {})).get("output_dir", checkpoint_dir))
+    run_manifest["status"] = "completed"
+    run_manifest["completed_at_utc"] = utc_now()
+    run_manifest["output_artifacts"] = artifact_hashes({
+        "history": output_dir / "history.pt",
+        "last_checkpoint": checkpoint_dir / _as_dict(cfg.get("checkpoint", {})).get("filename", "last_checkpoint.pt"),
+        "best_full_model": early_dir / _as_dict(cfg.get("early_stopping", {})).get("full_model_name", "best_full_model.pt"),
+        "best_backbone": early_dir / _as_dict(cfg.get("early_stopping", {})).get("backbone_name", "best_backbone.pt"),
+        "best_metadata": early_dir / _as_dict(cfg.get("early_stopping", {})).get("metadata_name", "best_metadata.json"),
+        "resolved_config": output_dir / "config_resolved.yaml",
+        "environment": output_dir / "environment.json",
+    })
+    write_json_atomic(output_dir / "run_manifest.json", run_manifest)
     return history
 
 
@@ -763,13 +855,23 @@ def parse_args():
         default=str(DEFAULT_CONFIG_PATH),
         help="Path to YAML config. Defaults to configs/default.yaml.",
     )
+    parser.add_argument(
+        "--require-clean-git",
+        action="store_true",
+        help="Reject dirty or unverifiable Git state before training.",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
     cfg = load_config(config_path=args.config)
-    train_from_config(cfg)
+    train_from_config(
+        cfg,
+        config_path=args.config,
+        command=sys.argv,
+        require_clean_git_state=args.require_clean_git,
+    )
 
 
 if __name__ == "__main__":
