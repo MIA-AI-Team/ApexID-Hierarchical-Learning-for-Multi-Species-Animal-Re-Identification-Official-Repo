@@ -290,7 +290,13 @@ def annotate_explicit_groups(rows: Sequence[dict[str, object]], enabled: Iterabl
     for row in rows:
         source = explicit_source_key(row, enabled)
         row["_explicit_source"] = source
-        row["_explicit_group_id"] = stable_id("src", source) if source else ""
+        # Explicit-source assignment is performed within each canonical
+        # identity. Scope the manifest ID the same way so a source token that
+        # happens to repeat between identities cannot create a false
+        # cross-identity train/val_known violation.
+        row["_explicit_group_id"] = (
+            stable_id("src", row["dataset"], row["identity"], source) if source else ""
+        )
         stats[(str(row["dataset"]), "matched" if source else "unmatched")] += 1
     return stats
 

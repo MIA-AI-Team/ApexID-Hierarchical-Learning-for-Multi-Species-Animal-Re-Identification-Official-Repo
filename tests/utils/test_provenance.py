@@ -53,3 +53,19 @@ def test_normalization_stats_hash_validation(tmp_path):
     train.write_text("path,identity\nb.jpg,B\n", encoding="utf-8")
     with pytest.raises(ValueError, match="train CSV hash"):
         validate_normalization_stats(stats, train_csv=train)
+
+
+def test_normalization_stats_accepts_standard_deviation_key(tmp_path):
+    train = tmp_path / "train.csv"
+    train.write_text("path,identity\na.jpg,A\n", encoding="utf-8")
+    stats = tmp_path / "normalization_stats.json"
+    write_json_atomic(
+        stats,
+        {
+            "train_csv_sha256": sha256_file(train),
+            "mean": [0.1] * 3,
+            "standard_deviation": [0.2] * 3,
+        },
+    )
+    record = validate_normalization_stats(stats, train_csv=train)
+    assert record["std"] == [0.2] * 3

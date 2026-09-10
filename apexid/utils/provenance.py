@@ -209,8 +209,13 @@ def validate_normalization_stats(
         actual_manifest_hash = sha256_file(split_manifest)
         if expected_manifest_hash and expected_manifest_hash != actual_manifest_hash:
             raise ValueError("normalization_stats.json manifest hash does not match split_manifest.csv")
-    if len(payload.get("mean", [])) != 3 or len(payload.get("std", [])) != 3:
+    std = payload.get("std")
+    if std is None:
+        std = payload.get("standard_deviation", [])
+    if len(payload.get("mean", [])) != 3 or len(std) != 3:
         raise ValueError("normalization_stats.json must contain three-channel mean and standard deviation")
+    payload = dict(payload)
+    payload["std"] = std
     return payload
 
 

@@ -1,33 +1,33 @@
 experiment:
-  name: apexid_dinov3_convnext_small_pt_sphereface2a_lw20_full_finetune_2048
-  output_dir: "${APEXID_OUTPUT_ROOT:-outputs}/apexid_dinov3_convnext_small_pt_sphereface2a_lw20_full_finetune_2048"
+  name: apexid_convnext_small_pt_sphereface2a_lw20_full_finetune_2048_v2
+  output_dir: outputs/apexid_convnext_small_pt_sphereface2a_lw20_full_finetune_2048_v2
 seed: 42
 device:
   prefer_gpu: true
   gpu_index: 0
 data:
-  train_path: "${APEXID_SPLIT_ROOT:-ApexID_Dataset/open_set_splits}/train.csv"
-  val_known_path: "${APEXID_SPLIT_ROOT:-ApexID_Dataset/open_set_splits}/val_known.csv"
-  val_unknown_path: "${APEXID_SPLIT_ROOT:-ApexID_Dataset/open_set_splits}/val_unknown.csv"
-  val_path: "${APEXID_SPLIT_ROOT:-ApexID_Dataset/open_set_splits}/val.csv"
+  train_path: /sc/home/mohammed.mohammed/ApexID/open_set_splits_v2/train.csv
+  val_known_path: /sc/home/mohammed.mohammed/ApexID/open_set_splits_v2/val_known.csv
+  val_unknown_path: /sc/home/mohammed.mohammed/ApexID/open_set_splits_v2/val_unknown.csv
+  val_path: /sc/home/mohammed.mohammed/ApexID/open_set_splits_v2/val.csv
   train_csv: null
   val_known_csv: null
   val_unknown_csv: null
   val_csv: null
-  root_dir: "${APEXID_DATA_ROOT:-ApexID_Dataset}"
+  root_dir: /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset
   image_size:
   - 440
   - 440
   wavelet: false
   transforms:
     mean:
-    - 0.152443
-    - 0.150199
-    - 0.146532
+    - 0.152881
+    - 0.150744
+    - 0.147093
     std:
-    - 0.246863
-    - 0.240918
-    - 0.235914
+    - 0.24765
+    - 0.241872
+    - 0.236785
 dataloader:
   batch_size: 64
   val_batch_size: 128
@@ -46,16 +46,14 @@ model:
   embedding_dim: 2048
   input_channels: 3
   backbone:
-    name: dinov3_convnext_small_pt
+    name: convnext_small_pt
     kwargs:
       pretrained: true
-      revision: 421020015aa4266363db803b6049a529999afb1e
-      expected_sha256: 8182492b73345ceb449ed6be0de486d778a73afb273ba2684de785a71ef1da9d
 head:
   name: sphereface2
   kwargs:
     magn_type: A
-    alpha: 0.90
+    alpha: 0.9
     r: 40.0
     m: 0.3
     t: 3.0
@@ -92,8 +90,8 @@ finetune:
   head_only_epochs: 3
   unfreeze_top_fraction: 0.0
   optimizer:
-    backbone_lr: 1.0e-5
-    head_lr: 1.0e-4
+    backbone_lr: 1.0e-05
+    head_lr: 0.0001
     head_lr_multiplier: null
     backbone_weight_decay: null
     head_weight_decay: null
@@ -101,11 +99,11 @@ finetune:
     name: cosine_annealing_lr
     kwargs:
       T_max: null
-      eta_min: 1.0e-6
+      eta_min: 1.0e-06
     warmup:
       enabled: true
       epochs: 5
-      start_lr: 1.0e-6
+      start_lr: 1.0e-06
   lr_range_test:
     enabled: false
     mode: suggest_lr
@@ -173,11 +171,10 @@ embedding_plot:
   filename_template: epoch_{epoch_number:03d}_umap.png
   best_filename: best_embedding_space.png
 checkpoint:
-  output_dir: "${APEXID_OUTPUT_ROOT:-outputs}/apexid_dinov3_convnext_small_pt_sphereface2a_lw20_full_finetune_2048/checkpoints"
+  output_dir: outputs/apexid_convnext_small_pt_sphereface2a_lw20_full_finetune_2048_v2/checkpoints
   every_n_epochs: 1
   filename: last_checkpoint.pt
   delete_previous: true
-  # auto: continue from last_checkpoint.pt when present (SLURM time-limit resume)
   resume_path: auto
 early_stopping:
   enabled: true
@@ -185,7 +182,7 @@ early_stopping:
   mode: max
   patience: 10
   min_delta: 0.0
-  output_dir: "${APEXID_OUTPUT_ROOT:-outputs}/apexid_dinov3_convnext_small_pt_sphereface2a_lw20_full_finetune_2048/checkpoints"
+  output_dir: outputs/apexid_convnext_small_pt_sphereface2a_lw20_full_finetune_2048_v2/checkpoints
   full_model_name: best_full_model.pt
   backbone_name: best_backbone.pt
   metadata_name: best_metadata.json
@@ -194,11 +191,10 @@ tracking:
   provider: wandb
   project: ApexID
   entity: MIA_AI_Team
-  run_name: ApexID-dinov3-convnext-small-pt-sphereface2a-lw20-full-finetune-2048
+  run_name: ApexID-convnext-small-pt-sphereface2a-lw20-full-finetune-2048-v2
   group: null
   tags:
-  - dinov3
-  - lvd1689m
+  - split_v2
   - convnext
   - convnext_small
   - pretrained
@@ -209,7 +205,6 @@ tracking:
   - full
   - emb2048
   - apexid
-
   mode: online
   log_artifacts: none
   block_on_artifact_upload: false

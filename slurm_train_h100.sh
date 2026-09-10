@@ -19,8 +19,17 @@ if [ -z "${SLURM_JOB_ID:-}" ]; then
   exit 2
 fi
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${REPO_ROOT:-$SCRIPT_DIR}"
+# Slurm copies the batch script into /var/spool/slurmd/job*/ — never use
+# BASH_SOURCE as the repo root. Override with REPO_ROOT if your checkout differs.
+REPO_ROOT="${REPO_ROOT:-$HOME/ApexID}"
+if [ ! -d "$REPO_ROOT" ]; then
+  echo "ERROR: REPO_ROOT does not exist: $REPO_ROOT"
+  exit 3
+fi
+if [ ! -f "$REPO_ROOT/requirements.txt" ] && [ ! -f "$REPO_ROOT/requirements-split-v2.txt" ] && [ ! -f "$REPO_ROOT/requirements-lock.txt" ]; then
+  echo "ERROR: REPO_ROOT does not look like an ApexID checkout: $REPO_ROOT"
+  exit 3
+fi
 CONFIG="${CONFIG:-configs/cluster_home.yaml}"
 export APEXID_DATA_ROOT="${APEXID_DATA_ROOT:-$REPO_ROOT/ApexID_Dataset}"
 export APEXID_SPLIT_ROOT="${APEXID_SPLIT_ROOT:-$APEXID_DATA_ROOT/open_set_splits}"
