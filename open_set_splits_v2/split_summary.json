@@ -1,0 +1,1050 @@
+{
+  "configuration": {
+    "cache_policy": {
+      "artifact_hashes_required": true,
+      "format": "numpy_npy_memory_map",
+      "ordered_rows_required": true,
+      "reject_incomplete": true,
+      "reject_stale": true,
+      "schema_version": 1
+    },
+    "default_similarity_threshold": 0.98,
+    "enabled_parsers": [
+      "CTai",
+      "Giraffes",
+      "IPanda50",
+      "NDD20",
+      "NyalaData"
+    ],
+    "feature": {
+      "color_mode": "RGB",
+      "dimension": 1024,
+      "dtype": "float32",
+      "interpolation": "bilinear",
+      "mean": [
+        0.485,
+        0.456,
+        0.406
+      ],
+      "model": "timm/vit_large_patch14_dinov2.lvd142m",
+      "normalization": "L2",
+      "resize": [
+        518,
+        518
+      ],
+      "revision": "4741e1cafbf45415e77074bb0cb42dba76c8684a",
+      "scale": "uint8/[255]",
+      "std": [
+        0.229,
+        0.224,
+        0.225
+      ],
+      "weight_sha256": "0424a5d1b515278cba3c6640ccbeaacc41de59d3a93df0dd5e494285eea2b355"
+    },
+    "known_image_ratio": 0.225,
+    "max_unknown_images_per_identity": 100,
+    "metadata_provenance": {
+      "authoritative_path": "metadata.csv",
+      "rows": 158293,
+      "sha256": "fd8a921f7ab5566b02fa166bfbbfc948375ee68226b15c29caab8b7fc3ebacf0"
+    },
+    "near_duplicate_audit": {
+      "dhash_threshold": 4,
+      "enabled_by_default": false,
+      "phash_threshold": 6,
+      "scope": "within_identity_train_to_val_known"
+    },
+    "scientific_provenance": {
+      "huggingface_hub_version": "1.13.0",
+      "numpy_version": "2.1.3",
+      "pillow_version": "11.1.0",
+      "safetensors_version": "0.7.0",
+      "timm_version": "1.0.27",
+      "torch_version": "2.10.0",
+      "torchvision_version": "0.25.0",
+      "wildlife_datasets_commit": "67380d7951b89f02e48c84a7d3546188b9dbec8a",
+      "wildlife_datasets_license": "AGPL-3.0-or-later",
+      "wildlife_datasets_version": "1.0.9"
+    },
+    "seed": 42,
+    "similarity_thresholds": {
+      "CTai": 0.95,
+      "HyenaID2022": 0.98,
+      "IPanda50": 0.97,
+      "LeopardID2022": 0.96,
+      "NDD20": 0.97,
+      "NyalaData": 0.999,
+      "SealID": 0.96,
+      "WhaleSharkID": 0.98
+    },
+    "threshold_provenance": "WildlifeDatasets v1.0.9 numeric values; fixed 0.98 default",
+    "unknown_identity_ratio": 0.125,
+    "version": "2.0"
+  },
+  "date_statistics": {
+    "czech": 39347,
+    "iso": 11857,
+    "missing": 107089
+  },
+  "feature_cache": {
+    "checkpoint_path": "/sc/home/mohammed.mohammed/.cache/huggingface/hub/models--timm--vit_large_patch14_dinov2.lvd142m/snapshots/4741e1cafbf45415e77074bb0cb42dba76c8684a/model.safetensors",
+    "checkpoint_sha256": "0424a5d1b515278cba3c6640ccbeaacc41de59d3a93df0dd5e494285eea2b355",
+    "dtype": "float32",
+    "feature": {
+      "color_mode": "RGB",
+      "dimension": 1024,
+      "dtype": "float32",
+      "interpolation": "bilinear",
+      "mean": [
+        0.485,
+        0.456,
+        0.406
+      ],
+      "model": "timm/vit_large_patch14_dinov2.lvd142m",
+      "normalization": "L2",
+      "resize": [
+        518,
+        518
+      ],
+      "revision": "4741e1cafbf45415e77074bb0cb42dba76c8684a",
+      "scale": "uint8/[255]",
+      "std": [
+        0.229,
+        0.224,
+        0.225
+      ],
+      "weight_sha256": "0424a5d1b515278cba3c6640ccbeaacc41de59d3a93df0dd5e494285eea2b355"
+    },
+    "features_sha256": "3c86f0663b8828e4fae264e36c9a139776a39881cce12014b62f3c6dca962a3c",
+    "fingerprint": "6ab194cb4434e2145cc9241576b5c984d10f362c5b3682cfa8ca7214b163a86e",
+    "metadata_sha256": "fd8a921f7ab5566b02fa166bfbbfc948375ee68226b15c29caab8b7fc3ebacf0",
+    "rows_sha256": "cb8f9962138c61508dff5bc696f232696d78960fc78ddddcf535debe8501fe35",
+    "schema_version": 1,
+    "shape": [
+      70590,
+      1024
+    ]
+  },
+  "git": {
+    "branch": "convnext",
+    "commit": "9327e7955274af832bebdda096446f71b9c9b102",
+    "dirty": true
+  },
+  "integrity": {
+    "checks": {
+      "complete_accounting": true,
+      "val_concat_exact": true,
+      "val_known_identity_subset_train": true,
+      "zero_exact_content_crossings": true,
+      "zero_observation_crossings": true,
+      "zero_repeated_paths": true,
+      "zero_train_unknown_identity_overlap": true
+    },
+    "date_statistics": {
+      "czech": 39347,
+      "iso": 11857,
+      "missing": 107089
+    },
+    "duplicate_statistics": {
+      "conflicts": 0,
+      "duplicate_extra_rows": 12,
+      "duplicate_groups": 12,
+      "unique_hashes": 158281
+    },
+    "passed": true
+  },
+  "main_ratios": {
+    "train": 0.6860253672670202,
+    "validation": 0.3139746327329797
+  },
+  "metadata": {
+    "path": "/sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/metadata.csv",
+    "rows": 158293,
+    "sha256": "fd8a921f7ab5566b02fa166bfbbfc948375ee68226b15c29caab8b7fc3ebacf0"
+  },
+  "method_statistics": {
+    "explicit_source_group_subset": 10741,
+    "explicit_source_train_only": 411,
+    "new_whale_ood": 9664,
+    "similarity_or_must_link_cluster_train": 11898,
+    "similarity_train_only_singleton": 44321,
+    "similarity_unclustered_singleton": 17759,
+    "singleton_ood": 13119,
+    "temporal_chronological_suffix": 33861,
+    "unknown_identity_group_cap": 16519
+  },
+  "near_duplicate_audit": {
+    "candidate_pairs": 247,
+    "dhash_threshold": 4,
+    "enabled": true,
+    "phash_threshold": 6,
+    "v1_candidate_pairs": null
+  },
+  "output_hashes": {
+    "near_duplicate_candidates.csv": "80e074c66708bb5af9aa78bcdd3a2894e93be1ac473e61c52e099834cb0c31a6",
+    "split_manifest.csv": "ed801d88a2f35d2a76db5a12f82c816bfc11d491b2e163e99653b5c97bc32ef7",
+    "train.csv": "4ef3a191b2e6544f80fe183353a0788496c7772986514edd79dd6f9fd3209ce4",
+    "unlabeled_ood.csv": "0ecf704678760f7ff6c2fce76aed0bfc85fa0c538c9810fb0f73dedfabcc8c4a",
+    "val.csv": "7eb61f778ccec5344131527410a74824b00f3e3072e8d5d7e69e6ac8b6e7ad14",
+    "val_known.csv": "f255d4432b6ff4e8569d992c540ee84a34468d1ef1805514161c1dd1b8da30d8",
+    "val_unknown.csv": "d23e873d3bebf1d1cdd0932859cf59d1284327948a555132558e53e254cd810e",
+    "val_unknown_extra.csv": "5c3d3e97f39078247d72ab211d964ed21c5918c7c6040179ac005e2274ded74d"
+  },
+  "parser_statistics": {
+    "CTai": {
+      "explicit_groups": 3039,
+      "matched_rows": 3707,
+      "unmatched_rows": 0
+    },
+    "Giraffes": {
+      "explicit_groups": 860,
+      "matched_rows": 906,
+      "unmatched_rows": 0
+    },
+    "IPanda50": {
+      "explicit_groups": 1525,
+      "matched_rows": 5454,
+      "unmatched_rows": 45
+    },
+    "NDD20": {
+      "explicit_groups": 1840,
+      "matched_rows": 2122,
+      "unmatched_rows": 0
+    },
+    "NyalaData": {
+      "explicit_groups": 922,
+      "matched_rows": 1497,
+      "unmatched_rows": 0
+    }
+  },
+  "per_dataset": {
+    "AmvrakikosTurtles": {
+      "metadata_identities": 47,
+      "metadata_rows": 141,
+      "splits": {
+        "train": {
+          "identities": 41,
+          "ratio_of_metadata_rows": 0.41843971631205673,
+          "rows": 59
+        },
+        "unlabeled_ood": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        },
+        "val": {
+          "identities": 47,
+          "ratio_of_metadata_rows": 0.5815602836879432,
+          "rows": 82
+        },
+        "val_known": {
+          "identities": 41,
+          "ratio_of_metadata_rows": 0.45390070921985815,
+          "rows": 64
+        },
+        "val_unknown": {
+          "identities": 6,
+          "ratio_of_metadata_rows": 0.1276595744680851,
+          "rows": 18
+        },
+        "val_unknown_extra": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        }
+      }
+    },
+    "BalearicLizard": {
+      "metadata_identities": 1009,
+      "metadata_rows": 4618,
+      "splits": {
+        "train": {
+          "identities": 656,
+          "ratio_of_metadata_rows": 0.619099177132958,
+          "rows": 2859
+        },
+        "unlabeled_ood": {
+          "identities": 259,
+          "ratio_of_metadata_rows": 0.056084885231702034,
+          "rows": 259
+        },
+        "val": {
+          "identities": 749,
+          "ratio_of_metadata_rows": 0.32481593763533995,
+          "rows": 1500
+        },
+        "val_known": {
+          "identities": 655,
+          "ratio_of_metadata_rows": 0.21221307925508878,
+          "rows": 980
+        },
+        "val_unknown": {
+          "identities": 94,
+          "ratio_of_metadata_rows": 0.11260285838025119,
+          "rows": 520
+        },
+        "val_unknown_extra": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        }
+      }
+    },
+    "CTai": {
+      "metadata_identities": 68,
+      "metadata_rows": 3707,
+      "splits": {
+        "train": {
+          "identities": 57,
+          "ratio_of_metadata_rows": 0.6590234691124899,
+          "rows": 2443
+        },
+        "unlabeled_ood": {
+          "identities": 3,
+          "ratio_of_metadata_rows": 0.0008092797410304828,
+          "rows": 3
+        },
+        "val": {
+          "identities": 65,
+          "ratio_of_metadata_rows": 0.314540059347181,
+          "rows": 1166
+        },
+        "val_known": {
+          "identities": 57,
+          "ratio_of_metadata_rows": 0.19152953871054762,
+          "rows": 710
+        },
+        "val_unknown": {
+          "identities": 8,
+          "ratio_of_metadata_rows": 0.1230105206366334,
+          "rows": 456
+        },
+        "val_unknown_extra": {
+          "identities": 2,
+          "ratio_of_metadata_rows": 0.025627191799298624,
+          "rows": 95
+        }
+      }
+    },
+    "CzechLynx": {
+      "metadata_identities": 319,
+      "metadata_rows": 39760,
+      "splits": {
+        "train": {
+          "identities": 279,
+          "ratio_of_metadata_rows": 0.7241448692152918,
+          "rows": 28792
+        },
+        "unlabeled_ood": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        },
+        "val": {
+          "identities": 316,
+          "ratio_of_metadata_rows": 0.2272887323943662,
+          "rows": 9037
+        },
+        "val_known": {
+          "identities": 276,
+          "ratio_of_metadata_rows": 0.17997987927565393,
+          "rows": 7156
+        },
+        "val_unknown": {
+          "identities": 40,
+          "ratio_of_metadata_rows": 0.047308853118712274,
+          "rows": 1881
+        },
+        "val_unknown_extra": {
+          "identities": 9,
+          "ratio_of_metadata_rows": 0.048566398390342054,
+          "rows": 1931
+        }
+      }
+    },
+    "GiraffeZebraID": {
+      "metadata_identities": 1941,
+      "metadata_rows": 5273,
+      "splits": {
+        "train": {
+          "identities": 876,
+          "ratio_of_metadata_rows": 0.6768443011568367,
+          "rows": 3569
+        },
+        "unlabeled_ood": {
+          "identities": 940,
+          "ratio_of_metadata_rows": 0.17826664138061823,
+          "rows": 940
+        },
+        "val": {
+          "identities": 197,
+          "ratio_of_metadata_rows": 0.14488905746254505,
+          "rows": 764
+        },
+        "val_known": {
+          "identities": 72,
+          "ratio_of_metadata_rows": 0.049687085150768064,
+          "rows": 262
+        },
+        "val_unknown": {
+          "identities": 125,
+          "ratio_of_metadata_rows": 0.09520197231177698,
+          "rows": 502
+        },
+        "val_unknown_extra": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        }
+      }
+    },
+    "Giraffes": {
+      "metadata_identities": 170,
+      "metadata_rows": 906,
+      "splits": {
+        "train": {
+          "identities": 136,
+          "ratio_of_metadata_rows": 0.7185430463576159,
+          "rows": 651
+        },
+        "unlabeled_ood": {
+          "identities": 14,
+          "ratio_of_metadata_rows": 0.01545253863134658,
+          "rows": 14
+        },
+        "val": {
+          "identities": 68,
+          "ratio_of_metadata_rows": 0.26600441501103755,
+          "rows": 241
+        },
+        "val_known": {
+          "identities": 48,
+          "ratio_of_metadata_rows": 0.16225165562913907,
+          "rows": 147
+        },
+        "val_unknown": {
+          "identities": 20,
+          "ratio_of_metadata_rows": 0.10375275938189846,
+          "rows": 94
+        },
+        "val_unknown_extra": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        }
+      }
+    },
+    "HappyWhale": {
+      "metadata_identities": 15587,
+      "metadata_rows": 51033,
+      "splits": {
+        "train": {
+          "identities": 5538,
+          "ratio_of_metadata_rows": 0.5154311915819176,
+          "rows": 26304
+        },
+        "unlabeled_ood": {
+          "identities": 9258,
+          "ratio_of_metadata_rows": 0.18141202751161015,
+          "rows": 9258
+        },
+        "val": {
+          "identities": 6327,
+          "ratio_of_metadata_rows": 0.2959457605862873,
+          "rows": 15103
+        },
+        "val_known": {
+          "identities": 5536,
+          "ratio_of_metadata_rows": 0.19297317422060237,
+          "rows": 9848
+        },
+        "val_unknown": {
+          "identities": 791,
+          "ratio_of_metadata_rows": 0.10297258636568495,
+          "rows": 5255
+        },
+        "val_unknown_extra": {
+          "identities": 5,
+          "ratio_of_metadata_rows": 0.007211020320184979,
+          "rows": 368
+        }
+      }
+    },
+    "HyenaID2022": {
+      "metadata_identities": 247,
+      "metadata_rows": 2428,
+      "splits": {
+        "train": {
+          "identities": 211,
+          "ratio_of_metadata_rows": 0.6585667215815486,
+          "rows": 1599
+        },
+        "unlabeled_ood": {
+          "identities": 6,
+          "ratio_of_metadata_rows": 0.002471169686985173,
+          "rows": 6
+        },
+        "val": {
+          "identities": 241,
+          "ratio_of_metadata_rows": 0.3389621087314662,
+          "rows": 823
+        },
+        "val_known": {
+          "identities": 211,
+          "ratio_of_metadata_rows": 0.19892915980230644,
+          "rows": 483
+        },
+        "val_unknown": {
+          "identities": 30,
+          "ratio_of_metadata_rows": 0.1400329489291598,
+          "rows": 340
+        },
+        "val_unknown_extra": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        }
+      }
+    },
+    "IPanda50": {
+      "metadata_identities": 48,
+      "metadata_rows": 5499,
+      "splits": {
+        "train": {
+          "identities": 42,
+          "ratio_of_metadata_rows": 0.6581196581196581,
+          "rows": 3619
+        },
+        "unlabeled_ood": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        },
+        "val": {
+          "identities": 48,
+          "ratio_of_metadata_rows": 0.281505728314239,
+          "rows": 1548
+        },
+        "val_known": {
+          "identities": 42,
+          "ratio_of_metadata_rows": 0.18767048554282598,
+          "rows": 1032
+        },
+        "val_unknown": {
+          "identities": 6,
+          "ratio_of_metadata_rows": 0.09383524277141299,
+          "rows": 516
+        },
+        "val_unknown_extra": {
+          "identities": 4,
+          "ratio_of_metadata_rows": 0.06037461356610293,
+          "rows": 332
+        }
+      }
+    },
+    "Jaguar_data": {
+      "metadata_identities": 31,
+      "metadata_rows": 1178,
+      "splits": {
+        "train": {
+          "identities": 27,
+          "ratio_of_metadata_rows": 0.6748726655348047,
+          "rows": 795
+        },
+        "unlabeled_ood": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        },
+        "val": {
+          "identities": 31,
+          "ratio_of_metadata_rows": 0.32512733446519526,
+          "rows": 383
+        },
+        "val_known": {
+          "identities": 27,
+          "ratio_of_metadata_rows": 0.1935483870967742,
+          "rows": 228
+        },
+        "val_unknown": {
+          "identities": 4,
+          "ratio_of_metadata_rows": 0.13157894736842105,
+          "rows": 155
+        },
+        "val_unknown_extra": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        }
+      }
+    },
+    "LeopardID2022": {
+      "metadata_identities": 413,
+      "metadata_rows": 5316,
+      "splits": {
+        "train": {
+          "identities": 251,
+          "ratio_of_metadata_rows": 0.6572610985703536,
+          "rows": 3494
+        },
+        "unlabeled_ood": {
+          "identities": 126,
+          "ratio_of_metadata_rows": 0.023702031602708805,
+          "rows": 126
+        },
+        "val": {
+          "identities": 285,
+          "ratio_of_metadata_rows": 0.27445447705041387,
+          "rows": 1459
+        },
+        "val_known": {
+          "identities": 249,
+          "ratio_of_metadata_rows": 0.19939804364183597,
+          "rows": 1060
+        },
+        "val_unknown": {
+          "identities": 36,
+          "ratio_of_metadata_rows": 0.07505643340857787,
+          "rows": 399
+        },
+        "val_unknown_extra": {
+          "identities": 1,
+          "ratio_of_metadata_rows": 0.044582392776523705,
+          "rows": 237
+        }
+      }
+    },
+    "NDD20": {
+      "metadata_identities": 78,
+      "metadata_rows": 2122,
+      "splits": {
+        "train": {
+          "identities": 68,
+          "ratio_of_metadata_rows": 0.7012252591894439,
+          "rows": 1488
+        },
+        "unlabeled_ood": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        },
+        "val": {
+          "identities": 78,
+          "ratio_of_metadata_rows": 0.2987747408105561,
+          "rows": 634
+        },
+        "val_known": {
+          "identities": 68,
+          "ratio_of_metadata_rows": 0.20263901979264845,
+          "rows": 430
+        },
+        "val_unknown": {
+          "identities": 10,
+          "ratio_of_metadata_rows": 0.09613572101790764,
+          "rows": 204
+        },
+        "val_unknown_extra": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        }
+      }
+    },
+    "NyalaData": {
+      "metadata_identities": 227,
+      "metadata_rows": 1497,
+      "splits": {
+        "train": {
+          "identities": 150,
+          "ratio_of_metadata_rows": 0.6352705410821643,
+          "rows": 951
+        },
+        "unlabeled_ood": {
+          "identities": 55,
+          "ratio_of_metadata_rows": 0.03674014696058784,
+          "rows": 55
+        },
+        "val": {
+          "identities": 171,
+          "ratio_of_metadata_rows": 0.32798931195724784,
+          "rows": 491
+        },
+        "val_known": {
+          "identities": 149,
+          "ratio_of_metadata_rows": 0.19839679358717435,
+          "rows": 297
+        },
+        "val_unknown": {
+          "identities": 22,
+          "ratio_of_metadata_rows": 0.1295925183700735,
+          "rows": 194
+        },
+        "val_unknown_extra": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        }
+      }
+    },
+    "ReunionTurtles": {
+      "metadata_identities": 79,
+      "metadata_rows": 237,
+      "splits": {
+        "train": {
+          "identities": 69,
+          "ratio_of_metadata_rows": 0.4388185654008439,
+          "rows": 104
+        },
+        "unlabeled_ood": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        },
+        "val": {
+          "identities": 79,
+          "ratio_of_metadata_rows": 0.5611814345991561,
+          "rows": 133
+        },
+        "val_known": {
+          "identities": 69,
+          "ratio_of_metadata_rows": 0.4345991561181435,
+          "rows": 103
+        },
+        "val_unknown": {
+          "identities": 10,
+          "ratio_of_metadata_rows": 0.12658227848101267,
+          "rows": 30
+        },
+        "val_unknown_extra": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        }
+      }
+    },
+    "SalamanderID2025": {
+      "metadata_identities": 587,
+      "metadata_rows": 1388,
+      "splits": {
+        "train": {
+          "identities": 242,
+          "ratio_of_metadata_rows": 0.48631123919308356,
+          "rows": 675
+        },
+        "unlabeled_ood": {
+          "identities": 310,
+          "ratio_of_metadata_rows": 0.22334293948126802,
+          "rows": 310
+        },
+        "val": {
+          "identities": 269,
+          "ratio_of_metadata_rows": 0.2903458213256484,
+          "rows": 403
+        },
+        "val_known": {
+          "identities": 234,
+          "ratio_of_metadata_rows": 0.19164265129682997,
+          "rows": 266
+        },
+        "val_unknown": {
+          "identities": 35,
+          "ratio_of_metadata_rows": 0.09870317002881844,
+          "rows": 137
+        },
+        "val_unknown_extra": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        }
+      }
+    },
+    "SealID": {
+      "metadata_identities": 55,
+      "metadata_rows": 1668,
+      "splits": {
+        "train": {
+          "identities": 48,
+          "ratio_of_metadata_rows": 0.6600719424460432,
+          "rows": 1101
+        },
+        "unlabeled_ood": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        },
+        "val": {
+          "identities": 55,
+          "ratio_of_metadata_rows": 0.33992805755395683,
+          "rows": 567
+        },
+        "val_known": {
+          "identities": 48,
+          "ratio_of_metadata_rows": 0.19244604316546762,
+          "rows": 321
+        },
+        "val_unknown": {
+          "identities": 7,
+          "ratio_of_metadata_rows": 0.1474820143884892,
+          "rows": 246
+        },
+        "val_unknown_extra": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        }
+      }
+    },
+    "WhaleSharkID": {
+      "metadata_identities": 519,
+      "metadata_rows": 6047,
+      "splits": {
+        "train": {
+          "identities": 388,
+          "ratio_of_metadata_rows": 0.6375062014221928,
+          "rows": 3855
+        },
+        "unlabeled_ood": {
+          "identities": 75,
+          "ratio_of_metadata_rows": 0.012402844385645775,
+          "rows": 75
+        },
+        "val": {
+          "identities": 444,
+          "ratio_of_metadata_rows": 0.3477757565735075,
+          "rows": 2103
+        },
+        "val_known": {
+          "identities": 388,
+          "ratio_of_metadata_rows": 0.1939804861914999,
+          "rows": 1173
+        },
+        "val_unknown": {
+          "identities": 56,
+          "ratio_of_metadata_rows": 0.1537952703820076,
+          "rows": 930
+        },
+        "val_unknown_extra": {
+          "identities": 2,
+          "ratio_of_metadata_rows": 0.002315197618653878,
+          "rows": 14
+        }
+      }
+    },
+    "ZakynthosTurtles": {
+      "metadata_identities": 38,
+      "metadata_rows": 114,
+      "splits": {
+        "train": {
+          "identities": 33,
+          "ratio_of_metadata_rows": 0.41228070175438597,
+          "rows": 47
+        },
+        "unlabeled_ood": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        },
+        "val": {
+          "identities": 38,
+          "ratio_of_metadata_rows": 0.5877192982456141,
+          "rows": 67
+        },
+        "val_known": {
+          "identities": 33,
+          "ratio_of_metadata_rows": 0.45614035087719296,
+          "rows": 52
+        },
+        "val_unknown": {
+          "identities": 5,
+          "ratio_of_metadata_rows": 0.13157894736842105,
+          "rows": 15
+        },
+        "val_unknown_extra": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        }
+      }
+    },
+    "humpback-whale-identification": {
+      "metadata_identities": 5005,
+      "metadata_rows": 25361,
+      "splits": {
+        "train": {
+          "identities": 2565,
+          "ratio_of_metadata_rows": 0.3357911754268365,
+          "rows": 8516
+        },
+        "unlabeled_ood": {
+          "identities": 2074,
+          "ratio_of_metadata_rows": 0.4627972083119751,
+          "rows": 11737
+        },
+        "val": {
+          "identities": 2931,
+          "ratio_of_metadata_rows": 0.20141161626118845,
+          "rows": 5108
+        },
+        "val_known": {
+          "identities": 2565,
+          "ratio_of_metadata_rows": 0.13635109025669334,
+          "rows": 3458
+        },
+        "val_unknown": {
+          "identities": 366,
+          "ratio_of_metadata_rows": 0.06506052600449509,
+          "rows": 1650
+        },
+        "val_unknown_extra": {
+          "identities": 0,
+          "ratio_of_metadata_rows": 0.0,
+          "rows": 0
+        }
+      }
+    }
+  },
+  "release_limitations": [
+    "WildlifeDatasets is AGPL-3.0-or-later; its code is provenance only and is not imported by the splitter.",
+    "The DINOv2 Hugging Face model card declares Apache-2.0 while its pretrained configuration declares CC-BY-NC-4.0; downstream release review is required."
+  ],
+  "schema_version": 2,
+  "splits": {
+    "train": {
+      "datasets": {
+        "AmvrakikosTurtles": 59,
+        "BalearicLizard": 2859,
+        "CTai": 2443,
+        "CzechLynx": 28792,
+        "GiraffeZebraID": 3569,
+        "Giraffes": 651,
+        "HappyWhale": 26304,
+        "HyenaID2022": 1599,
+        "IPanda50": 3619,
+        "Jaguar_data": 795,
+        "LeopardID2022": 3494,
+        "NDD20": 1488,
+        "NyalaData": 951,
+        "ReunionTurtles": 104,
+        "SalamanderID2025": 675,
+        "SealID": 1101,
+        "WhaleSharkID": 3855,
+        "ZakynthosTurtles": 47,
+        "humpback-whale-identification": 8516
+      },
+      "identities": 11677,
+      "rows": 90921
+    },
+    "unlabeled_ood": {
+      "datasets": {
+        "BalearicLizard": 259,
+        "CTai": 3,
+        "GiraffeZebraID": 940,
+        "Giraffes": 14,
+        "HappyWhale": 9258,
+        "HyenaID2022": 6,
+        "LeopardID2022": 126,
+        "NyalaData": 55,
+        "SalamanderID2025": 310,
+        "WhaleSharkID": 75,
+        "humpback-whale-identification": 11737
+      },
+      "identities": 13120,
+      "rows": 22783
+    },
+    "val": {
+      "datasets": {
+        "AmvrakikosTurtles": 82,
+        "BalearicLizard": 1500,
+        "CTai": 1166,
+        "CzechLynx": 9037,
+        "GiraffeZebraID": 764,
+        "Giraffes": 241,
+        "HappyWhale": 15103,
+        "HyenaID2022": 823,
+        "IPanda50": 1548,
+        "Jaguar_data": 383,
+        "LeopardID2022": 1459,
+        "NDD20": 634,
+        "NyalaData": 491,
+        "ReunionTurtles": 133,
+        "SalamanderID2025": 403,
+        "SealID": 567,
+        "WhaleSharkID": 2103,
+        "ZakynthosTurtles": 67,
+        "humpback-whale-identification": 5108
+      },
+      "identities": 12439,
+      "rows": 41612
+    },
+    "val_known": {
+      "datasets": {
+        "AmvrakikosTurtles": 64,
+        "BalearicLizard": 980,
+        "CTai": 710,
+        "CzechLynx": 7156,
+        "GiraffeZebraID": 262,
+        "Giraffes": 147,
+        "HappyWhale": 9848,
+        "HyenaID2022": 483,
+        "IPanda50": 1032,
+        "Jaguar_data": 228,
+        "LeopardID2022": 1060,
+        "NDD20": 430,
+        "NyalaData": 297,
+        "ReunionTurtles": 103,
+        "SalamanderID2025": 266,
+        "SealID": 321,
+        "WhaleSharkID": 1173,
+        "ZakynthosTurtles": 52,
+        "humpback-whale-identification": 3458
+      },
+      "identities": 10768,
+      "rows": 28070
+    },
+    "val_unknown": {
+      "datasets": {
+        "AmvrakikosTurtles": 18,
+        "BalearicLizard": 520,
+        "CTai": 456,
+        "CzechLynx": 1881,
+        "GiraffeZebraID": 502,
+        "Giraffes": 94,
+        "HappyWhale": 5255,
+        "HyenaID2022": 340,
+        "IPanda50": 516,
+        "Jaguar_data": 155,
+        "LeopardID2022": 399,
+        "NDD20": 204,
+        "NyalaData": 194,
+        "ReunionTurtles": 30,
+        "SalamanderID2025": 137,
+        "SealID": 246,
+        "WhaleSharkID": 930,
+        "ZakynthosTurtles": 15,
+        "humpback-whale-identification": 1650
+      },
+      "identities": 1671,
+      "rows": 13542
+    },
+    "val_unknown_extra": {
+      "datasets": {
+        "CTai": 95,
+        "CzechLynx": 1931,
+        "HappyWhale": 368,
+        "IPanda50": 332,
+        "LeopardID2022": 237,
+        "WhaleSharkID": 14
+      },
+      "identities": 23,
+      "rows": 2977
+    }
+  },
+  "unresolved_cases": {
+    "malformed_date_rows": 0,
+    "train_only_similarity_rows": 44732
+  },
+  "v1_v2_comparison": {
+    "available": false,
+    "path": "/sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/open_set_splits"
+  }
+}
