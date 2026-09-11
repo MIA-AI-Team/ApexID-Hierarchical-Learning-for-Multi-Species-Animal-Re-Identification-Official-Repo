@@ -116,7 +116,8 @@ def write_normalization_provenance(
         "train_csv_sha256": _sha256_file(csv_path),
         "row_count": row_count,
         "preprocessing": {
-            "color_mode": "RGB",
+            "color_mode": "GRAY3" if bool(data_cfg.get("grayscale", False)) else "RGB",
+            "grayscale": bool(data_cfg.get("grayscale", False)),
             "image_size": data_cfg.get("image_size"),
             "wavelet": bool(data_cfg.get("wavelet", False)),
             "transforms": transforms,

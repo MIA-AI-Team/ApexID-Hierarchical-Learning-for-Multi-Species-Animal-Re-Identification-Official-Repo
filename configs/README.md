@@ -26,7 +26,7 @@ Important sections:
 
 - `experiment`: run name and output directory.
 - `data`: train, known-validation, unknown-validation, mixed-validation CSVs,
-  image root, image size, wavelet mode, mean/std.
+  image root, image size, wavelet mode, optional `grayscale` (gray→3ch), mean/std.
 - `dataloader`: batch size, workers, and P x K sampler parameters.
 - `model`: ApexID embedding dimensions, input channels, and backbone selection.
 - `head` and `loss`: margin head and external objective configuration.
@@ -319,6 +319,9 @@ the computed values.
   absolute paths.
 - When `data.wavelet: true`, set `model.input_channels` to `6` or leave it on an
   auto/null value handled by the model factory, and provide six mean/std values.
+- When `data.grayscale: true`, train/val convert RGB to grayscale and stack to
+  three identical channels. Keep `model.input_channels: 3` and recompute
+  mean/std with the same flag (channels become nearly identical).
 - SphereFace2 heads compute their own loss; set `loss.name` to `null` when using
   them.
 - Keep output directories under `outputs/` so generated artifacts stay separate

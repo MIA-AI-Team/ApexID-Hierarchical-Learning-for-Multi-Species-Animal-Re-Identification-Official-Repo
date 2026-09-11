@@ -32,6 +32,9 @@ fi
 CONFIG="${CONFIG:-configs/cluster_home.yaml}"
 DATA_ROOT="${APEXID_DATA_ROOT:-$REPO_ROOT/ApexID_Dataset}"
 SPLIT_DIR="${APEXID_SPLIT_ROOT:-$DATA_ROOT/open_set_splits_v2}"
+# Set SKIP_ADDITIONAL_CONFIGS=1 to only update $CONFIG (recommended for gray3 dsstats).
+SKIP_ADDITIONAL_CONFIGS="${SKIP_ADDITIONAL_CONFIGS:-0}"
+PROVENANCE_OUTPUT="${PROVENANCE_OUTPUT:-$SPLIT_DIR/normalization_stats.json}"
 
 echo "SLURM_JOB_ID=$SLURM_JOB_ID"
 echo "HOSTNAME=$(hostname)"
@@ -39,6 +42,8 @@ echo "REPO_ROOT=$REPO_ROOT"
 echo "CONFIG=$CONFIG"
 echo "DATA_ROOT=$DATA_ROOT"
 echo "SPLIT_DIR=$SPLIT_DIR"
+echo "SKIP_ADDITIONAL_CONFIGS=$SKIP_ADDITIONAL_CONFIGS"
+echo "PROVENANCE_OUTPUT=$PROVENANCE_OUTPUT"
 
 WORKDIR="${SLURM_TMPDIR:-/tmp}/apexid_mean_std_${SLURM_JOB_ID}"
 mkdir -p "$WORKDIR"
@@ -59,25 +64,43 @@ $UV pip install --python "$PY" --no-deps -r "$REPO_ROOT/requirements-lock.txt"
 
 cd "$REPO_ROOT"
 
-$UV run --no-project -p "$PY" python -m apexid.utils.calculate_mean_std \
-  --config "$CONFIG" \
-  --csv "$SPLIT_DIR/train.csv" \
-  --root-dir "$DATA_ROOT" \
-  --split train \
-  --write-config \
-  --additional-config configs/default.yaml \
-  --additional-config configs/cluster_pretrained.yaml \
-  --additional-config configs/cluster_subcenter_dynamic.yaml \
-  --manifest "$SPLIT_DIR/split_manifest.csv" \
-  --provenance-output "$SPLIT_DIR/normalization_stats.json"
+MEAN_STD_ARGS=(
+  --config "$CONFIG"
+  --csv "$SPLIT_DIR/train.csv"
+  --root-dir "$DATA_ROOT"
+  --split train
+  --write-config
+  --manifest "$SPLIT_DIR/split_manifest.csv"
+  --provenance-output "$PROVENANCE_OUTPUT"
+)
 
-echo "Updated transform mean/std in all four training configs:"
-for config_path in \
-  "$CONFIG" \
-  configs/default.yaml \
-  configs/cluster_pretrained.yaml \
-  configs/cluster_subcenter_dynamic.yaml; do
-  echo "$config_path"
-  grep -A 6 "transforms:" "$config_path" | head -8
-done
-sha256sum "$SPLIT_DIR/normalization_stats.json"
+if [ "$SKIP_ADDITIONAL_CONFIGS" != "1" ]; then
+  for extra in \
+    configs/default.yaml \
+    configs/cluster_pretrained.yaml \
+    configs/cluster_subcenter_dynamic.yaml; do
+    if [ -f "$REPO_ROOT/$extra" ]; then
+      MEAN_STD_ARGS+=(--additional-config "$extra")
+    else
+      echo "Skipping missing additional config: $extra"
+    fi
+  done
+fi
+
+$UV run --no-project -p "$PY" python -m apexid.utils.calculate_mean_std "${MEAN_STD_ARGS[@]}"
+
+echo "Updated transform mean/std in:"
+echo "$CONFIG"
+grep -A 8 "transforms:" "$CONFIG" | head -12
+if [ "$SKIP_ADDITIONAL_CONFIGS" != "1" ]; then
+  for config_path in \
+    configs/default.yaml \
+    configs/cluster_pretrained.yaml \
+    configs/cluster_subcenter_dynamic.yaml; do
+    if [ -f "$REPO_ROOT/$config_path" ]; then
+      echo "$config_path"
+      grep -A 6 "transforms:" "$config_path" | head -8
+    fi
+  done
+fi
+sha256sum "$PROVENANCE_OUTPUT"

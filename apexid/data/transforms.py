@@ -130,20 +130,47 @@ def _image_to_float01(image, **kwargs):
     return image
 
 
+def _to_gray_3ch(image):
+    """Convert an RGB image to 3-channel grayscale (identical R=G=B).
+
+    Args:
+        image (numpy.ndarray): RGB image with shape ``(height, width, 3)``.
+
+    Returns:
+        numpy.ndarray: Grayscale image stacked to three channels with the same
+        dtype and spatial shape as ``image``.
+    """
+    return A.ToGray(
+        num_output_channels=3,
+        method="weighted_average",
+        p=1.0,
+    )(image=image)["image"]
+
+
+def _always_to_gray_3ch():
+    """Build the always-on gray→3-channel Albumentations stage."""
+    return A.ToGray(
+        num_output_channels=3,
+        method="weighted_average",
+        p=1.0,
+    )
+
+
 def _get_transform_settings(config=None, config_path=DEFAULT_CONFIG_PATH):
     """Read and validate transform settings from the loaded config.
 
     Args:
         config (dict, optional): Already-loaded config dictionary. Expected keys
-            are ``data.image_size``, ``data.wavelet``, ``data.transforms.mean``,
-            and ``data.transforms.std``.
+            are ``data.image_size``, ``data.wavelet``, ``data.grayscale``,
+            ``data.transforms.mean``, and ``data.transforms.std``.
         config_path (str or pathlib.Path): YAML config path used when ``config``
             is ``None``.
 
     Returns:
         dict: Settings dictionary containing ``image_size``, ``wavelet``,
-        ``mean``, and ``std``. Mean and std are returned as float tuples with
-        shape ``(3,)`` for RGB or ``(6,)`` when wavelet channels are enabled.
+        ``grayscale``, ``mean``, and ``std``. Mean and std are returned as float
+        tuples with shape ``(3,)`` for RGB/grayscale-3ch or ``(6,)`` when
+        wavelet channels are enabled.
 
     Raises:
         ValueError: If mean/std are missing or do not match the expected channel
@@ -155,6 +182,7 @@ def _get_transform_settings(config=None, config_path=DEFAULT_CONFIG_PATH):
 
     image_size = data_cfg.get("image_size")
     wavelet = bool(data_cfg.get("wavelet", False))
+    grayscale = bool(data_cfg.get("grayscale", False))
     mean = transforms_cfg.get("mean")
     std = transforms_cfg.get("std")
 
@@ -173,6 +201,7 @@ def _get_transform_settings(config=None, config_path=DEFAULT_CONFIG_PATH):
     return {
         "image_size": image_size,
         "wavelet": wavelet,
+        "grayscale": grayscale,
         "mean": tuple(float(x) for x in mean),
         "std": tuple(float(x) for x in std),
     }
@@ -200,7 +229,8 @@ def build_train_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
     Args:
         config (dict, optional): Already-loaded project config. When provided, it
             must contain ``data.image_size``, ``data.wavelet``, and
-            ``data.transforms.mean/std``.
+            ``data.transforms.mean/std``. Optional ``data.grayscale`` forces
+            gray→3-channel conversion on every sample.
         config_path (str or pathlib.Path): YAML config path used when ``config``
             is ``None``.
 
@@ -212,9 +242,10 @@ def build_train_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
         ``wavelet=True``.
 
     Functionality:
-        Resizes the image, applies light geometric augmentation, optionally adds
-        Haar wavelet detail channels, normalizes by dataset statistics, and
-        converts the output to a tensor.
+        Resizes the image, applies light geometric augmentation, optionally
+        converts to 3-channel grayscale, optionally adds Haar wavelet detail
+        channels, normalizes by dataset statistics, and converts the output to a
+        tensor.
     """
     settings = _get_transform_settings(config=config, config_path=config_path)
     height, width = _as_hw(settings["image_size"])
@@ -222,6 +253,11 @@ def build_train_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
         A.Lambda(image=_append_haar_wavelet_channels, p=1.0)
         if settings["wavelet"]
         else A.Lambda(image=_image_to_float01, p=1.0)
+    )
+    to_gray = (
+        _always_to_gray_3ch()
+        if settings["grayscale"]
+        else A.ToGray(num_output_channels=3, p=0.05)
     )
 
     return A.Compose(
@@ -234,10 +270,7 @@ def build_train_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
                 border_mode=0,
                 p=0.35,
             ),
-            A.ToGray(
-                num_output_channels=3,
-                p=0.05,
-            ),
+            to_gray,
             A.GaussianBlur(
                 blur_limit=(2, 3),
                 p=0.1,
@@ -265,7 +298,8 @@ def build_eval_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
     Args:
         config (dict, optional): Already-loaded project config. When provided, it
             must contain ``data.image_size``, ``data.wavelet``, and
-            ``data.transforms.mean/std``.
+            ``data.transforms.mean/std``. Optional ``data.grayscale`` forces
+            gray→3-channel conversion on every sample.
         config_path (str or pathlib.Path): YAML config path used when ``config``
             is ``None``.
 
@@ -277,9 +311,9 @@ def build_eval_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
         when ``wavelet=True``.
 
     Functionality:
-        Applies deterministic preprocessing only: resize, optional
-        wavelet channel construction, dataset-stat normalization, and tensor
-        conversion.
+        Applies deterministic preprocessing only: resize, optional always-on
+        gray→3-channel conversion, optional wavelet channel construction,
+        dataset-stat normalization, and tensor conversion.
     """
     settings = _get_transform_settings(config=config, config_path=config_path)
     height, width = _as_hw(settings["image_size"])
@@ -288,15 +322,17 @@ def build_eval_transforms(config=None, config_path=DEFAULT_CONFIG_PATH):
         if settings["wavelet"]
         else A.Lambda(image=_image_to_float01, p=1.0)
     )
-
-    return A.Compose(
+    stages = [A.Resize(height=height, width=width)]
+    if settings["grayscale"]:
+        stages.append(_always_to_gray_3ch())
+    stages.extend(
         [
-            A.Resize(height=height, width=width),
             to_float,
             _normalization(settings["mean"], settings["std"]),
             ToTensorV2(),
         ]
     )
+    return A.Compose(stages)
 
 
 def calculate_dataset_mean_std(
@@ -315,8 +351,9 @@ def calculate_dataset_mean_std(
             path column after column standardization.
         root_dir (str or pathlib.Path, optional): Base directory used to resolve
             relative image paths from the CSV.
-        config (dict, optional): Already-loaded config. Only ``data.image_size``
-            and ``data.wavelet`` are used for this calculation.
+        config (dict, optional): Already-loaded config. Only ``data.image_size``,
+            ``data.wavelet``, and ``data.grayscale`` are used for this
+            calculation.
         config_path (str or pathlib.Path): YAML config path used when ``config``
             is ``None``.
         path_column (str): Name of the standardized image path column.
@@ -325,13 +362,14 @@ def calculate_dataset_mean_std(
 
     Returns:
         tuple[list[float], list[float]]: ``(mean, std)`` lists with length ``3``
-        for RGB or length ``6`` when wavelet channels are enabled. Values are
-        computed after resizing and optional wavelet channel construction.
+        for RGB/grayscale-3ch or length ``6`` when wavelet channels are enabled.
+        Values are computed after resizing, optional gray→3ch conversion, and
+        optional wavelet channel construction.
 
     Functionality:
-        Streams images with OpenCV, converts them to RGB, applies the same resize
-        and channel construction used by transforms, then computes stable
-        per-channel statistics over all pixels.
+        Streams images with OpenCV, converts them to RGB, applies the same resize,
+        optional grayscale-3ch conversion, and channel construction used by
+        transforms, then computes stable per-channel statistics over all pixels.
 
     Raises:
         KeyError: If the configured path column is missing.
@@ -353,6 +391,8 @@ def calculate_dataset_mean_std(
         img_path = _resolve_image_path(img_path, root_dir=root_dir)
         image = _load_image_rgb(img_path)
         image = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+        if settings["grayscale"]:
+            image = _to_gray_3ch(image)
         image = (
             _append_haar_wavelet_channels(image)
             if settings["wavelet"]
@@ -385,16 +425,17 @@ def _get_transform_settings_for_stats(config=None, config_path=DEFAULT_CONFIG_PA
             is ``None``.
 
     Returns:
-        dict: Settings containing ``image_size`` and ``wavelet``. ``image_size``
-        is later converted to ``(height, width)``, and ``wavelet`` controls
-        whether statistics are calculated over 3 RGB channels or 6 RGB+detail
-        channels.
+        dict: Settings containing ``image_size``, ``wavelet``, and ``grayscale``.
+        ``image_size`` is later converted to ``(height, width)``, ``wavelet``
+        controls whether statistics are calculated over 3 or 6 channels, and
+        ``grayscale`` applies gray→3-channel conversion before stats.
     """
     cfg = load_config(config=config, config_path=config_path)
     data_cfg = cfg.get("data", {})
     return {
         "image_size": data_cfg.get("image_size"),
         "wavelet": bool(data_cfg.get("wavelet", False)),
+        "grayscale": bool(data_cfg.get("grayscale", False)),
     }
 
 

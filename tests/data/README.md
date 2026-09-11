@@ -41,5 +41,5 @@ pytest tests/data/test_mean_std.py
 ## Contributor Notes
 
 - Update these tests when accepted CSV aliases, label-map rules, transform shape,
-  or wavelet-channel behavior changes.
+  grayscale-3ch mode, or wavelet-channel behavior changes.
 - Keep fixtures small; tests should not require a full real dataset.

@@ -46,9 +46,10 @@ image, cls_label, metric_label
 
 ## Transforms
 
-Training transforms resize, apply light affine augmentation, convert to float,
-optionally append wavelet channels, normalize, and convert to a tensor.
-Evaluation transforms use deterministic preprocessing only.
+Training transforms resize, apply light affine augmentation, optionally convert
+to 3-channel grayscale, convert to float, optionally append wavelet channels,
+normalize, and convert to a tensor. Evaluation transforms use deterministic
+preprocessing only.
 
 Relevant config keys:
 
@@ -56,10 +57,16 @@ Relevant config keys:
 data:
   image_size: [440, 440]
   wavelet: false
+  grayscale: false
   transforms:
     mean: [...]
     std: [...]
 ```
+
+When `data.grayscale: true`, train and eval convert each RGB image to grayscale
+and stack it to three identical channels (`R=G=B`). Keep `model.input_channels: 3`
+and recompute mean/std with the same flag enabled (per-channel values become
+nearly identical).
 
 When `data.wavelet: true`, the transform appends grayscale Haar `LH`, `HL`, and
 `HH` detail bands to RGB, producing six input channels. Mean/std must also have
