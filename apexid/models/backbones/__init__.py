@@ -9,6 +9,15 @@ from .convnext import (
     convnext_tiny,
     convnext_tiny_pt,
 )
+from .convnextv2 import (
+    ConvNeXtV2Backbone,
+    convnextv2_base,
+    convnextv2_base_pt,
+    convnextv2_large,
+    convnextv2_large_pt,
+    convnextv2_tiny,
+    convnextv2_tiny_pt,
+)
 from .dinov3_convnext import (
     DINOv3ConvNeXtBackbone,
     dinov3_convnext_base,
@@ -19,6 +28,17 @@ from .dinov3_convnext import (
     dinov3_convnext_small_pt,
     dinov3_convnext_tiny,
     dinov3_convnext_tiny_pt,
+)
+from .dinov3_vit import (
+    DINOv3ViTBackbone,
+    dinov3_vitb16,
+    dinov3_vitb16_pt,
+    dinov3_vitl16,
+    dinov3_vitl16_pt,
+    dinov3_vits16,
+    dinov3_vits16_pt,
+    dinov3_vits16plus,
+    dinov3_vits16plus_pt,
 )
 from .osnet import (
     OSNet,
@@ -43,7 +63,9 @@ from .registry import BACKBONE_REGISTRY, available_backbones, build_backbone, re
 __all__ = [
     "BACKBONE_REGISTRY",
     "ConvNeXtBackbone",
+    "ConvNeXtV2Backbone",
     "DINOv3ConvNeXtBackbone",
+    "DINOv3ViTBackbone",
     "OSNet",
     "PretrainedOSNet",
     "WaveletStem",
@@ -57,6 +79,12 @@ __all__ = [
     "convnext_small_pt",
     "convnext_tiny",
     "convnext_tiny_pt",
+    "convnextv2_base",
+    "convnextv2_base_pt",
+    "convnextv2_large",
+    "convnextv2_large_pt",
+    "convnextv2_tiny",
+    "convnextv2_tiny_pt",
     "dinov3_convnext_base",
     "dinov3_convnext_base_pt",
     "dinov3_convnext_large",
@@ -65,6 +93,14 @@ __all__ = [
     "dinov3_convnext_small_pt",
     "dinov3_convnext_tiny",
     "dinov3_convnext_tiny_pt",
+    "dinov3_vitb16",
+    "dinov3_vitb16_pt",
+    "dinov3_vitl16",
+    "dinov3_vitl16_pt",
+    "dinov3_vits16",
+    "dinov3_vits16_pt",
+    "dinov3_vits16plus",
+    "dinov3_vits16plus_pt",
     "init_pretrained_weights",
     "osnet_ibn_x1_0",
     "osnet_ibn_x1_0_pt",

@@ -38,6 +38,8 @@ license files and metadata remain authoritative.
 | Artifact | Provider and immutable revision | Verified weight SHA-256 |
 |---|---|---|
 | DINOv3 ConvNeXt Small LVD-1689M | [`facebook/dinov3-convnext-small-pretrain-lvd1689m`](https://huggingface.co/api/models/facebook/dinov3-convnext-small-pretrain-lvd1689m?blobs=true), `421020015aa4266363db803b6049a529999afb1e` | `8182492b73345ceb449ed6be0de486d778a73afb273ba2684de785a71ef1da9d` |
+| DINOv3 ViT-B/16 LVD-1689M | [`facebook/dinov3-vitb16-pretrain-lvd1689m`](https://huggingface.co/api/models/facebook/dinov3-vitb16-pretrain-lvd1689m?blobs=true), `5931719e67bbdb9737e363e781fb0c67687896bc` | `9a21ac3df0c63839d62612dda6f454d816c25611cc7a52966ed5a5a94921dc8b` |
+| ConvNeXt V2 Base ImageNet-22k 384 | [`facebook/convnextv2-base-22k-384`](https://huggingface.co/api/models/facebook/convnextv2-base-22k-384?blobs=true), `53ec0af6e1bd11bf7eba3e9131d29b69625accf3` | `70dd4eb0d73cbad0f93236564e093cec20ab76a877d2e4d155512097ebf06fd9` |
 | OSNet x1.0 | [`kaiyangzhou/osnet`](https://huggingface.co/api/models/kaiyangzhou/osnet?blobs=true), `a5c5cc037c24235cda3b21085b93ad77c9616224` | `fe2d63f9157c28a4a8d8ca29bec12d5b2988ac0346d712025789ea9174968e79` |
 | OSNet x0.75 | same | `37add23d2ebc7a22584203d6c22976fdda0f7f29c7b7d79257ac22ae20aec809` |
 | OSNet x0.5 | same | `f10ea9e26ee55b1a65cee3c6e88aa1ae105fe981af3e37692fa68a72fc64bf8e` |
@@ -46,8 +48,8 @@ license files and metadata remain authoritative.
 
 DINOv3 weights are governed by the provider's separate DINOv3 license, not
 ApexID's Apache-2.0 license. Inspect the model repository license at the frozen
-revision before redistribution or commercial use. OSNet weights likewise
-remain third-party artifacts.
+revision before redistribution or commercial use. ConvNeXt V2 weights are
+Apache-2.0. OSNet weights likewise remain third-party artifacts.
 
 TorchVision ConvNeXt uses the installed enum's `IMAGENET1K_V1` artifact. Each
 run records TorchVision version, enum, resolved URL, filename hash prefix, and

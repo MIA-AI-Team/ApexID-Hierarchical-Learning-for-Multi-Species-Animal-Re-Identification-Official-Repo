@@ -8,6 +8,14 @@ from .convnext import (
     convnext_tiny,
     convnext_tiny_pt,
 )
+from .convnextv2 import (
+    convnextv2_base,
+    convnextv2_base_pt,
+    convnextv2_large,
+    convnextv2_large_pt,
+    convnextv2_tiny,
+    convnextv2_tiny_pt,
+)
 from .dinov3_convnext import (
     dinov3_convnext_base,
     dinov3_convnext_base_pt,
@@ -17,6 +25,16 @@ from .dinov3_convnext import (
     dinov3_convnext_small_pt,
     dinov3_convnext_tiny,
     dinov3_convnext_tiny_pt,
+)
+from .dinov3_vit import (
+    dinov3_vitb16,
+    dinov3_vitb16_pt,
+    dinov3_vitl16,
+    dinov3_vitl16_pt,
+    dinov3_vits16,
+    dinov3_vits16_pt,
+    dinov3_vits16plus,
+    dinov3_vits16plus_pt,
 )
 from .osnet import (
     osnet_ibn_x1_0,
@@ -82,6 +100,12 @@ register_backbone("convnext_tiny_pt")(convnext_tiny_pt)
 register_backbone("convnext_small_pt")(convnext_small_pt)
 register_backbone("convnext_base_pt")(convnext_base_pt)
 register_backbone("convnext_large_pt")(convnext_large_pt)
+register_backbone("convnextv2_tiny")(convnextv2_tiny)
+register_backbone("convnextv2_base")(convnextv2_base)
+register_backbone("convnextv2_large")(convnextv2_large)
+register_backbone("convnextv2_tiny_pt")(convnextv2_tiny_pt)
+register_backbone("convnextv2_base_pt")(convnextv2_base_pt)
+register_backbone("convnextv2_large_pt")(convnextv2_large_pt)
 register_backbone("dinov3_convnext_tiny")(dinov3_convnext_tiny)
 register_backbone("dinov3_convnext_small")(dinov3_convnext_small)
 register_backbone("dinov3_convnext_base")(dinov3_convnext_base)
@@ -90,3 +114,11 @@ register_backbone("dinov3_convnext_tiny_pt")(dinov3_convnext_tiny_pt)
 register_backbone("dinov3_convnext_small_pt")(dinov3_convnext_small_pt)
 register_backbone("dinov3_convnext_base_pt")(dinov3_convnext_base_pt)
 register_backbone("dinov3_convnext_large_pt")(dinov3_convnext_large_pt)
+register_backbone("dinov3_vits16")(dinov3_vits16)
+register_backbone("dinov3_vits16plus")(dinov3_vits16plus)
+register_backbone("dinov3_vitb16")(dinov3_vitb16)
+register_backbone("dinov3_vitl16")(dinov3_vitl16)
+register_backbone("dinov3_vits16_pt")(dinov3_vits16_pt)
+register_backbone("dinov3_vits16plus_pt")(dinov3_vits16plus_pt)
+register_backbone("dinov3_vitb16_pt")(dinov3_vitb16_pt)
+register_backbone("dinov3_vitl16_pt")(dinov3_vitl16_pt)

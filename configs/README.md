@@ -10,8 +10,15 @@ point is `default.yaml`.
   shape, backbone, head, loss, optimizer, scheduler, LR range test, finetune
   profile, training behavior, validation metrics, embedding plots, checkpoints,
   early stopping, and experiment tracking.
-- `cluster_home.yaml`: DINOv3 ConvNeXt Small pretrained fine-tuning with an
-  immutable Hugging Face revision and expected weight SHA-256.
+- `cluster_home.yaml`: current cluster ConvNeXt Small fine-tuning recipe.
+- `cluster_dinov3_vitb16.yaml`: DINOv3 ViT-B/16 native 768-d CLS embeddings,
+  512px RGB, ImageNet processor mean/std, pinned Hugging Face revision and
+  weight SHA-256, SphereFace2, and `head_first` then full fine-tune.
+- `cluster_dinov3_vitb16_subcenter.yaml`: same DINOv3 ViT-B/16 recipe with
+  Sub-center ArcFace (`k=3`, `s=40`) and CrossEntropy instead of SphereFace2.
+- `cluster_convnextv2_base.yaml`: ConvNeXt V2 Base ImageNet-22k weights, native
+  1024-d pooled embeddings, 440px gray3, SphereFace2, and full fine-tune
+  matching the best ConvNeXt Small recipe.
 - `cluster_pretrained.yaml`: cluster paths for ImageNet-pretrained fine-tuning
   (e.g. `osnet_x1_0_pt`). Auto-switches to cosine + warmup when
   `finetune.enabled: auto`.
@@ -144,6 +151,16 @@ Available ConvNeXt aliases are `convnext_tiny`, `convnext_small`,
 All ConvNeXt backbones return the configured embedding dimension and are
 normalized by `ApexID.forward`, matching the OSNet path.
 
+DINOv3 ViT aliases are `dinov3_vits16`, `dinov3_vits16plus`, `dinov3_vitb16`,
+`dinov3_vitl16`, and pretrained-default `_pt` variants. Keep `embedding_dim`
+equal to the ViT hidden size (768 for ViT-B) so the backbone returns native CLS
+features. Image size must be a multiple of 16; the cluster recipe uses 512x512.
+
+ConvNeXt V2 aliases are `convnextv2_tiny`, `convnextv2_base`, `convnextv2_large`,
+and `_pt` variants. Defaults load ImageNet-22k @ 384 weights. Keep
+`embedding_dim` at 1024 for Base so pooled features stay native. The cluster
+recipe trains at 440x440 gray3 like the best ConvNeXt Small run.
+
 ## Pretrained Fine-Tuning
 
 When the backbone is ImageNet-pretrained (`*_pt` aliases or `kwargs.pretrained:
@@ -260,8 +277,29 @@ finetune:
 Scratch on cluster (ConvNeXt-Large, no wavelet):
 
 ```bash
-# configs/cluster_home.yaml — pinned DINOv3 ConvNeXt Small fine-tuning
+# configs/cluster_home.yaml — current ConvNeXt Small cluster recipe
 sbatch slurm_train_h100.sh
+```
+
+DINOv3 ViT-B/16 native CLS (RGB, 512px, head-first):
+
+```bash
+CONFIG=configs/cluster_dinov3_vitb16.yaml sbatch slurm_train_h100.sh
+```
+
+The DINOv3 weights are gated. Accept the DINOv3 license on Hugging Face and
+export `HF_TOKEN` on the cluster before launching.
+
+DINOv3 ViT-B/16 with Sub-center ArcFace (same backbone/data, different head):
+
+```bash
+CONFIG=configs/cluster_dinov3_vitb16_subcenter.yaml sbatch slurm_train_h100.sh
+```
+
+ConvNeXt V2 Base ImageNet-22k (gray3, 440px, full fine-tune):
+
+```bash
+CONFIG=configs/cluster_convnextv2_base.yaml sbatch slurm_train_h100.sh
 ```
 
 Pretrained on cluster:
@@ -285,7 +323,10 @@ grep -A 12 "^finetune:" configs/cluster_pretrained.yaml
 ```
 
 Ready-to-use templates: [`cluster_pretrained.yaml`](cluster_pretrained.yaml),
-[`cluster_subcenter_dynamic.yaml`](cluster_subcenter_dynamic.yaml).
+[`cluster_subcenter_dynamic.yaml`](cluster_subcenter_dynamic.yaml),
+[`cluster_dinov3_vitb16.yaml`](cluster_dinov3_vitb16.yaml),
+[`cluster_dinov3_vitb16_subcenter.yaml`](cluster_dinov3_vitb16_subcenter.yaml),
+[`cluster_convnextv2_base.yaml`](cluster_convnextv2_base.yaml).
 
 ### Sub-center margin modes
 

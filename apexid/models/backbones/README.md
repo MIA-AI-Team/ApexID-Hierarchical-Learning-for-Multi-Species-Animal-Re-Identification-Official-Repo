@@ -9,10 +9,16 @@ This folder contains feature extractors that produce ApexID embeddings.
 - `osnet_pt.py`: pretrained OSNet wrappers and the six-channel wavelet adapter.
 - `dinov3_convnext.py`: Hugging Face DINOv3 ConvNeXt wrappers with immutable
   revision and full-file SHA-256 verification support.
+- `dinov3_vit.py`: Hugging Face DINOv3 ViT wrappers that return the native CLS
+  token (Identity when `embedding_dim` matches hidden size), pin revision and
+  SHA-256, and reject spatial sizes that are not multiples of patch 16.
 - `convnext.py`: TorchVision ConvNeXt wrappers with ApexID embedding projection,
   random-init and ImageNet-pretrained options.
+- `convnextv2.py`: Hugging Face ConvNeXt V2 wrappers using GAP `pooler_output`
+  (Identity when `embedding_dim` matches hidden size) with revision and SHA-256
+  pins. Default `_pt` repos are ImageNet-22k @ 384.
 - `registry.py`: backbone registration and lookup helpers.
-- `__init__.py`: exports registry helpers, OSNet builders, and ConvNeXt builders.
+- `__init__.py`: exports registry helpers and OSNet, ConvNeXt, ConvNeXt V2, and DINOv3 builders.
 
 ## How It Connects
 
@@ -49,9 +55,12 @@ the first convolution for any positive `input_channels`.
 Pretrained artifacts are auditable rather than moving downloads. OSNet uses
 `kaiyangzhou/osnet` revision
 `a5c5cc037c24235cda3b21085b93ad77c9616224` and verifies per-variant SHA-256.
-The active DINOv3 Small config uses revision
+The active DINOv3 ConvNeXt Small pin uses revision
 `421020015aa4266363db803b6049a529999afb1e` and SHA-256
 `8182492b73345ceb449ed6be0de486d778a73afb273ba2684de785a71ef1da9d`.
+DINOv3 ViT-B/16 LVD-1689M uses revision
+`5931719e67bbdb9737e363e781fb0c67687896bc` and SHA-256
+`9a21ac3df0c63839d62612dda6f454d816c25611cc7a52966ed5a5a94921dc8b`.
 TorchVision ConvNeXt records the installed TorchVision version, weight enum,
 resolved URL, cached-file SHA-256, and filename hash prefix.
 
@@ -60,7 +69,7 @@ resolved URL, cached-file SHA-256, and filename hash prefix.
 Run backbone tests:
 
 ```bash
-pytest tests/models/test_input_channels.py tests/models/test_convnext.py
+pytest tests/models/test_input_channels.py tests/models/test_convnext.py tests/models/test_convnextv2.py tests/models/test_dinov3_vit.py
 ```
 
 List available backbones in Python:
@@ -79,6 +88,63 @@ model:
     name: convnext_tiny_pt
     kwargs:
       pretrained: true
+```
+
+ConvNeXt V2 aliases (Hugging Face ImageNet-22k @ 384 by default):
+
+```text
+convnextv2_tiny
+convnextv2_base
+convnextv2_large
+convnextv2_tiny_pt
+convnextv2_base_pt
+convnextv2_large_pt
+```
+
+Use `AutoModel` pooled features, not `ConvNextV2ForImageClassification`. Set
+`embedding_dim` to the backbone hidden size (768 tiny / 1024 base / 1536 large)
+for native embeddings. The cluster recipe trains at 440x440 gray3 (CNN, so
+spatial size is not locked to the 384 checkpoint). Override `model_name` for
+1k-224 checkpoints if needed.
+
+```yaml
+model:
+  embedding_dim: 1024
+  backbone:
+    name: convnextv2_base_pt
+    kwargs:
+      pretrained: true
+      revision: 53ec0af6e1bd11bf7eba3e9131d29b69625accf3
+      expected_sha256: 70dd4eb0d73cbad0f93236564e093cec20ab76a877d2e4d155512097ebf06fd9
+```
+
+DINOv3 ViT aliases:
+
+```text
+dinov3_vits16
+dinov3_vits16plus
+dinov3_vitb16
+dinov3_vitl16
+dinov3_vits16_pt
+dinov3_vits16plus_pt
+dinov3_vitb16_pt
+dinov3_vitl16_pt
+```
+
+The `_pt` aliases load Hugging Face LVD-1689M weights with SDPA attention.
+Set `embedding_dim` to the ViT hidden size (384 / 768 / 1024) to keep native
+CLS embeddings without an extra Linear projection. Input height and width must
+be multiples of 16.
+
+```yaml
+model:
+  embedding_dim: 768
+  backbone:
+    name: dinov3_vitb16_pt
+    kwargs:
+      pretrained: true
+      revision: 5931719e67bbdb9737e363e781fb0c67687896bc
+      expected_sha256: 9a21ac3df0c63839d62612dda6f454d816c25611cc7a52966ed5a5a94921dc8b
 ```
 
 ## Contributor Notes

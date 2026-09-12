@@ -9,8 +9,8 @@ and factory functions used to build training components from config.
   returns L2-normalized embeddings.
 - `model_factory.py`: `build_model`, `build_head`, `build_loss`, and
   `build_components` for config-driven construction.
-- `backbones/`: OSNet and TorchVision ConvNeXt implementations plus the
-  backbone registry.
+- `backbones/`: OSNet, TorchVision ConvNeXt, ConvNeXt V2, DINOv3 ConvNeXt, and
+  DINOv3 ViT implementations plus the backbone registry.
 - `heads/`: ArcFace, dynamic ArcFace, SphereFace2, and SphereFace2 focal heads.
 - `__init__.py`: public model exports.
 

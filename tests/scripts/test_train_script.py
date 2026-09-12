@@ -454,6 +454,13 @@ def test_train_script_builds_frequency_bin_margins_for_subcenter_head(tmp_path):
     assert min(margins) >= 0.2 - 1e-6
     assert max(margins) <= 0.4 + 1e-6
     assert margins[1] > margins[0]
+    assert resolved_cfg["head"]["kwargs"]["margin_min"] == 0.2
+    assert resolved_cfg["head"]["kwargs"]["margin_max"] == 0.4
+
+    resolved_cfg["loss"] = {"name": "cross_entropy", "kwargs": {}}
+    _, head, criterion = train_script.build_components(resolved_cfg, num_classes=num_classes)
+    assert isinstance(head, ArcFaceSubCenterDynamicHead)
+    assert criterion is not None
 
 
 def test_train_script_resolve_resume_path_auto_detects_last_checkpoint(tmp_path):

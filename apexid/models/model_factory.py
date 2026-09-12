@@ -142,7 +142,9 @@ def build_components(cfg, num_classes):
     head_cfg = _section(cfg, "head")
     head_name = head_cfg.get("name", "sphereface2")
     head_key = _normalise_name(head_name)
-    head_kwargs = _as_dict(head_cfg.get("kwargs", {}))
+    head_kwargs = dict(_as_dict(head_cfg.get("kwargs", {})))
+    head_kwargs.pop("margin_min", None)
+    head_kwargs.pop("margin_max", None)
     head = build_head(
         head_name,
         embedding_dim=model.embedding_dim,
