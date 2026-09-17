@@ -19,6 +19,12 @@ point is `default.yaml`.
 - `cluster_convnextv2_base.yaml`: ConvNeXt V2 Base ImageNet-22k weights, native
   1024-d pooled embeddings, 440px gray3, SphereFace2, and full fine-tune
   matching the best ConvNeXt Small recipe.
+- `cluster_bhca_arcface.yaml`, `cluster_bhca_subcenter_arcface.yaml`, and
+  `cluster_bhca_subcenter_sphereface2.yaml`: controlled ConvNeXt Small Split V2
+  BHCA comparison with identical data, sampling, optimizer, schedule, and
+  validation settings. These runs automatically fill approved dataset-level
+  species metadata and stop on unresolved nulls or conflicts. The frozen CSVs
+  are not rewritten. See `docs/BHCA_LOSS.md`.
 - `cluster_pretrained.yaml`: cluster paths for ImageNet-pretrained fine-tuning
   (e.g. `osnet_x1_0_pt`). Auto-switches to cosine + warmup when
   `finetune.enabled: auto`.
@@ -72,6 +78,14 @@ Train with the default config:
 
 ```bash
 python scripts/train.py --config configs/default.yaml
+```
+
+Audit BHCA species metadata without changing a split:
+
+```bash
+python scripts/prepare_bhca_species_metadata.py \
+  --input open_set_splits_v2/train.csv \
+  --check-only
 ```
 
 ## Validation Settings

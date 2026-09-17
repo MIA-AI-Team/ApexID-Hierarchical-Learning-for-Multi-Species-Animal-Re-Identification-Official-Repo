@@ -4,7 +4,11 @@ import numpy as np
 import torch
 from tqdm.auto import tqdm
 
-from apexid.evaluation import compute_reid_metrics, evaluate_all_validation_splits
+from apexid.evaluation import (
+    compute_hierarchical_similarity_diagnostics,
+    compute_reid_metrics,
+    evaluate_all_validation_splits,
+)
 
 
 def _format_metric(value):
@@ -51,6 +55,10 @@ def _unpack_batch(batch):
 
 def _prediction_logits(head, embeddings):
     """Return non-margin prediction logits from a head exposing ``predict_logits``."""
+    cached = getattr(head, "last_prediction_logits", None)
+    if torch.is_tensor(cached) and cached.ndim == 2 and cached.shape[0] == embeddings.shape[0]:
+        head.last_prediction_logits = None
+        return cached
     if hasattr(head, "predict_logits"):
         return head.predict_logits(embeddings)
     raise ValueError("Head returned a scalar loss but does not expose predict_logits(...).")
@@ -106,7 +114,7 @@ def _validate_logits(logits, labels, num_classes, context="classification"):
     _validate_labels(labels, int(num_classes), context=context)
 
 
-def _compute_loss_and_logits(head, criterion, embeddings, labels):
+def _compute_loss_and_logits(head, criterion, embeddings, labels, species_targets=None):
     """Compute loss and prediction logits for ApexID heads.
 
     Args:
@@ -127,7 +135,10 @@ def _compute_loss_and_logits(head, criterion, embeddings, labels):
     num_classes = _head_num_classes(head)
     _validate_labels(labels, num_classes, context="classification")
 
-    head_output = head(embeddings, labels)
+    if species_targets is not None and bool(getattr(head, "accepts_species_targets", False)):
+        head_output = head(embeddings, labels, species_targets=species_targets)
+    else:
+        head_output = head(embeddings, labels)
 
     if torch.is_tensor(head_output) and head_output.ndim == 0:
         logits = _prediction_logits(head, embeddings)
@@ -181,6 +192,7 @@ def extract_embeddings(backbone, dataloader, device=None, progress=True, desc="E
     all_embeddings = []
     all_cls_labels = []
     all_metric_labels = []
+    all_species_targets = []
     total_samples = 0
 
     iterator = tqdm(
@@ -193,11 +205,14 @@ def extract_embeddings(backbone, dataloader, device=None, progress=True, desc="E
     with torch.no_grad():
         for batch in iterator:
             images, cls_labels, metric_labels = _unpack_batch(batch)
+            species_targets = batch[3] if len(batch) >= 4 else None
             images = images.to(device, non_blocking=True)
             embeddings = backbone(images)
             all_embeddings.append(embeddings.detach().cpu())
             all_cls_labels.append(cls_labels.detach().cpu())
             all_metric_labels.append(metric_labels.detach().cpu())
+            if species_targets is not None:
+                all_species_targets.append(species_targets.detach().cpu())
             total_samples += int(images.size(0))
 
     result = {
@@ -214,6 +229,8 @@ def extract_embeddings(backbone, dataloader, device=None, progress=True, desc="E
         ),
         "num_samples": int(total_samples),
     }
+    if all_species_targets:
+        result["species_targets"] = torch.cat(all_species_targets, dim=0)
     result.update(_loader_metadata(dataloader, total_samples))
     return result
 
@@ -320,7 +337,7 @@ class Validator:
             return torch.ones_like(cls_labels, dtype=torch.bool)
         return cls_labels != self.classification_ignore_index
 
-    def _classification_metrics_from_embeddings(self, embeddings, cls_labels):
+    def _classification_metrics_from_embeddings(self, embeddings, cls_labels, species_targets=None):
         """Compute validation loss/accuracy for known classifier labels only."""
         if not torch.is_tensor(embeddings):
             embeddings = torch.as_tensor(embeddings)
@@ -338,9 +355,15 @@ class Validator:
 
         known_embeddings = embeddings[known_mask]
         known_labels = cls_labels[known_mask]
+        known_species_targets = None
+        if species_targets is not None:
+            if not torch.is_tensor(species_targets):
+                species_targets = torch.as_tensor(species_targets)
+            known_species_targets = species_targets[known_mask]
         total_loss = 0.0
         total_correct = 0
         total_known = int(known_labels.numel())
+        head_metric_totals = {}
         chunk_size = max(1, int(self.metric_chunk_size))
 
         self.head.eval()
@@ -349,21 +372,41 @@ class Validator:
                 stop = min(start + chunk_size, total_known)
                 emb_chunk = known_embeddings[start:stop].to(self.device, non_blocking=True)
                 label_chunk = known_labels[start:stop].to(self.device, non_blocking=True)
+                species_chunk = None
+                if known_species_targets is not None:
+                    species_chunk = known_species_targets[start:stop].to(
+                        self.device, non_blocking=True
+                    ).long()
                 loss, logits = _compute_loss_and_logits(
                     self.head,
                     self.loss,
                     emb_chunk,
                     label_chunk,
+                    species_targets=species_chunk,
                 )
                 batch_size = int(label_chunk.numel())
                 total_loss += float(loss.item()) * batch_size
                 total_correct += int((torch.argmax(logits, dim=1) == label_chunk).sum().item())
+                for key, value in dict(getattr(self.head, "last_metrics", {}) or {}).items():
+                    if torch.is_tensor(value):
+                        if value.numel() != 1:
+                            continue
+                        value = value.detach().cpu().item()
+                    if isinstance(value, (int, float, bool)) and math.isfinite(float(value)):
+                        head_metric_totals[key] = (
+                            head_metric_totals.get(key, 0.0) + float(value) * batch_size
+                        )
 
-        return {
+        result = {
             "loss": float(total_loss / total_known),
             "acc": float(total_correct / total_known),
             "num_known": int(total_known),
         }
+        result.update({
+            f"validation_head/{key}": value / total_known
+            for key, value in head_metric_totals.items()
+        })
+        return result
 
     def validate_open_set(
         self,
@@ -442,10 +485,12 @@ class Validator:
         known_classification = self._classification_metrics_from_embeddings(
             known["embeddings"],
             known["cls_labels"],
+            known.get("species_targets"),
         )
         metric_config = dict(evaluation_config or {})
         metric_config.setdefault("diagnostics_every_n_epochs", 5)
         metric_config.setdefault("diagnostics", {"enabled": True, "max_pairs": 100000})
+        diagnostics_cfg = dict(metric_config.get("diagnostics", {}) or {})
 
         open_set_metrics = evaluate_all_validation_splits(
             gallery["embeddings"],
@@ -464,6 +509,20 @@ class Validator:
             classification_ignore_index=self.classification_ignore_index,
             chunk_size=self.metric_chunk_size,
         )
+        if (
+            int(open_set_metrics.get("validation/diagnostics_ran", 0))
+            and "species" in mixed
+        ):
+            open_set_metrics.update(
+                compute_hierarchical_similarity_diagnostics(
+                    mixed["embeddings"],
+                    mixed["metric_labels"],
+                    mixed["species"],
+                    max_pairs=int(diagnostics_cfg.get("max_pairs", 100000)),
+                    chunk_size=self.metric_chunk_size,
+                    random_state=int(metric_config.get("random_state", 42)),
+                )
+            )
 
         result = {
             "loss": float(known_classification["loss"]),
@@ -476,6 +535,11 @@ class Validator:
             "num_samples": int(mixed["num_samples"]),
             "validation/mixed_embeddings_reused": int(bool(mixed_reused)),
         }
+        result.update({
+            key: value
+            for key, value in known_classification.items()
+            if str(key).startswith("validation_head/")
+        })
         result.update(open_set_metrics)
         if return_embeddings:
             result["embeddings"] = mixed["embeddings"]
@@ -525,9 +589,12 @@ class Validator:
         with torch.no_grad():
             for batch in iterator:
                 images, cls_labels, metric_labels = _unpack_batch(batch)
+                species_targets = batch[3] if len(batch) >= 4 else None
                 images = images.to(self.device, non_blocking=True)
                 cls_labels = cls_labels.to(self.device, non_blocking=True)
                 metric_labels = metric_labels.to(self.device, non_blocking=True)
+                if species_targets is not None:
+                    species_targets = species_targets.to(self.device, non_blocking=True).long()
 
                 embeddings = self.backbone(images)
                 all_embeddings.append(embeddings.detach().cpu())
@@ -538,11 +605,15 @@ class Validator:
                 if known_mask.any():
                     known_embeddings = embeddings[known_mask]
                     known_labels = cls_labels[known_mask].long()
+                    known_species_targets = (
+                        species_targets[known_mask] if species_targets is not None else None
+                    )
                     loss, logits = _compute_loss_and_logits(
                         self.head,
                         self.loss,
                         known_embeddings,
                         known_labels,
+                        species_targets=known_species_targets,
                     )
                     batch_known = int(known_labels.size(0))
                     total_loss += float(loss.item()) * batch_known

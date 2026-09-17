@@ -121,8 +121,11 @@ def run_lr_range_test(
 
                 made_progress = True
                 images, labels, _ = _unpack_batch(batch)
+                species_targets = batch[3] if len(batch) >= 4 else None
                 images = images.to(device, non_blocking=True)
                 labels = labels.to(device, non_blocking=True).long()
+                if species_targets is not None:
+                    species_targets = species_targets.to(device, non_blocking=True).long()
 
                 if not _known_mask(labels, classification_ignore_index).all():
                     raise ValueError(
@@ -132,7 +135,13 @@ def run_lr_range_test(
 
                 optimizer.zero_grad(set_to_none=True)
                 embeddings = backbone(images)
-                loss, _ = _compute_loss_and_logits(head, criterion, embeddings, labels)
+                loss, _ = _compute_loss_and_logits(
+                    head,
+                    criterion,
+                    embeddings,
+                    labels,
+                    species_targets=species_targets,
+                )
 
                 if not torch.isfinite(loss):
                     stop_reason = "non_finite_loss"

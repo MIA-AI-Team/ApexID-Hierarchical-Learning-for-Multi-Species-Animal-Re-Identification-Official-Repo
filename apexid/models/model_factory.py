@@ -7,6 +7,9 @@ from .heads import (
     DynArcFaceHead,
     SphereFace2FocalHead,
     SphereFace2Head,
+    BHCAArcFace,
+    BHCASubCenterArcFace,
+    BHCASubCenterSphereFace2,
 )
 from ..losses import DCMIPLoss
 from ..utils.seed import DEFAULT_SEED, seed_everything
@@ -26,6 +29,15 @@ HEAD_REGISTRY = {
     "sphereface2_focal": SphereFace2FocalHead,
     "sphereface2_focal_head": SphereFace2FocalHead,
     "sphereface2focal": SphereFace2FocalHead,
+    "bhca_arcface": BHCAArcFace,
+    "bhca_a": BHCAArcFace,
+    "bhca-a": BHCAArcFace,
+    "bhca_subcenter_arcface": BHCASubCenterArcFace,
+    "bhca_sca": BHCASubCenterArcFace,
+    "bhca-sca": BHCASubCenterArcFace,
+    "bhca_subcenter_sphereface2": BHCASubCenterSphereFace2,
+    "bhca_scsf2": BHCASubCenterSphereFace2,
+    "bhca-scsf2": BHCASubCenterSphereFace2,
 }
 
 INTERNAL_LOSS_HEADS = {
@@ -34,6 +46,15 @@ INTERNAL_LOSS_HEADS = {
     "sphereface2_focal",
     "sphereface2_focal_head",
     "sphereface2focal",
+    "bhca_arcface",
+    "bhca_a",
+    "bhca-a",
+    "bhca_subcenter_arcface",
+    "bhca_sca",
+    "bhca-sca",
+    "bhca_subcenter_sphereface2",
+    "bhca_scsf2",
+    "bhca-scsf2",
 }
 
 
@@ -156,8 +177,8 @@ def build_components(cfg, num_classes):
     loss_name = loss_cfg.get("name")
     if head_key in INTERNAL_LOSS_HEADS and not _is_null_name(loss_name):
         raise ValueError(
-            "SphereFace2 heads compute their own loss. Set loss.name to null "
-            "when using sphereface2 or sphereface2_focal."
+            "This head computes its own loss. Set loss.name to null when using "
+            "SphereFace2 or BHCA heads."
         )
     criterion = build_loss(loss_name, **_as_dict(loss_cfg.get("kwargs", {})))
     return model, head, criterion

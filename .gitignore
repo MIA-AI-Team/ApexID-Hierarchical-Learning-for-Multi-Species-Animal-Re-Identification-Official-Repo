@@ -12,3 +12,4 @@ apexid_benchmark/
 results/
 metadata.csv
 AUDIT.md
+.venv-hs/

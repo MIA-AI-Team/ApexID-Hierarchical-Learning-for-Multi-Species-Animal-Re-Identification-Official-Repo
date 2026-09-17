@@ -39,6 +39,7 @@ from .benchmark_evaluator import (
     EVALUATOR_VERSION,
     ONLINE_PROTOTYPE_UPDATE_VERSION,
 )
+from .hierarchy_diagnostics import compute_hierarchical_similarity_diagnostics
 
 __all__ = [
     "B3_METRIC_VERSION",
@@ -74,4 +75,5 @@ __all__ = [
     "fragmentation_metrics",
     "merge_metrics",
     "pairwise_metrics",
+    "compute_hierarchical_similarity_diagnostics",
 ]

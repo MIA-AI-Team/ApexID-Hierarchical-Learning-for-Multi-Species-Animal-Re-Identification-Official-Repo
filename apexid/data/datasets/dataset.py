@@ -60,6 +60,8 @@ class ApexID_Dataset(Dataset):
         metrics_label_map=None,
         path_column='path',
         identity_column='identity',
+        species_to_idx=None,
+        return_species_label=False,
     ):
         """Initialize the dataset and build label maps.
 
@@ -87,6 +89,10 @@ class ApexID_Dataset(Dataset):
                 column standardization.
             identity_column (str, optional): Column name containing identity labels
                 after column standardization.
+            species_to_idx (dict, optional): Training-only mapping from explicit
+                species/category values to contiguous hierarchy targets.
+            return_species_label (bool): Append a fourth ``torch.long`` category
+                target, using ``unknown_label`` for missing/unseen categories.
 
         Returns:
             None: The dataset stores metadata, label maps, and
@@ -105,6 +111,8 @@ class ApexID_Dataset(Dataset):
         self.unknown_label = unknown_label
         self.path_column = path_column
         self.identity_column = identity_column
+        self.species_to_idx = dict(species_to_idx or {})
+        self.return_species_label = bool(return_species_label)
         self.identity_to_indices = {}
 
         if self.path_column not in self.data_csv.columns:
@@ -398,7 +406,8 @@ class ApexID_Dataset(Dataset):
                 ``[0, len(self) - 1]``.
 
         Returns:
-            tuple: ``(image, cls_label, metric_label)`` where ``image`` is either
+            tuple: ``(image, cls_label, metric_label)`` or, when requested,
+            ``(image, cls_label, metric_label, species_label)``. ``image`` is either
             an RGB NumPy array with shape ``(height, width, 3)`` when no transform
             is set, or a transformed tensor/array such as
             ``(channels, configured_height, configured_width)``. ``cls_label`` and
@@ -441,5 +450,15 @@ class ApexID_Dataset(Dataset):
         cls_label = torch.tensor(cls_label, dtype=torch.long)
         metric_label = torch.tensor(metric_label, dtype=torch.long)
 
-        return img, cls_label, metric_label
+        if not self.return_species_label:
+            return img, cls_label, metric_label
+
+        species_label = self.unknown_label
+        if 'species' in self.data_csv.columns:
+            species_value = row['species']
+            if not pd.isna(species_value):
+                species_value = str(species_value).strip()
+                if species_value in self.species_to_idx:
+                    species_label = self.species_to_idx[species_value]
+        return img, cls_label, metric_label, torch.tensor(species_label, dtype=torch.long)
     

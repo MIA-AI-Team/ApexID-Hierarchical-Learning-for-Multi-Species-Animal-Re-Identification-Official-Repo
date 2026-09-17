@@ -397,6 +397,7 @@ class Trainer:
 
         total_loss = 0.0
         total_samples = 0
+        head_metric_totals = {}
 
         iterator = tqdm(
             train_loader,
@@ -408,8 +409,11 @@ class Trainer:
 
         for batch in iterator:
             images, labels, _ = _unpack_batch(batch)
+            species_targets = batch[3] if len(batch) >= 4 else None
             images = images.to(self.device, non_blocking=True)
             labels = labels.to(self.device, non_blocking=True).long()
+            if species_targets is not None:
+                species_targets = species_targets.to(self.device, non_blocking=True).long()
 
             if not self._known_mask(labels).all():
                 raise ValueError(
@@ -419,7 +423,13 @@ class Trainer:
 
             self.optimizer.zero_grad(set_to_none=True)
             embeddings = self.backbone(images)
-            loss, logits = _compute_loss_and_logits(self.head, self.loss, embeddings, labels)
+            loss, logits = _compute_loss_and_logits(
+                self.head,
+                self.loss,
+                embeddings,
+                labels,
+                species_targets=species_targets,
+            )
             loss.backward()
 
             if self.gradient_clip_norm is not None:
@@ -432,6 +442,13 @@ class Trainer:
             batch_size = int(images.size(0))
             total_loss += float(loss.item()) * batch_size
             total_samples += batch_size
+            for key, value in dict(getattr(self.head, "last_metrics", {}) or {}).items():
+                if torch.is_tensor(value):
+                    if value.numel() != 1:
+                        continue
+                    value = value.detach().cpu().item()
+                if isinstance(value, (int, float, bool)) and math.isfinite(float(value)):
+                    head_metric_totals[key] = head_metric_totals.get(key, 0.0) + float(value) * batch_size
 
             avg_loss = total_loss / max(total_samples, 1)
             lr = self.optimizer.param_groups[0]["lr"]
@@ -442,9 +459,12 @@ class Trainer:
                 }
             )
 
-        return {
-            "loss": total_loss / max(total_samples, 1),
-        }
+        result = {"loss": total_loss / max(total_samples, 1)}
+        result.update({
+            key: value / max(total_samples, 1)
+            for key, value in head_metric_totals.items()
+        })
+        return result
 
     def _step_scheduler(self, epoch_metrics):
         """Step epoch-level schedulers after one epoch."""
@@ -562,6 +582,16 @@ class Trainer:
         metrics = {
             "train_loss": float(train_metrics["loss"]),
         }
+        for key, value in train_metrics.items():
+            if key == "loss":
+                continue
+            if torch.is_tensor(value):
+                if value.numel() != 1:
+                    continue
+                value = value.detach().cpu().item()
+            if isinstance(value, (int, float, bool)):
+                metrics[str(key)] = float(value)
+                metrics[f"train/{key}"] = float(value)
         if val_metrics is not None:
             metrics.update(
                 {

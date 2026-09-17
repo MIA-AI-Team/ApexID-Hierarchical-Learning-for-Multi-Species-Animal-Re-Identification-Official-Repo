@@ -42,6 +42,10 @@ from torch.utils.data import DataLoader
 
 from apexid.data import build_eval_transforms, build_train_transforms
 from apexid.data.datasets.dataset import ApexID_Dataset
+from apexid.data.species_metadata import (
+    build_training_hierarchy,
+    enrich_species_metadata,
+)
 from apexid.data.samplers import PKBatchSampler
 from apexid.engine import (
     LegacyCheckpointWarning,
@@ -125,7 +129,12 @@ def _sibling_split_path(val_path, filename):
 
 def _build_metrics_label_map(*paths):
     """Build one metric label map across train and all validation CSVs."""
-    frames = [ApexID_Dataset._standardize_columns(path) for path in paths if path not in {None, ""}]
+    sources = [
+        source
+        for source in paths
+        if source is not None and not (isinstance(source, str) and source == "")
+    ]
+    frames = [ApexID_Dataset._standardize_columns(source) for source in sources]
     if not frames:
         raise ValueError("At least one CSV path is required to build metric labels.")
     return ApexID_Dataset.build_label_mapping(pd.concat(frames, ignore_index=True))
@@ -244,6 +253,77 @@ def _apply_subcenter_margin_config(cfg, train_dataset, num_classes):
     return cfg
 
 
+BHCA_HEAD_NAMES = {
+    "bhca_arcface",
+    "bhca_a",
+    "bhca-a",
+    "bhca_subcenter_arcface",
+    "bhca_sca",
+    "bhca-sca",
+    "bhca_subcenter_sphereface2",
+    "bhca_scsf2",
+    "bhca-scsf2",
+}
+
+
+def _apply_bhca_hierarchy_config(cfg, train_dataset, num_classes, output_dir=None):
+    """Inject hierarchy state derived exclusively from the training split."""
+    cfg = copy.deepcopy(_as_dict(cfg))
+    head_cfg = _as_dict(cfg.get("head", {}))
+    if _normalise_name(head_cfg.get("name", "")) not in BHCA_HEAD_NAMES:
+        return cfg
+
+    metadata = build_training_hierarchy(
+        train_dataset.data_csv,
+        train_dataset.label_to_idx,
+        identity_column=train_dataset.identity_column,
+        species_column="species",
+    )
+    if metadata.num_training_identities != int(num_classes):
+        raise ValueError("BHCA hierarchy mapping does not match the training class count.")
+
+    head_kwargs = dict(_as_dict(head_cfg.get("kwargs", {})))
+    configured_balance = _normalise_name(
+        head_kwargs.get("species_balance", "sqrt_inverse_identity_frequency")
+    )
+    if configured_balance != "sqrt_inverse_identity_frequency":
+        raise ValueError(
+            "BHCA currently supports species_balance='sqrt_inverse_identity_frequency' only."
+        )
+    head_kwargs["class_to_species"] = metadata.class_to_species
+    head_kwargs["species_names"] = metadata.species_names
+    head_kwargs["species_balance"] = configured_balance
+    cfg["head"] = dict(head_cfg)
+    cfg["head"]["kwargs"] = head_kwargs
+
+    diagnostics = metadata.to_dict()
+    enrichment_reports = dict(
+        getattr(train_dataset, "species_enrichment_reports", {}) or {}
+    )
+    cfg["bhca_training_diagnostics"] = diagnostics
+    cfg["bhca_species_enrichment"] = enrichment_reports
+    if output_dir is not None:
+        write_json_atomic(Path(output_dir) / "bhca_training_diagnostics.json", diagnostics)
+        write_json_atomic(
+            Path(output_dir) / "bhca_species_enrichment.json",
+            enrichment_reports,
+        )
+    print(
+        "BHCA training hierarchy: "
+        f"identities={metadata.num_training_identities}, "
+        f"species={metadata.num_training_species}, "
+        f"known_parents={metadata.known_parent_identities} "
+        f"({metadata.known_parent_percentage:.2f}%), "
+        f"missing_parents={metadata.missing_parent_identities}, "
+        f"IDs/species[min/median/max]={metadata.min_identities_per_species}/"
+        f"{metadata.median_identities_per_species:g}/{metadata.max_identities_per_species}, "
+        f"weights[min/mean/max]={metadata.min_species_weight:.4f}/"
+        f"{metadata.mean_species_weight:.4f}/{metadata.max_species_weight:.4f}, "
+        f"singleton_species={metadata.singleton_species}"
+    )
+    return cfg
+
+
 def build_datasets(cfg):
     """Build train, gallery, and three validation datasets from configured CSV files.
 
@@ -281,54 +361,91 @@ def build_datasets(cfg):
     train_transforms = build_train_transforms(config=cfg)
     eval_transforms = build_eval_transforms(config=cfg)
 
-    label_to_idx = ApexID_Dataset.build_label_mapping(train_path)
-    metrics_label_map = _build_metrics_label_map(train_path, val_known_path, val_unknown_path, val_path)
+    is_bhca = _normalise_name(_as_dict(cfg.get("head", {})).get("name", "")) in BHCA_HEAD_NAMES
+    split_sources = {
+        "train": train_path,
+        "val_known": val_known_path,
+        "val_unknown": val_unknown_path,
+        "val": val_path,
+    }
+    enrichment_reports = {}
+    if is_bhca:
+        for split_name, source in list(split_sources.items()):
+            standardized = ApexID_Dataset._standardize_columns(source)
+            enriched, report = enrich_species_metadata(standardized, require_complete=True)
+            split_sources[split_name] = enriched
+            enrichment_reports[split_name] = report.to_dict()
+
+    label_to_idx = ApexID_Dataset.build_label_mapping(split_sources["train"])
+    metrics_label_map = _build_metrics_label_map(
+        split_sources["train"],
+        split_sources["val_known"],
+        split_sources["val_unknown"],
+        split_sources["val"],
+    )
     unknown_label = _as_dict(cfg.get("training", {})).get("classification_ignore_index", -100)
+    hierarchy_metadata = None
+    if is_bhca:
+        hierarchy_metadata = build_training_hierarchy(
+            split_sources["train"],
+            label_to_idx,
+        )
+    species_to_idx = hierarchy_metadata.species_to_index if hierarchy_metadata else None
 
     train_dataset = ApexID_Dataset(
-        train_path,
+        split_sources["train"],
         transform=train_transforms,
         label_to_idx=label_to_idx,
         root_dir=root_dir,
         allow_unknown_identity=False,
         unknown_label=unknown_label,
         metrics_label_map=metrics_label_map,
+        species_to_idx=species_to_idx,
+        return_species_label=is_bhca,
     )
     gallery_dataset = ApexID_Dataset(
-        train_path,
+        split_sources["train"],
         transform=eval_transforms,
         label_to_idx=label_to_idx,
         root_dir=root_dir,
         allow_unknown_identity=False,
         unknown_label=unknown_label,
         metrics_label_map=metrics_label_map,
+        species_to_idx=species_to_idx,
+        return_species_label=is_bhca,
     )
     val_known_dataset = ApexID_Dataset(
-        val_known_path,
+        split_sources["val_known"],
         transform=eval_transforms,
         label_to_idx=label_to_idx,
         root_dir=root_dir,
         allow_unknown_identity=True,
         unknown_label=unknown_label,
         metrics_label_map=metrics_label_map,
+        species_to_idx=species_to_idx,
+        return_species_label=is_bhca,
     )
     val_unknown_dataset = ApexID_Dataset(
-        val_unknown_path,
+        split_sources["val_unknown"],
         transform=eval_transforms,
         label_to_idx=label_to_idx,
         root_dir=root_dir,
         allow_unknown_identity=True,
         unknown_label=unknown_label,
         metrics_label_map=metrics_label_map,
+        species_to_idx=species_to_idx,
+        return_species_label=is_bhca,
     )
     val_mixed_dataset = ApexID_Dataset(
-        val_path,
+        split_sources["val"],
         transform=eval_transforms,
         label_to_idx=label_to_idx,
         root_dir=root_dir,
         allow_unknown_identity=True,
         unknown_label=unknown_label,
         metrics_label_map=metrics_label_map,
+        species_to_idx=species_to_idx,
+        return_species_label=is_bhca,
     )
     validation_datasets = {
         "gallery": gallery_dataset,
@@ -336,6 +453,7 @@ def build_datasets(cfg):
         "unknown": val_unknown_dataset,
         "mixed": val_mixed_dataset,
     }
+    train_dataset.species_enrichment_reports = enrichment_reports
     return train_dataset, validation_datasets, len(label_to_idx)
 
 
@@ -746,6 +864,12 @@ def train_from_config(cfg, *, config_path=None, command=None, require_clean_git_
 
     train_dataset, validation_datasets, num_classes = build_datasets(cfg)
     cfg = _apply_subcenter_margin_config(cfg, train_dataset, num_classes)
+    cfg = _apply_bhca_hierarchy_config(
+        cfg,
+        train_dataset,
+        num_classes,
+        output_dir=output_dir,
+    )
     write_yaml_atomic(output_dir / "config_resolved.yaml", cfg)
     train_loader, validation_loaders = build_dataloaders(cfg, train_dataset, validation_datasets, device)
 

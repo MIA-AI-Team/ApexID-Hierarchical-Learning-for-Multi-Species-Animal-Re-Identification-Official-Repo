@@ -5,6 +5,120 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def sphereface2_initial_bias(num_class, magn_type='C', alpha=0.7, r=40., m=0.4, t=3.):
+    """Return the official SphereFace2 shared-bias initialization."""
+    num_class = int(num_class)
+    if num_class <= 1:
+        raise ValueError("num_class must be greater than 1 for SphereFace2.")
+    magn_type = str(magn_type).upper()
+    z = float(alpha) / ((1. - float(alpha)) * (num_class - 1.))
+    if magn_type == 'C':
+        ay = float(r) * (2. * 0.5**float(t) - 1. - float(m))
+        ai = float(r) * (2. * 0.5**float(t) - 1. + float(m))
+    elif magn_type == 'A':
+        theta_y = min(math.pi, math.pi / 2. + float(m))
+        ay = float(r) * (2. * ((math.cos(theta_y) + 1.) / 2.)**float(t) - 1.)
+        ai = float(r) * (2. * 0.5**float(t) - 1.)
+    elif magn_type == 'M':
+        theta_y = min(math.pi, float(m) * math.pi / 2.)
+        ay = float(r) * (2. * ((math.cos(theta_y) + 1.) / 2.)**float(t) - 1.)
+        ai = float(r) * (2. * 0.5**float(t) - 1.)
+    else:
+        raise NotImplementedError
+    temp = (1. - z)**2 + 4. * z * math.exp(ay - ai)
+    return math.log(2. * z) - ai - math.log(1. - z + math.sqrt(temp))
+
+
+def sphereface2_logits_from_cosine(
+    cosine,
+    labels,
+    *,
+    magn_type='C',
+    r=40.,
+    m=0.4,
+    t=3.,
+    bias=0.,
+):
+    """Apply ApexID's exact SphereFace2 transform to external cosine scores.
+
+    The detached margin delta preserves the straight-through behavior of the
+    existing implementation.
+    """
+    if cosine.ndim != 2:
+        raise ValueError("cosine must have shape [batch_size, num_classes].")
+    labels = labels.long()
+    one_hot = torch.zeros_like(cosine)
+    one_hot.scatter_(1, labels.view(-1, 1), 1.)
+    magn_type = str(magn_type).upper()
+    with torch.no_grad():
+        if magn_type == 'C':
+            adjusted = 2. * ((cosine + 1.) / 2.).pow(float(t)) - 1.
+            adjusted = adjusted - float(m) * (2. * one_hot - 1.)
+        elif magn_type == 'A':
+            theta_m = torch.acos(cosine.clamp(-1 + 1e-5, 1. - 1e-5))
+            idx = labels.view(-1, 1)
+            theta_m.scatter_(1, idx, theta_m.gather(1, idx) + float(m))
+            theta_m.clamp_(1e-5, 3.14159)
+            adjusted = torch.cos(theta_m)
+            adjusted = 2. * ((adjusted + 1.) / 2.).pow(float(t)) - 1.
+        elif magn_type == 'M':
+            m_theta = torch.acos(cosine.clamp(-1 + 1e-5, 1. - 1e-5))
+            idx = labels.view(-1, 1)
+            m_theta.scatter_(1, idx, m_theta.gather(1, idx) * float(m))
+            m_theta.clamp_(1e-5, 3.14159)
+            adjusted = torch.cos(m_theta)
+            adjusted = 2. * ((adjusted + 1.) / 2.).pow(float(t)) - 1.
+        else:
+            raise NotImplementedError
+        delta = adjusted - cosine
+    return float(r) * (cosine + delta) + bias
+
+
+def sphereface2_loss_from_cosine(
+    cosine,
+    labels,
+    *,
+    magn_type='C',
+    alpha=0.7,
+    r=40.,
+    m=0.4,
+    t=3.,
+    lw=50.,
+    bias=0.,
+    normalize_negatives=False,
+):
+    """Compute SphereFace2 from externally supplied per-class cosine scores.
+
+    The default reduction is numerically identical to ordinary SphereFace2.
+    BHCA's conditional branch normalizes sibling negatives per anchor.
+    """
+    labels = labels.long()
+    logits = sphereface2_logits_from_cosine(
+        cosine,
+        labels,
+        magn_type=magn_type,
+        r=r,
+        m=m,
+        t=t,
+        bias=bias,
+    )
+    targets = torch.zeros_like(cosine)
+    targets.scatter_(1, labels.view(-1, 1), 1.)
+    if not normalize_negatives:
+        weight = float(alpha) * targets + (1. - float(alpha)) * (1. - targets)
+        weight = float(lw) * cosine.shape[1] / float(r) * weight
+        return F.binary_cross_entropy_with_logits(logits, targets, weight=weight)
+
+    element_loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
+    positive = (element_loss * targets).sum(dim=1)
+    negative_mask = 1. - targets
+    negative = (element_loss * negative_mask).sum(dim=1) / negative_mask.sum(dim=1).clamp_min(1.)
+    per_anchor = float(lw) / float(r) * (
+        float(alpha) * positive + (1. - float(alpha)) * negative
+    )
+    return per_anchor.mean()
+
+
 class SphereFace2(nn.Module):
     """
     SphereFace2 classification head.
@@ -548,151 +662,14 @@ class SphereFace2(nn.Module):
         #   [batch_size, num_class]
         cos_theta = F.normalize(x, dim=1).mm(self.w)
 
-        # Build one-hot targets.
-        #
-        # one_hot[b, c] = 1 if class c is the ground-truth class of sample b.
-        # one_hot[b, c] = 0 otherwise.
-        one_hot = torch.zeros_like(cos_theta)
-        one_hot.scatter_(1, y.view(-1, 1), 1.)
-
-        # Margin adjustment is computed without gradients.
-        #
-        # The final logits use the adjusted score, but the gradient flows
-        # mostly through the original cos_theta due to the detached d_theta.
-        with torch.no_grad():
-
-            if self.magn_type == 'C':
-                # SphereFace2-C:
-                #
-                # First apply:
-                #   g(z) = 2 * ((z + 1) / 2)^t - 1
-                #
-                # Then apply two-sided cosine margin:
-                #
-                #   true class:
-                #       g(cos_theta) - m
-                #
-                #   negative classes:
-                #       g(cos_theta) + m
-                #
-                # Because:
-                #   2 * one_hot - 1
-                #
-                # is:
-                #   +1 for positive class
-                #   -1 for negative classes
-                #
-                # Therefore:
-                #   g_cos_theta - m * (+1) = g_cos_theta - m
-                #   g_cos_theta - m * (-1) = g_cos_theta + m
-                g_cos_theta = 2. * ((cos_theta + 1.) / 2.).pow(self.t) - 1.
-                g_cos_theta = g_cos_theta - self.m * (2. * one_hot - 1.)
-
-            elif self.magn_type == 'A':
-                # SphereFace2-A:
-                #
-                # Convert cosine similarity into angle:
-                #
-                #   theta = arccos(cos_theta)
-                #
-                # Add margin only to the positive class:
-                #
-                #   theta_y = theta_y + m
-                #
-                # Then convert back:
-                #
-                #   cos(theta_y + m)
-                #
-                # Finally apply g(.).
-                theta_m = torch.acos(cos_theta.clamp(-1 + 1e-5, 1. - 1e-5))
-
-                # Add m to the true class angle only.
-                idx = y.view(-1, 1).long()
-                theta_m.scatter_(1, idx, theta_m.gather(1, idx) + self.m)
-
-                # Keep angles in a valid numerical range.
-                theta_m.clamp_(1e-5, 3.14159)
-
-                g_cos_theta = torch.cos(theta_m)
-                g_cos_theta = 2. * ((g_cos_theta + 1.) / 2.).pow(self.t) - 1.
-
-            elif self.magn_type == 'M':
-                # SphereFace2-M:
-                #
-                # Convert cosine similarity into angle:
-                #
-                #   theta = arccos(cos_theta)
-                #
-                # Multiply the positive class angle by m:
-                #
-                #   theta_y = m * theta_y
-                #
-                # Then convert back:
-                #
-                #   cos(m * theta_y)
-                #
-                # Finally apply g(.).
-                m_theta = torch.acos(cos_theta.clamp(-1 + 1e-5, 1. - 1e-5))
-
-                # Multiply the true class angle by m only.
-                idx = y.view(-1, 1).long()
-                m_theta.scatter_(1, idx, m_theta.gather(1, idx) * self.m)
-
-                # Keep angles in a valid numerical range.
-                m_theta.clamp_(1e-5, 3.14159)
-
-                g_cos_theta = torch.cos(m_theta)
-                g_cos_theta = 2. * ((g_cos_theta + 1.) / 2.).pow(self.t) - 1.
-
-            else:
-                raise NotImplementedError
-
-            # Difference between adjusted score and original cosine score.
-            #
-            # Since this is computed under no_grad, d_theta is detached.
-            # The forward pass uses:
-            #
-            #   cos_theta + d_theta = adjusted score
-            #
-            # But gradients mostly flow through cos_theta.
-            d_theta = g_cos_theta - cos_theta
-
-        # Final binary logits.
-        #
-        # Because:
-        #   cos_theta + d_theta = adjusted score
-        #
-        # logits are:
-        #   r * adjusted_score + b
-        logits = self.r * (cos_theta + d_theta) + self.b
-
-        # Build positive/negative weights.
-        #
-        # Positive class:
-        #   alpha
-        #
-        # Negative classes:
-        #   1 - alpha
-        weight = self.alpha * one_hot + (1. - self.alpha) * (1. - one_hot)
-
-        # Official implementation scaling.
-        #
-        # This changes gradient magnitude and helps match the original training behavior.
-        weight = self.lw * self.num_class / self.r * weight
-
-        # BCEWithLogits applies sigmoid internally in a numerically stable way.
-        #
-        # For positive class:
-        #   target = 1
-        #   loss = softplus(-logit)
-        #
-        # For negative classes:
-        #   target = 0
-        #   loss = softplus(logit)
-        loss = F.binary_cross_entropy_with_logits(
-            logits,
-            one_hot,
-            weight=weight
+        return sphereface2_loss_from_cosine(
+            cos_theta,
+            y,
+            magn_type=self.magn_type,
+            alpha=self.alpha,
+            r=self.r,
+            m=self.m,
+            t=self.t,
+            lw=self.lw,
+            bias=self.b,
         )
-
-        return loss

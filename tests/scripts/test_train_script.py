@@ -10,7 +10,13 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from apexid.models.heads import ArcFaceSubCenterDynamicHead, SphereFace2Head
+from apexid.models.heads import (
+    ArcFaceSubCenterDynamicHead,
+    BHCAArcFace,
+    BHCASubCenterArcFace,
+    BHCASubCenterSphereFace2,
+    SphereFace2Head,
+)
 from apexid.engine.loggers import NullLogger
 from apexid.engine.checkpoint import LegacyCheckpointWarning
 
@@ -427,6 +433,42 @@ def test_train_script_builds_subcenter_arcface_components(tmp_path):
     assert isinstance(head, ArcFaceSubCenterDynamicHead)
     assert criterion is not None
     assert len(optimizer.param_groups[0]["params"]) > 0
+
+
+@pytest.mark.parametrize(
+    ("name", "expected_type"),
+    [
+        ("BHCA-A", BHCAArcFace),
+        ("BHCA-SCA", BHCASubCenterArcFace),
+        ("BHCA-SCSF2", BHCASubCenterSphereFace2),
+    ],
+)
+def test_train_script_builds_bhca_aliases_from_training_only_mapping(
+    tmp_path, name, expected_type
+):
+    train_script = _load_train_script()
+    cfg = _base_cfg(tmp_path)
+    for split_key in (
+        "train_path",
+        "val_known_path",
+        "val_unknown_path",
+        "val_path",
+    ):
+        split_path = Path(cfg["data"][split_key])
+        split_frame = pd.read_csv(split_path)
+        split_frame["dataset"] = "CzechLynx"
+        split_frame["species"] = pd.NA
+        split_frame.to_csv(split_path, index=False)
+    cfg["head"] = {"name": name, "kwargs": {}}
+    cfg["loss"] = {"name": None, "kwargs": {}}
+    train_dataset, _, num_classes = train_script.build_datasets(cfg)
+    assert len(train_dataset[0]) == 4
+    assert train_dataset.species_enrichment_reports["train"]["rows_filled"] == 4
+    resolved = train_script._apply_bhca_hierarchy_config(cfg, train_dataset, num_classes)
+    _, head, criterion = train_script.build_components(resolved, num_classes=num_classes)
+    assert isinstance(head, expected_type)
+    assert criterion is None
+    assert head.class_to_species.tolist() == [0, 0]
 
 
 def test_train_script_builds_frequency_bin_margins_for_subcenter_head(tmp_path):
