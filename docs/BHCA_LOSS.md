@@ -29,19 +29,13 @@ correct the same imbalance twice and is not used.
 Under identity-uniform sampling, a species is encountered approximately in
 proportion to its number of training identities. If
 
-\[
-N_s^{ID}=|\{y:g(y)=s\}|,
-\]
+`N_s^{ID} = |{y : g(y) = s}|`
 
 BHCA deterministically uses
 
-\[
-\omega_s=
-\frac{1/\sqrt{N_s^{ID}}}
-{\frac1S\sum_{r=1}^{S}1/\sqrt{N_r^{ID}}}.
-\]
+`ω_s = (1 / sqrt(N_s^{ID})) / ((1/S) * sum_{r=1}^{S} 1 / sqrt(N_r^{ID}))`
 
-Thus `mean(ω)=1`, rare categories receive more weight than common categories,
+Thus `mean(ω) = 1`, rare categories receive more weight than common categories,
 and there is no effective-number beta to tune. Counts come only from the
 training identity-to-species mapping. Validation/test rows, validation/test
 label frequencies, and raw training image counts never enter these weights.
@@ -50,27 +44,21 @@ label frequencies, and raw training image counts never enter these weights.
 
 For normalized backbone output
 
-\[
-z_i=\frac{f(x_i)}{\|f(x_i)\|_2},
-\]
+`z_i = f(x_i) / ||f(x_i)||_2`
 
 let `y_i` be identity, `s_i` its explicit species/category, `C` the training
 identity count, and `S` the training category count. Species proxies and identity
 proxies are normalized when scored:
 
-\[
-c^{SP}_{i,s}=z_i^\top \hat p_s,
-\qquad
-c^{ID}_{i,j}=z_i^\top \hat w_j.
-\]
+`c^{SP}_{i,s} = z_i^T hat{p}_s`
+
+`c^{ID}_{i,j} = z_i^T hat{w}_j`
 
 The exact implemented objective is
 
-\[
-L_{BH}=\tfrac12(L_{SP}+L_{within}),
-\qquad
-L_{BHCA}=L_{ID}+\lambda_H L_{BH}.
-\]
+`L_BH = (1/2) * (L_SP + L_within)`
+
+`L_BHCA = L_ID + λ_H * L_BH`
 
 There is no learned or configurable coefficient between `L_SP` and
 `L_within`; their fixed average leaves `λ_H` as the sole BHCA hierarchy weight.
@@ -80,18 +68,13 @@ There is no learned or configurable coefficient between `L_SP` and
 For a valid target, the category target score receives an additive angular
 margin:
 
-\[
-\phi^{SP}_{i,s_i}=\cos(\arccos(c^{SP}_{i,s_i})+m_{SP}),
-\]
+`φ^{SP}_{i,s_i} = cos(arccos(c^{SP}_{i,s_i}) + m_SP)`
 
 with the repository's stable ArcFace monotonicity correction. Other category
 scores remain unmodified. At scale `γ` (the identity scale by default), let
 `CE_i^SP` be cross-entropy over all training species. The reduction is
 
-\[
-L_{SP}=\frac{\sum_{i\in V}\omega_{s_i}CE_i^{SP}}
-{\sum_{i\in V}\omega_{s_i}},
-\]
+`L_SP = (sum_{i in V} ω_{s_i} * CE_i^{SP}) / (sum_{i in V} ω_{s_i})`
 
 where `V` contains only rows with an explicit known training-category target.
 This denominator prevents category composition from changing the global scale
@@ -101,9 +84,7 @@ merely through the sum of weights.
 
 For each valid anchor, BHCA obtains the complete global set
 
-\[
-\mathcal C(s_i)=\{j:g(j)=s_i\}
-\]
+`C(s_i) = {j : g(j) = s_i}`
 
 from persisted training-state buffers. It is not limited to identities present
 in the minibatch. Anchors are grouped by species and the corresponding columns
@@ -112,15 +93,11 @@ classifier or hierarchy-specific identity bank exists.
 
 For ArcFace geometries, the implemented term is
 
-\[
-L_{within}=\frac1{|V_2|}\sum_{i\in V_2}
--\log\frac{\exp[s\,\phi(c^{ID}_{i,y_i},m_{ID})]}
-{\sum_{j\in\mathcal C(s_i)}\exp[s\,q_{i,j}]},
-\]
+`L_within = (1 / |V_2|) * sum_{i in V_2} -log( exp[s * φ(c^{ID}_{i,y_i}, m_ID)] / sum_{j in C(s_i)} exp[s * q_{i,j}] )`
 
 where `q` is the margin-adjusted target score and the unchanged non-target
 score, and `V_2` includes categories with at least two identities. A singleton
-category has `L_within=0` for its anchors; category and global identity losses
+category has `L_within = 0` for its anchors; category and global identity losses
 remain active. Negatives are never fabricated.
 
 ## Identity geometries
@@ -137,15 +114,13 @@ conditional objective excludes them.
 
 There are `K_c` fixed sub-centers per identity:
 
-\[
-c_{i,j,k}=z_i^\top\hat w_{j,k},
-\qquad
-c_{i,j}=\max_k c_{i,j,k}.
-\]
+`c_{i,j,k} = z_i^T hat{w}_{j,k}`
+
+`c_{i,j} = max_k c_{i,j,k}`
 
 The hard maximum is exact and gradients flow through the winning center. Global
 and conditional ArcFace both use the same collapsed `c_(i,j)` and the same
-`m_ID`. The default is `K_c=2`; center count is not identity-dependent.
+`m_ID`. The default is `K_c = 2`; center count is not identity-dependent.
 
 ### BHCA-SCSF2
 
@@ -153,29 +128,22 @@ The identical fixed-K maximum is passed into ApexID's exact SphereFace2
 transformation. It is not a sum of Sub-center ArcFace and SphereFace2, and it has
 one identity bank only. For each cosine `c`, the implementation preserves
 
-\[
-g(c)=2\left(\frac{c+1}{2}\right)^t-1,
-\]
+`g(c) = 2 * ((c + 1) / 2)^t - 1`
 
 the `A`, `C`, or `M` margin transform, detached margin delta, shared bias,
 positive/negative `alpha` weighting, scale `r`, and loss factor `lw`. The global
 objective is exactly the existing one-vs-all mean BCE, including its
-`lw*C/r` element weights.
+`lw * C / r` element weights.
 
-For a conditional candidate set of size `n>1`, the exact transformed logits
+For a conditional candidate set of size `n > 1`, the exact transformed logits
 `a_(i,j)` are reused, but sibling negatives are normalized per anchor:
 
-\[
-L_i^{within}=\frac{lw}{r}\left[
-\alpha\,\operatorname{softplus}(-a_{i,y_i})+
-\frac{1-\alpha}{n-1}\sum_{j\ne y_i}\operatorname{softplus}(a_{i,j})
-\right].
-\]
+`L_i^{within} = (lw / r) * [ α * softplus(-a_{i,y_i}) + ((1 - α) / (n - 1)) * sum_{j ≠ y_i} softplus(a_{i,j}) ]`
 
 `L_within` is the mean over valid anchors. This retains the SphereFace2 decision
 geometry and balancing semantics without letting a species dominate solely
-because it has more sibling proxies. With `K_c=1`, equivalent weights and bias,
-and `λ_H=0`, tests require numerical equivalence to ordinary SphereFace2.
+because it has more sibling proxies. With `K_c = 1`, equivalent weights and bias,
+and `λ_H = 0`, tests require numerical equivalence to ordinary SphereFace2.
 
 ## Missing labels and mapping validation
 
@@ -221,9 +189,7 @@ Species proxies are closed-set training-only parameters. The species head cannot
 classify an unseen category and is never used as an inference gate. Export and
 retrieval remain backbone-only:
 
-\[
-z=f(x)/\|f(x)\|_2,
-\]
+`z = f(x) / ||f(x)||_2`
 
 followed by cosine similarity. An unseen species is not forced into a known
 category before retrieval. BHCA is intended to transfer organization learned
@@ -259,10 +225,9 @@ Validation diagnostics, never training targets, report sampled distributions
 for `same_identity`, `different_identity_same_species`, and `different_species`
 with count/mean/std/5th percentile/median/95th percentile. They report
 
-\[
-\Delta_{ID}=E[S_{sameID}]-E[S_{diffID,sameSP}],\quad
-\Delta_{SP}=E[S_{diffID,sameSP}]-E[S_{diffSP}],
-\]
+`Δ_ID = E[S_sameID] - E[S_diffID,sameSP]`
+
+`Δ_SP = E[S_diffID,sameSP] - E[S_diffSP]`
 
 plus per-query hardest same-species negatives, hardest available positives,
 their gap distribution, and tail violation rate. Computation is chunked and runs
@@ -278,7 +243,7 @@ already computed global identity matrix and adds no second full proxy bank.
 BHCA-SCA uses `K_c*C*D + S*D` proxy parameters. BHCA-SCSF2 adds one scalar bias.
 Their exact global sub-center score tensor costs `O(B*C*K_c)` transient memory,
 then collapses to `O(B*C)`. Species scores cost `O(B*S)`. Conditional work for a
-group is `O(B_s*N_s^ID)` and reuses collapsed scores. There is no `B×C×K_c`
+group is `O(B_s * N_s^{ID})` and reuses collapsed scores. There is no `B×C×K_c`
 hierarchy duplicate. Peak memory should still be benchmarked with the real `C`,
 `D=2048`, mixed precision setting, and device allocator because implementation
 correctness does not substitute for a hardware measurement.
