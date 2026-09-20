@@ -1,6 +1,6 @@
 experiment:
-  name: apexid_convnext_small_bhca_a_v2_gray3
-  output_dir: outputs/apexid_convnext_small_bhca_a_v2_gray3
+  name: apexid_convnext_small_bhca_a_v2_rgb
+  output_dir: outputs/apexid_convnext_small_bhca_a_v2_rgb
 seed: 42
 device: {prefer_gpu: true, gpu_index: 0}
 data:
@@ -11,7 +11,7 @@ data:
   root_dir: /sc/projects/sci-aisc/apex-id/extracted/apexid-dataset
   image_size: [440, 440]
   wavelet: false
-  grayscale: true
+  grayscale: false
   transforms:
     mean: [0.485, 0.456, 0.406]
     std: [0.229, 0.224, 0.225]
@@ -126,7 +126,7 @@ embedding_plot:
   filename_template: epoch_{epoch_number:03d}_umap.png
   best_filename: best_embedding_space.png
 checkpoint:
-  output_dir: outputs/apexid_convnext_small_bhca_a_v2_gray3/checkpoints
+  output_dir: outputs/apexid_convnext_small_bhca_a_v2_rgb/checkpoints
   every_n_epochs: 1
   filename: last_checkpoint.pt
   delete_previous: true
@@ -137,7 +137,7 @@ early_stopping:
   mode: max
   patience: 10
   min_delta: 0.0
-  output_dir: outputs/apexid_convnext_small_bhca_a_v2_gray3/checkpoints
+  output_dir: outputs/apexid_convnext_small_bhca_a_v2_rgb/checkpoints
   full_model_name: best_full_model.pt
   backbone_name: best_backbone.pt
   metadata_name: best_metadata.json
@@ -146,9 +146,9 @@ tracking:
   provider: wandb
   project: ApexID
   entity: MIA_AI_Team
-  run_name: ApexID-convnext-small-bhca-a-v2-gray3
+  run_name: ApexID-convnext-small-bhca-a-v2-rgb
   group: bhca-controlled-v2
-  tags: [split_v2, gray3, convnext_small, pretrained, bhca, bhca_a, emb2048]
+  tags: [split_v2, rgb, convnext_small, pretrained, bhca, bhca_a, emb2048]
   mode: online
   log_artifacts: none
   block_on_artifact_upload: false

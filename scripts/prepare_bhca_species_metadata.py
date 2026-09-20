@@ -2,6 +2,7 @@
 """Validate and enrich explicit species metadata for BHCA without changing splits."""
 
 import argparse
+import importlib.util
 import os
 from pathlib import Path
 import sys
@@ -11,11 +12,30 @@ import pandas as pd
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
-from apexid.data.species_metadata import enrich_species_metadata
-from apexid.utils.provenance import write_json_atomic
+
+def _load_module(module_name, relative_path):
+    """Load a repo module by file path without importing apexid package __init__ (torch)."""
+    path = REPO_ROOT / relative_path
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_species_metadata = _load_module(
+    "apexid_species_metadata_standalone",
+    "apexid/data/species_metadata.py",
+)
+_provenance = _load_module(
+    "apexid_provenance_standalone",
+    "apexid/utils/provenance.py",
+)
+enrich_species_metadata = _species_metadata.enrich_species_metadata
+write_json_atomic = _provenance.write_json_atomic
 
 
 def _write_csv_atomic(frame, path):
