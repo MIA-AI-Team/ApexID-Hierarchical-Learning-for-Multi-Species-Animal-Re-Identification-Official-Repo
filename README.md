@@ -1,7 +1,8 @@
 # ApexID
 
 ApexID is a PyTorch project for animal re-identification. It trains an
-embedding model with OSNet or TorchVision ConvNeXt backbones, applies
+embedding model with configurable backbones, including OSNet, ConvNeXt,
+MiewID, and MegaDescriptor, applies
 metric/classification heads such as ArcFace and SphereFace2, validates with
 retrieval metrics, and saves checkpoints, experiment history, and optional
 embedding-space plots.
@@ -60,9 +61,10 @@ export APEXID_SPLIT_ROOT="$APEXID_DATA_ROOT/open_set_splits_v2"
 export APEXID_OUTPUT_ROOT=/mounted/apexid-results
 ```
 
-When unset, configs deliberately retain the V1-relative fallback
+When unset, historical configs deliberately retain the V1-relative fallback
 `ApexID_Dataset/open_set_splits`; selecting V2 is therefore explicit and does
-not silently change historical membership.
+not silently change historical membership. The new MiewID and MegaDescriptor
+recipes below explicitly default to the repository's `open_set_splits_v2/`.
 
 The train and validation CSV files must contain at least:
 
@@ -107,6 +109,62 @@ model:
 Registered ConvNeXt backbones include `convnext_tiny`, `convnext_small`,
 `convnext_base`, `convnext_large`, and pretrained-default aliases with `_pt`.
 The default config remains OSNet-based.
+
+## Fine-tune MiewID and MegaDescriptor
+
+Two standalone recipes use the existing trainer, SphereFace2 head, open-set
+validation, and checkpoint resume support:
+
+| Config | Pretrained wildlife model | RGB size | Native embedding |
+|---|---|---|---|
+| `configs/finetune_miewid_msv3.yaml` | [conservationxlabs/miewid-msv3](https://huggingface.co/conservationxlabs/miewid-msv3) | 440 x 440 | 2152 |
+| `configs/finetune_megadescriptor_l_384.yaml` | [BVRA/MegaDescriptor-L-384](https://huggingface.co/BVRA/MegaDescriptor-L-384) | 384 x 384 | 1536 |
+
+These recipes default to the repository's `open_set_splits_v2/` CSVs. Set
+`APEXID_DATA_ROOT` to the folder containing the CSVs' `images/...` paths.
+For example, in PowerShell:
+
+```powershell
+$env:APEXID_DATA_ROOT = "D:/datasets/ApexID_Dataset"
+$env:APEXID_SPLIT_ROOT = "D:/ApexID/open_set_splits_v2"
+$env:APEXID_OUTPUT_ROOT = "D:/ApexID/outputs"
+python scripts/debug_data_pipeline.py --config configs/finetune_miewid_msv3.yaml
+python scripts/train.py --config configs/finetune_miewid_msv3.yaml
+```
+
+Run MegaDescriptor as a separate experiment:
+
+```bash
+python scripts/train.py --config configs/finetune_megadescriptor_l_384.yaml
+```
+
+On Linux, use `export APEXID_DATA_ROOT=/path/to/dataset` and equivalent exports
+for the other roots. Both models use dependencies already in `requirements.txt`.
+The first pretrained load downloads weights from Hugging Face; later runs reuse
+the cache. The recipes pin model revisions and write to separate output folders.
+
+Both recipes train the full embedding model at `1e-5` and the new head at
+`1e-4`, with cosine decay and warmup. They use RGB without wavelets and retain
+native embeddings without a new projection. A different `model.embedding_dim`
+adds a trainable linear projection. To use ArcFace instead, set `head.name:
+arcface`, replace its kwargs with `{s: 40.0, m: 0.3}`, and set `loss.name:
+cross_entropy`.
+
+MiewID retains its pretrained GeM pooling and batch normalization and replaces
+the original unused classifier with ApexID's head. Its weights are verified by
+SHA-256; loading does not execute Hugging Face remote code. MegaDescriptor uses
+timm's Swin checkpoint conversion and requires exactly 384 x 384 inputs. Its
+recipe follows the model-card example's mean/std `[0.5, 0.5, 0.5]` (the Hub
+config instead lists ImageNet statistics). Keep this choice consistent between
+training and evaluation. MiewID uses ImageNet mean/std.
+
+The starting batch size is 8 (2 identities x 4 images). MegaDescriptor enables
+gradient checkpointing to reduce activation memory. Adjust `num_identities`
+and `batch_size` together, keeping `batch_size = num_identities * num_instances`;
+adjust `val_batch_size` separately. W&B is disabled by default. Re-running a
+recipe resumes its `last_checkpoint.pt`; use a new output directory for a new
+experiment. For offline restoration from your own ApexID checkpoint, set
+`model.backbone.kwargs.pretrained: false` to skip fetching the provider weights.
 
 ## Open-Set Validation
 

@@ -59,7 +59,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def is_pretrained_backbone(cfg) -> bool:
-    """Return True when the config selects an ImageNet-pretrained backbone."""
+    """Return True when the config selects a pretrained backbone."""
     model_cfg = _as_dict(_as_dict(cfg).get("model", {}))
     backbone_cfg = _as_dict(model_cfg.get("backbone", {}))
     name = str(backbone_cfg.get("name", "")).lower()

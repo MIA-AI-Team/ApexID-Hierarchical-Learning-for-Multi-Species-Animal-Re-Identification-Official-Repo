@@ -18,6 +18,10 @@ This folder contains feature extractors that produce ApexID embeddings.
   (Identity when `embedding_dim` matches hidden size) with revision and SHA-256
   pins. Default `_pt` repos are ImageNet-22k @ 384.
 - `registry.py`: backbone registration and lookup helpers.
+- `miewid.py`: native EfficientNetV2 + GeM + BN embedding path for
+  `conservationxlabs/miewid-msv3`, with pinned safetensors and SHA-256 checking.
+- `megadescriptor.py`: timm Swin wrapper for `BVRA/MegaDescriptor-L-384`, with
+  a pinned Hub revision and optional gradient checkpointing.
 - `__init__.py`: exports registry helpers and OSNet, ConvNeXt, ConvNeXt V2, and DINOv3 builders.
 
 ## How It Connects
@@ -145,6 +149,28 @@ model:
       pretrained: true
       revision: 5931719e67bbdb9737e363e781fb0c67687896bc
       expected_sha256: 9a21ac3df0c63839d62612dda6f454d816c25611cc7a52966ed5a5a94921dc8b
+```
+
+## Wildlife-pretrained backbones
+
+Registered builders are `miewid_msv3`, `miewid_msv3_pt`,
+`megadescriptor_l_384`, and `megadescriptor_l_384_pt`. The `_pt` builders load
+wildlife weights by default; the other builders initialize randomly without
+network access. Passing `pretrained: false` also disables downloads for `_pt`.
+All return unnormalized embeddings for the ApexID wrapper to normalize.
+
+Use `embedding_dim: 2152` for native MiewID features and `1536` for native
+MegaDescriptor features; other positive dimensions add a linear projection.
+Both require three input channels. MiewID's recommended input is 440 x 440;
+MegaDescriptor requires 384 x 384. See the standalone `configs/finetune_*.yaml`
+recipes for preprocessing, fine-tuning, and data paths. MiewID intentionally
+discards only `final.weight` and `final.bias` from the upstream checkpoint and
+strictly loads every embedding parameter, including GeM and BN state.
+
+Run offline integration tests (small stand-ins avoid model downloads):
+
+```bash
+pytest tests/models/test_wildlife_backbones.py tests/training/test_finetune.py
 ```
 
 ## Contributor Notes

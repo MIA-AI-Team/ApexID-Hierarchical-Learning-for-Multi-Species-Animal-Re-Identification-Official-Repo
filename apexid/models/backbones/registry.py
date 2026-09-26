@@ -1,3 +1,5 @@
+from .miewid import miewid_msv3, miewid_msv3_pt
+from .megadescriptor import megadescriptor_l_384, megadescriptor_l_384_pt
 from .convnext import (
     convnext_base,
     convnext_base_pt,
@@ -83,6 +85,10 @@ def available_backbones():
 
 
 register_backbone("osnet_x1_0")(osnet_x1_0)
+register_backbone("miewid_msv3")(miewid_msv3)
+register_backbone("miewid_msv3_pt")(miewid_msv3_pt)
+register_backbone("megadescriptor_l_384")(megadescriptor_l_384)
+register_backbone("megadescriptor_l_384_pt")(megadescriptor_l_384_pt)
 register_backbone("osnet_x0_75")(osnet_x0_75)
 register_backbone("osnet_x0_5")(osnet_x0_5)
 register_backbone("osnet_x0_25")(osnet_x0_25)
