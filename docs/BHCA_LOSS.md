@@ -163,15 +163,21 @@ missing `species` values using these explicitly approved dataset facts:
 | `CzechLynx` | `lynx` |
 | `SalamanderID2025` | `salamander` |
 | `humpback-whale-identification` | `humpback-whale` |
-| `HappyWhale` | `whale` |
+
+`HappyWhale` is multi-species. Missing HappyWhale `species` values are filled from
+`data/og happy ids/train.csv` (matched by image basename; identity must equal
+`individual_id`) and collapsed to exactly two labels: if the official species
+string contains `dolphin` (or the competition typo `dolpin`), the label is
+`dolphin`; otherwise it is `whale`. Fine-grained names such as `killer_whale`
+are not kept.
 
 Existing non-null species values for every other dataset are preserved exactly,
 so mixed datasets such as `GiraffeZebraID` keep their row-level `giraffe` and
-`zebra` labels. A covered dataset with a conflicting non-null value is an error,
-and any null left in an unmapped dataset stops BHCA training with a per-dataset
-count. The pass asserts that row membership, order, and every non-species column
-are unchanged. Training normally uses the enriched tables in memory and does
-not rewrite the frozen split CSVs.
+`zebra` labels. A covered single-species dataset with a conflicting non-null
+value is an error, and any null left in an unmapped dataset stops BHCA training
+with a per-dataset count. The pass asserts that row membership, order, and every
+non-species column are unchanged. Training normally uses the enriched tables in
+memory and does not rewrite the frozen split CSVs.
 
 The identity-to-species mapping, counts, and balancing weights are then built
 from the enriched **training split only**. Validation enrichment supports
