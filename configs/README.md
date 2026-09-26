@@ -5,6 +5,13 @@ point is `default.yaml`.
 
 ## Main Files
 
+- `finetune_miewid_msv3.yaml`: pinned wildlife-pretrained MiewID, native
+  2152-d embeddings, 440px RGB and ImageNet normalization.
+- `finetune_megadescriptor_l_384.yaml`: pinned wildlife-pretrained Swin-L,
+  native 1536-d embeddings, 384px RGB, model-card 0.5 mean/std and gradient
+  checkpointing. Both new recipes use SphereFace2, full fine-tuning, separate
+  output folders, and default explicitly to repository `open_set_splits_v2/`.
+
 - `default.yaml`: complete training configuration for the default ApexID
   experiment. It defines dataset paths, transforms, sampler settings, model
   shape, backbone, head, loss, optimizer, scheduler, LR range test, finetune
@@ -68,9 +75,10 @@ export APEXID_SPLIT_ROOT="$APEXID_DATA_ROOT/open_set_splits_v2"
 export APEXID_OUTPUT_ROOT=/mounted/apexid-results
 ```
 
-The unset split fallback remains `ApexID_Dataset/open_set_splits` (V1) for
-compatibility. Final-paper commands must explicitly point
-`APEXID_SPLIT_ROOT` at the frozen V2 directory.
+The historical unset split fallback remains `ApexID_Dataset/open_set_splits`
+(V1) for compatibility. The new wildlife fine-tuning recipes explicitly default
+to repository `open_set_splits_v2/`. Set `APEXID_SPLIT_ROOT` when the frozen
+V2 directory is mounted elsewhere.
 
 ## Common Commands
 

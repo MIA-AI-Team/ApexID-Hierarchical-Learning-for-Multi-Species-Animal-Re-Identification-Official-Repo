@@ -4,6 +4,10 @@ This folder tests model construction and head behavior.
 
 ## Main Files
 
+- `test_wildlife_backbones.py`: MiewID and MegaDescriptor loading contracts,
+  strict embedding-weight restoration, gradient flow, normalized outputs,
+  offline checkpoint restoration, and fine-tuning recipe preprocessing.
+
 - `test_input_channels.py`: model/input-channel behavior, especially RGB versus
   wavelet six-channel inputs.
 - `test_convnext.py`: TorchVision ConvNeXt registration, embedding shape,

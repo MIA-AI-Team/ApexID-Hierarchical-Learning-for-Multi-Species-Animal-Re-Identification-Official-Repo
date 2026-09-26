@@ -1,3 +1,5 @@
+from .miewid import MiewIDBackbone, miewid_msv3, miewid_msv3_pt
+from .megadescriptor import MegaDescriptorBackbone, megadescriptor_l_384, megadescriptor_l_384_pt
 from .convnext import (
     ConvNeXtBackbone,
     convnext_base,
@@ -61,6 +63,12 @@ from .osnet_pt import (
 from .registry import BACKBONE_REGISTRY, available_backbones, build_backbone, register_backbone
 
 __all__ = [
+    "MiewIDBackbone",
+    "MegaDescriptorBackbone",
+    "miewid_msv3",
+    "miewid_msv3_pt",
+    "megadescriptor_l_384",
+    "megadescriptor_l_384_pt",
     "BACKBONE_REGISTRY",
     "ConvNeXtBackbone",
     "ConvNeXtV2Backbone",
