@@ -13,8 +13,9 @@ discrimination primary. It adds three controlled heads:
   collapsed by an exact maximum and consumed by the repository's exact
   SphereFace2 transform.
 
-All variants use exactly the same balanced species and conditional sibling
-methodology. BHCA does **not** reserve literal fixed regions or dimensions of the
+All variants share balanced species supervision and conditional sibling
+candidate selection. Auxiliary weights are independently configurable; the
+SphereFace2 conditional negative reduction is also configurable. BHCA does **not** reserve literal fixed regions or dimensions of the
 hypersphere. Its proxy objectives encourage coarse category organization and
 fine identity discrimination; the resulting geometry remains an empirical
 question.
@@ -54,14 +55,19 @@ proxies are normalized when scored:
 
 `c^{ID}_{i,j} = z_i^T hat{w}_j`
 
-The exact implemented objective is
+The objective with independent coefficients is
 
-`L_BH = (1/2) * (L_SP + L_within)`
+`L_BHCA = L_ID + λ_SP * L_SP + λ_W * L_within`
 
-`L_BHCA = L_ID + λ_H * L_BH`
+`head.kwargs.species_weight` sets `λ_SP` and
+`head.kwargs.within_species_weight` sets `λ_W`. Both must be finite and
+non-negative. An omitted coefficient falls back independently to
+`hierarchy_weight / 2`, preserving legacy configs. Explicit coefficients are
+used directly; there is no additional multiplication by `hierarchy_weight`.
 
-There is no learned or configurable coefficient between `L_SP` and
-`L_within`; their fixed average leaves `λ_H` as the sole BHCA hierarchy weight.
+For backward-compatible diagnostics, `loss_hierarchy` remains the unweighted
+`(L_SP + L_within) / 2`. The actual auxiliary contribution is logged as
+`loss_hierarchy_weighted = λ_SP * L_SP + λ_W * L_within`.
 
 ## Shared species/category branch
 
@@ -136,14 +142,32 @@ objective is exactly the existing one-vs-all mean BCE, including its
 `lw * C / r` element weights.
 
 For a conditional candidate set of size `n > 1`, the exact transformed logits
-`a_(i,j)` are reused, but sibling negatives are normalized per anchor:
+`a_(i,j)` are reused. The corrected SCSF2 run config selects
+`within_negative_reduction: sum`:
 
-`L_i^{within} = (lw / r) * [ α * softplus(-a_{i,y_i}) + ((1 - α) / (n - 1)) * sum_{j ≠ y_i} softplus(a_{i,j}) ]`
+`L_i^{within} = (lw / r) * [ α * softplus(-a_{i,y_i}) + (1 - α) * sum_{j ≠ y_i} softplus(a_{i,j}) ]`
 
-`L_within` is the mean over valid anchors. This retains the SphereFace2 decision
-geometry and balancing semantics without letting a species dominate solely
-because it has more sibling proxies. With `K_c = 1`, equivalent weights and bias,
-and `λ_H = 0`, tests require numerical equivalence to ordinary SphereFace2.
+`L_within` is the mean over valid anchors. Summing removes the explicit
+`1 / (n - 1)` attenuation on every sibling negative, matching the global SF2
+reduction. Both terms continue to use the same positive, proxies, margins,
+transformation, straight-through derivative, and shared bias. No softmax or
+additional classifier is introduced.
+
+The constructor default `within_negative_reduction: mean` retains the old
+formula, dividing the negative sum by `n - 1`, for legacy configs and ablations.
+The archived `configs/cluster_bhca_subcenter_sphereface2_legacy.yaml` selects
+that behavior by omission. With `K_c = 1`, equivalent weights and bias, and
+both effective auxiliary coefficients zero, the total matches ordinary SF2.
+
+When every anchor is eligible, a sibling negative's combined coefficient is
+`1 + λ_W` times its global coefficient in sum mode, versus
+`1 + λ_W / (n - 1)` in mean mode. The repeated positive receives `1 + λ_W`
+in both modes; cross-category negative coefficients are unchanged. With missing
+labels or singleton categories, the conditional mean uses `|V_2|`, so the
+extra factor for eligible anchors also contains `B / |V_2|`. More siblings
+can produce a larger aggregate penalty in sum mode; this is an explicit
+trade-off, not class-count-invariant total loss. Measure actual gradients and
+retrieval performance when tuning `λ_W`.
 
 ## Missing labels and mapping validation
 
@@ -232,7 +256,10 @@ The trainer logs the following scalar head metrics (also under `train/…`):
 - conditional: `loss_within_species`, candidate mean/min/median/max, true and
   hardest sibling cosine, cosine gap, violation rate, valid anchors, and skipped
   singleton anchors;
-- total: `loss_hierarchy`, `loss_total`, `hierarchy_weight`;
+- total: legacy unweighted `loss_hierarchy`, `loss_total`, `hierarchy_weight`,
+  effective `species_weight`, `within_species_weight`, `loss_species_weighted`,
+  `loss_within_species_weighted`, `loss_hierarchy_weighted`, and for SCSF2
+  `within_negatives_summed`;
 - sub-centers: batch winning-center fractions, fraction ever selected, mean
   active centers/identity, identities using each center count, and mean dominant
   center fraction (`subcenter_collapse_dominance`).
@@ -289,17 +316,26 @@ does not describe the merged hierarchy.
 |---|---:|---:|---:|---:|---:|---|
 | BHCA-A | 0.30 | 0.10 | 0.10 | 40 | 1 | ArcFace |
 | BHCA-SCA | 0.30 | 0.10 | 0.10 | 40 | 2 | ArcFace |
-| BHCA-SCSF2 | 0.30 | 0.10 | 0.10 | `r=40` | 2 | A, `alpha=.9`, `t=3`, `lw=20` |
+| BHCA-SCSF2 (legacy) | 0.30 | 0.10 | 0.10 | `r=40` | 2 | A, `alpha=.9`, `t=3`, `lw=20`, mean negatives |
 
-The three `configs/cluster_bhca_*.yaml` files share Split V2 paths, ConvNeXt
-Small pretrained backbone, 2048-dimensional embedding, preprocessing, PK
-sampling, optimizer/scheduler, finetuning, validation, seed, epochs, and early
-stopping. Only identity geometry and run/output identifiers differ. The PK
-sampler itself is unchanged.
+The corrected `configs/cluster_bhca_subcenter_sphereface2.yaml` uses
+`species_weight: 0.05`, `within_species_weight: 0.50`, and
+`within_negative_reduction: sum`. These are explicit experimental starting
+settings, not validated optimum values. Global SF2 settings and sub-centers
+remain as above. The config uses a new `reweighted` output directory and W&B
+run/group identifiers so auto-resume does not select a previous experiment.
 
-Suggested small validation-only sensitivity study: `λ_H ∈ {0.025, .05, .10,
-.20}`, optionally `m_SP ∈ {.05, .10, .15}`, and `K_c ∈ {1,2,3}`. Keep `m_ID`
-fixed initially and do not tune on final-test labels.
+The ArcFace configs and the archived SCSF2 legacy config retain the original
+shared-weight defaults. Backbone, data paths, sampling, and optimizer settings
+are unchanged, but the corrected SCSF2 run changes auxiliary weighting as well
+as reduction. Compare it with the archived SCSF2 config and individual ablations;
+do not attribute all differences to identity geometry alone.
+
+For the corrected SCSF2, isolate changes with sum versus mean reduction and
+`λ_W ∈ {0.10, 0.25, 0.50}` at fixed `λ_SP = 0.05`; then study
+`λ_SP ∈ {0, 0.02, 0.05}` at the selected `λ_W`. Keep global SF2 settings fixed
+initially and use development validation only. See [BHCA_WEIGHTING_FIX.md](BHCA_WEIGHTING_FIX.md)
+for equations, the coefficient example, and checkpoint compatibility.
 
 ## Controlled ablation plan
 

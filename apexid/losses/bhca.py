@@ -70,6 +70,8 @@ class _BHCABase(nn.Module):
         identity_margin=0.30,
         species_margin=0.10,
         hierarchy_weight=0.10,
+        species_weight=None,
+        within_species_weight=None,
         species_scale=40.0,
         species_balance="sqrt_inverse_identity_frequency",
     ):
@@ -79,6 +81,17 @@ class _BHCABase(nn.Module):
         self.identity_margin = float(identity_margin)
         self.species_margin = float(species_margin)
         self.hierarchy_weight = float(hierarchy_weight)
+        # Omitted weights preserve the legacy lambda_H / 2 coefficients.
+        self._explicit_auxiliary_weights = (
+            species_weight is not None or within_species_weight is not None
+        )
+        self.species_weight = (
+            self.hierarchy_weight / 2 if species_weight is None else float(species_weight)
+        )
+        self.within_species_weight = (
+            self.hierarchy_weight / 2
+            if within_species_weight is None else float(within_species_weight)
+        )
         self.species_scale = float(species_scale)
         self.species_balance = str(species_balance).lower()
         self.species_names = list(species_names or [])
@@ -91,8 +104,10 @@ class _BHCABase(nn.Module):
             raise ValueError("identity_margin must be in [0, pi/2).")
         if not 0.0 <= self.species_margin < math.pi / 2:
             raise ValueError("species_margin must be in [0, pi/2).")
-        if self.hierarchy_weight < 0:
-            raise ValueError("hierarchy_weight must be non-negative.")
+        for name in ("hierarchy_weight", "species_weight", "within_species_weight"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and non-negative.")
         if self.species_scale <= 0:
             raise ValueError("species_scale must be greater than zero.")
         if self.species_balance != "sqrt_inverse_identity_frequency":
@@ -152,10 +167,34 @@ class _BHCABase(nn.Module):
             "geometry_name": self.geometry_name,
             "species_names": list(self.species_names),
             "species_balance": self.species_balance,
+            "objective_settings": self._objective_settings(),
         }
+
+    def _objective_settings(self):
+        settings = {
+            "species_weight": self.species_weight,
+            "within_species_weight": self.within_species_weight,
+        }
+        if hasattr(self, "within_negative_reduction"):
+            settings["within_negative_reduction"] = self.within_negative_reduction
+        return settings
 
     def set_extra_state(self, state):
         if state:
+            saved = state.get("objective_settings")
+            if saved is not None and saved != self._objective_settings():
+                raise ValueError(
+                    "BHCA objective settings differ from the checkpoint. "
+                    "Use matching weights/reduction to resume, or start a new run."
+                )
+            if saved is None and (
+                self._explicit_auxiliary_weights
+                or getattr(self, "within_negative_reduction", "mean") != "mean"
+            ):
+                raise ValueError(
+                    "Legacy BHCA checkpoint has no independent objective settings. "
+                    "Resume with the legacy config, or start a new run."
+                )
             self.species_names = list(state.get("species_names", self.species_names))
 
     def _identity_scores(self, embeddings):
@@ -369,7 +408,10 @@ class _BHCABase(nn.Module):
             identity_cosine, labels, species_targets
         )
         loss_hierarchy = 0.5 * (loss_species + loss_within)
-        loss_total = loss_id + self.hierarchy_weight * loss_hierarchy
+        loss_species_weighted = self.species_weight * loss_species
+        loss_within_weighted = self.within_species_weight * loss_within
+        loss_hierarchy_weighted = loss_species_weighted + loss_within_weighted
+        loss_total = loss_id + loss_hierarchy_weighted
 
         metrics = {
             "loss_id_global": _finite_float(loss_id),
@@ -377,9 +419,16 @@ class _BHCABase(nn.Module):
             "balanced_species_loss": _finite_float(loss_species),
             "loss_within_species": _finite_float(loss_within),
             "loss_hierarchy": _finite_float(loss_hierarchy),
+            "loss_species_weighted": _finite_float(loss_species_weighted),
+            "loss_within_species_weighted": _finite_float(loss_within_weighted),
+            "loss_hierarchy_weighted": _finite_float(loss_hierarchy_weighted),
             "loss_total": _finite_float(loss_total),
             "hierarchy_weight": self.hierarchy_weight,
+            "species_weight": self.species_weight,
+            "within_species_weight": self.within_species_weight,
         }
+        if hasattr(self, "within_negative_reduction"):
+            metrics["within_negatives_summed"] = float(self.within_negative_reduction == "sum")
         metrics.update(self._global_metrics(identity_cosine, labels))
         metrics.update(species_metrics)
         metrics.update(within_metrics)
@@ -535,8 +584,14 @@ class BHCASubCenterSphereFace2(_BHCASubCenterBase):
         identity_margin=0.30,
         t=3.0,
         lw=20.0,
+        within_negative_reduction="mean",
         **kwargs,
     ):
+        # Legacy constructors retain mean reduction; the corrected run config
+        # explicitly selects sum so each sibling keeps its SF2 coefficient.
+        self.within_negative_reduction = str(within_negative_reduction).lower()
+        if self.within_negative_reduction not in {"sum", "mean"}:
+            raise ValueError("within_negative_reduction must be 'sum' or 'mean'.")
         self.magn_type = str(magn_type).upper()
         self.alpha = float(alpha)
         self.r = float(r)
@@ -593,7 +648,7 @@ class BHCASubCenterSphereFace2(_BHCASubCenterBase):
             t=self.t,
             lw=self.lw,
             bias=self.b,
-            normalize_negatives=True,
+            normalize_negatives=self.within_negative_reduction == "mean",
         )
 
     def _prediction_logits(self, scores):
