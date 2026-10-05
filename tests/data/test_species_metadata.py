@@ -54,7 +54,7 @@ def test_enrichment_fills_approved_datasets_and_preserves_other_metadata():
     assert enriched["species"].tolist() == [
         "lynx",
         "salamander",
-        "humpback-whale",
+        "whale",
         "giraffe",
         "zebra",
     ]

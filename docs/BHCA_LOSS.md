@@ -155,14 +155,15 @@ category, it still contributes to global `L_ID`, while its `L_SP` and
 with the persisted identity-to-species mapping are rejected.
 
 Before any BHCA dataset is constructed, the training entry point runs one
-deterministic metadata-enrichment pass over each configured split. It fills only
-missing `species` values using these explicitly approved dataset facts:
+deterministic metadata-enrichment pass over each configured split. It fills
+missing `species` values using these explicitly approved dataset facts and
+normalizes existing humpback labels to the shared `whale` category:
 
 | Dataset | Canonical `species` value |
 |---|---|
 | `CzechLynx` | `lynx` |
 | `SalamanderID2025` | `salamander` |
-| `humpback-whale-identification` | `humpback-whale` |
+| `humpback-whale-identification` | `whale` |
 
 `HappyWhale` is multi-species. Missing HappyWhale `species` values are filled from
 `data/og happy ids/train.csv` (matched by image basename; identity must equal
@@ -171,9 +172,16 @@ string contains `dolphin` (or the competition typo `dolpin`), the label is
 `dolphin`; otherwise it is `whale`. Fine-grained names such as `killer_whale`
 are not kept.
 
-Existing non-null species values for every other dataset are preserved exactly,
-so mixed datasets such as `GiraffeZebraID` keep their row-level `giraffe` and
-`zebra` labels. A covered single-species dataset with a conflicting non-null
+Existing `humpback-whale`, `humpback_whale`, and `humpback whale` labels are
+normalized to `whale` across all splits and datasets before conflict checks;
+matching ignores case and surrounding whitespace. Existing `whale` labels are
+also canonicalized to lowercase. This repairs already-enriched CSVs, and reruns
+are idempotent. Only the species/category column is changed: dataset names and
+identity labels containing `humpback-whale` are preserved.
+
+Other existing non-null categories are preserved, so mixed datasets such as
+`GiraffeZebraID` keep their row-level `giraffe` and `zebra` labels. A covered
+single-species dataset with a genuinely conflicting non-null
 value is an error, and any null left in an unmapped dataset stops BHCA training
 with a per-dataset count. The pass asserts that row membership, order, and every
 non-species column are unchanged. Training normally uses the enriched tables in
@@ -204,8 +212,10 @@ from training supervision; whether it does so better is experimental.
 ## Diagnostics
 
 `bhca_species_enrichment.json` records, for every configured split, rows before
-and after enrichment, fill counts by approved dataset, unresolved datasets, and
-the canonical mapping. `bhca_training_diagnostics.json` records training-only
+and after enrichment, fill counts by approved dataset, existing-label
+normalization counts (`rows_normalized` and `rows_normalized_by_dataset`),
+unresolved datasets, and the canonical mapping. Fill counts exclude existing
+labels that were normalized. `bhca_training_diagnostics.json` records training-only
 `C`, `S`, the complete
 mapping and species names, identities/category, min/median/max counts,
 mean-normalized weights and min/mean/max weight, known/missing parent counts and
@@ -258,7 +268,7 @@ Relative to HA, BHCA-A adds conditional computation but no proxy parameters.
 Sub-center variants add `(K_c-1)*C*D` identity parameters and the corresponding
 global score memory. Checkpoints are therefore larger by the same formulas.
 
-For the repository's current local enriched Split V2 training table
+For the archived local enriched Split V2 training table before whale-category normalization
 (`C=11,677`, `S=17`, `D=2,048`, `B=64`, float32 proxy parameters), the formulas
 give 23,949,312 proxy parameters / 91.36 MiB for BHCA-A, 47,863,808 / 182.59 MiB
 for BHCA-SCA at `K_c=2`, and one additional scalar for BHCA-SCSF2. Raw forward score tensors
@@ -268,6 +278,10 @@ winner-index tensor. These are tensor-size accounting results, not a fabricated
 GPU allocator benchmark: this checkout has no CUDA device. Actual peak allocated
 and reserved GPU memory (including gradients, optimizer state, autocast caches,
 and the backbone) must be recorded on the training H100.
+
+After category normalization, regenerate training diagnostics for the current
+category count and balancing weights; the historical `S=17` accounting above
+does not describe the merged hierarchy.
 
 ## Defaults and controlled configs
 
@@ -316,6 +330,24 @@ python scripts/prepare_bhca_species_metadata.py \
   --check-only \
   --report outputs/bhca_species_preflight.json
 ```
+
+To repair existing labels and fill missing labels in all four development CSVs:
+
+```bash
+for split in train val val_known val_unknown; do
+  python scripts/prepare_bhca_species_metadata.py \
+    --input "open_set_splits_v2/${split}.csv" \
+    --in-place \
+    --report "outputs/bhca_species_preflight/${split}_species_preflight.json" || exit 1
+done
+```
+
+On the cluster, the existing `sbatch slurm_prepare_bhca_species.sh` entry point
+calls this same normalization path for all four CSVs. Training also applies the
+normalization in memory. Start a new BHCA run/output directory after this
+category change: a full checkpoint using separate `whale` and `humpback-whale`
+categories contains an incompatible hierarchy/head. Existing backbone-only
+retrieval checkpoints are unaffected by the metadata repair.
 
 To create a separate enriched CSV, use `--output`; use `--in-place` only when an
 intentional atomic replacement of the source CSV is desired. Neither mode adds,
