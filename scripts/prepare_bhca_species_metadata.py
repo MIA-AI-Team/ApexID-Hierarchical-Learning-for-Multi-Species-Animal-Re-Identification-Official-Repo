@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and enrich explicit species metadata for BHCA without changing splits."""
+"""Fill BHCA species metadata and normalize humpback labels to whale."""
 
 import argparse
 import importlib.util
@@ -63,7 +63,7 @@ def prepare_species_csv(
     report_path=None,
     happywhale_species_csv=None,
 ):
-    """Enrich one CSV and optionally write it atomically plus an audit report."""
+    """Enrich/normalize one CSV and optionally write it atomically with an audit."""
     input_path = Path(input_path)
     original = pd.read_csv(input_path, low_memory=False)
     enriched, report = enrich_species_metadata(
@@ -130,6 +130,8 @@ def main():
         "BHCA species metadata valid: "
         f"rows={report.num_rows}, null_before={report.null_species_before}, "
         f"filled={report.rows_filled}, null_after={report.null_species_after}, "
+        f"normalized={report.rows_normalized}, "
+        f"normalized_by_dataset={report.rows_normalized_by_dataset}, "
         f"filled_by_dataset={report.rows_by_dataset}, "
         f"happywhale_official_filled={report.happywhale_rows_filled_from_official}"
     )

@@ -221,3 +221,141 @@ def test_only_one_identity_proxy_parameter_bank_exists():
     ):
         identity_parameters = [name for name, _ in head.named_parameters() if "identity" in name]
         assert identity_parameters == ["identity_weight"]
+
+
+@pytest.mark.parametrize("head_cls", [BHCAArcFace, BHCASubCenterArcFace, BHCASubCenterSphereFace2])
+def test_independent_auxiliary_weights_and_logged_contributions(head_cls):
+    head = head_cls(
+        3, 4, class_to_species=[0, 0, 1, 1],
+        hierarchy_weight=7.0, species_weight=0.02, within_species_weight=0.5,
+    )
+    output = head.compute_output(_embeddings(), torch.arange(4))
+    expected = output.loss_id_global + 0.02 * output.loss_species + 0.5 * output.loss_within_species
+    torch.testing.assert_close(output.loss_total, expected)
+    assert output.metrics["loss_species_weighted"] == pytest.approx(0.02 * output.loss_species.item())
+    assert output.metrics["loss_within_species_weighted"] == pytest.approx(0.5 * output.loss_within_species.item())
+    assert output.metrics["loss_hierarchy_weighted"] == pytest.approx(
+        output.metrics["loss_species_weighted"] + output.metrics["loss_within_species_weighted"]
+    )
+    output.loss_total.backward()
+    assert torch.isfinite(head.identity_weight.grad).all()
+
+
+def test_zero_auxiliary_weights_disable_their_gradients():
+    head = BHCASubCenterSphereFace2(
+        3, 4, class_to_species=[0, 0, 1, 1], hierarchy_weight=10,
+        species_weight=0, within_species_weight=0, within_negative_reduction="sum",
+    )
+    output = head.compute_output(_embeddings(), torch.arange(4))
+    torch.testing.assert_close(output.loss_total, output.loss_id_global)
+    output.loss_total.backward()
+    assert head.species_proxies.grad.abs().sum() == 0
+
+
+@pytest.mark.parametrize("sibling_count", [2, 99, 999])
+@pytest.mark.parametrize("reduction", ["sum", "mean"])
+def test_exact_sibling_gradient_boost_is_count_independent_with_sum(sibling_count, reduction):
+    # One eligible anchor: sibling negatives followed by one cross-species negative.
+    classes = sibling_count + 2
+    head = BHCASubCenterSphereFace2(
+        3, classes, class_to_species=[0] * (classes - 1) + [1],
+        species_weight=0.05, within_species_weight=0.5,
+        within_negative_reduction=reduction, r=8, t=1,
+    )
+    with torch.no_grad():
+        head.b.fill_(-0.5)
+    scores = torch.full((1, classes), 0.3, dtype=torch.float64, requires_grad=True)
+    labels = torch.tensor([0])
+    global_loss = head._global_identity_loss(scores, labels)
+    within_loss, _ = head._within_species_objective(scores, labels, torch.tensor([0]))
+    global_gradient = torch.autograd.grad(global_loss, scores, retain_graph=True)[0]
+    combined_gradient = torch.autograd.grad(global_loss + 0.5 * within_loss, scores)[0]
+    ratio = 1.5 if reduction == "sum" else 1.0 + 0.5 / sibling_count
+    torch.testing.assert_close(combined_gradient[0, 1:-1], ratio * global_gradient[0, 1:-1])
+    torch.testing.assert_close(combined_gradient[0, 0], 1.5 * global_gradient[0, 0])
+    torch.testing.assert_close(combined_gradient[0, -1], global_gradient[0, -1])
+
+
+def test_legacy_within_formula_is_preserved_explicitly():
+    head = BHCASubCenterSphereFace2(3, 4, class_to_species=[0, 0, 0, 1], hierarchy_weight=0.2)
+    scores = torch.tensor([[0.4, 0.3, 0.2]])
+    labels = torch.tensor([0])
+    expected = sphereface2_loss_from_cosine(
+        scores, labels, magn_type=head.magn_type, alpha=head.alpha, r=head.r,
+        m=head.identity_margin, t=head.t, lw=head.lw, bias=head.b, normalize_negatives=True,
+    )
+    torch.testing.assert_close(head._within_group_loss(scores, labels), expected)
+    assert head.species_weight == pytest.approx(0.1)
+    assert head.within_species_weight == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("mapping", [[-100, -100, -100], [0, 1, 2], [0, 0, 1]])
+def test_corrected_mode_handles_missing_and_singleton_categories(mapping):
+    head = BHCASubCenterSphereFace2(
+        3, 3, class_to_species=mapping, species_weight=0.05,
+        within_species_weight=0.5, within_negative_reduction="sum",
+    )
+    x = _embeddings()[:3].detach().clone().requires_grad_(True)
+    output = head.compute_output(x, torch.arange(3))
+    output.loss_total.backward()
+    assert torch.isfinite(output.loss_total)
+    assert torch.isfinite(x.grad).all()
+    if mapping != [0, 0, 1]:
+        assert output.loss_within_species.item() == 0
+
+
+@pytest.mark.parametrize("name", ["species_weight", "within_species_weight", "hierarchy_weight"])
+@pytest.mark.parametrize("value", [-1, float("nan"), float("inf")])
+def test_invalid_auxiliary_weights_fail(name, value):
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        BHCAArcFace(3, 4, class_to_species=[0, 0, 1, 1], **{name: value})
+
+
+def test_invalid_negative_reduction_fails():
+    with pytest.raises(ValueError, match="within_negative_reduction"):
+        BHCASubCenterSphereFace2(3, 4, class_to_species=[0, 0, 1, 1], within_negative_reduction="median")
+
+
+def test_checkpoint_preserves_and_checks_objective_settings():
+    kwargs = dict(
+        class_to_species=[0, 0, 1, 1], species_weight=0.05,
+        within_species_weight=0.5, within_negative_reduction="sum",
+    )
+    head = BHCASubCenterSphereFace2(3, 4, **kwargs)
+    head.eval()
+    x, labels = _embeddings(), torch.arange(4)
+    state = head.state_dict()
+    restored = BHCASubCenterSphereFace2(3, 4, **kwargs)
+    restored.load_state_dict(state)
+    torch.testing.assert_close(restored(x, labels), head(x, labels))
+    for change in ({"within_species_weight": 0.1}, {"species_weight": 0.1}, {"within_negative_reduction": "mean"}):
+        mismatched = BHCASubCenterSphereFace2(3, 4, **(kwargs | change))
+        with pytest.raises(ValueError, match="objective settings differ"):
+            mismatched.load_state_dict(state)
+
+
+def test_legacy_checkpoint_requires_legacy_objective():
+    head = BHCASubCenterSphereFace2(3, 4, class_to_species=[0, 0, 1, 1])
+    state = head.state_dict()
+    state["_extra_state"].pop("objective_settings")
+    head.load_state_dict(state)
+    corrected = BHCASubCenterSphereFace2(
+        3, 4, class_to_species=[0, 0, 1, 1], species_weight=0.05,
+        within_species_weight=0.5, within_negative_reduction="sum",
+    )
+    with pytest.raises(ValueError, match="Legacy BHCA checkpoint"):
+        corrected.load_state_dict(state)
+
+
+def test_reweighted_config_builds_head_and_uses_new_output_directory():
+    from pathlib import Path
+    import yaml
+    root = Path(__file__).resolve().parents[2]
+    current = yaml.safe_load((root / "configs/cluster_bhca_subcenter_sphereface2.yaml").read_text())
+    legacy = yaml.safe_load((root / "configs/cluster_bhca_subcenter_sphereface2_legacy.yaml").read_text())
+    head = BHCASubCenterSphereFace2(3, 4, class_to_species=[0, 0, 1, 1], **current["head"]["kwargs"])
+    assert head.within_negative_reduction == "sum"
+    assert head.species_weight == 0.05
+    assert head.within_species_weight == 0.5
+    assert current["checkpoint"]["output_dir"] != legacy["checkpoint"]["output_dir"]
+    assert current["early_stopping"]["output_dir"] == current["checkpoint"]["output_dir"]

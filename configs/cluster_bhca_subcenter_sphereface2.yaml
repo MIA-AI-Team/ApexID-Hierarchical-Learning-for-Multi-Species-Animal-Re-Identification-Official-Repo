@@ -1,6 +1,6 @@
 experiment:
-  name: apexid_convnext_small_bhca_scsf2_v2_rgb
-  output_dir: outputs/apexid_convnext_small_bhca_scsf2_v2_rgb
+  name: apexid_convnext_small_bhca_scsf2_reweighted_v2_rgb
+  output_dir: outputs/apexid_convnext_small_bhca_scsf2_reweighted_v2_rgb
 seed: 42
 device: {prefer_gpu: true, gpu_index: 0}
 data:
@@ -45,7 +45,10 @@ head:
     t: 3.0
     lw: 20.0
     species_margin: 0.10
-    hierarchy_weight: 0.10
+    # Independent coefficients; no additional hierarchy_weight multiplier.
+    species_weight: 0.05
+    within_species_weight: 0.50
+    within_negative_reduction: sum
     num_subcenters: 2
     species_balance: sqrt_inverse_identity_frequency
 loss: {name: null, kwargs: {}}
@@ -131,7 +134,7 @@ embedding_plot:
   filename_template: epoch_{epoch_number:03d}_umap.png
   best_filename: best_embedding_space.png
 checkpoint:
-  output_dir: outputs/apexid_convnext_small_bhca_scsf2_v2_rgb/checkpoints
+  output_dir: outputs/apexid_convnext_small_bhca_scsf2_reweighted_v2_rgb/checkpoints
   every_n_epochs: 1
   filename: last_checkpoint.pt
   delete_previous: true
@@ -142,7 +145,7 @@ early_stopping:
   mode: max
   patience: 10
   min_delta: 0.0
-  output_dir: outputs/apexid_convnext_small_bhca_scsf2_v2_rgb/checkpoints
+  output_dir: outputs/apexid_convnext_small_bhca_scsf2_reweighted_v2_rgb/checkpoints
   full_model_name: best_full_model.pt
   backbone_name: best_backbone.pt
   metadata_name: best_metadata.json
@@ -151,8 +154,8 @@ tracking:
   provider: wandb
   project: ApexID
   entity: MIA_AI_Team
-  run_name: ApexID-convnext-small-bhca-scsf2-v2-rgb
-  group: bhca-controlled-v2
+  run_name: ApexID-convnext-small-bhca-scsf2-reweighted-v2-rgb
+  group: bhca-reweighted-v2
   tags: [split_v2, rgb, convnext_small, pretrained, bhca, bhca_scsf2, emb2048]
   mode: online
   log_artifacts: none

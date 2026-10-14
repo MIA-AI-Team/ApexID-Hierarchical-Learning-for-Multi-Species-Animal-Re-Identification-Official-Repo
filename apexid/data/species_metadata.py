@@ -1,6 +1,6 @@
 """Training-only identity-to-species metadata for hierarchical objectives."""
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import math
 from collections.abc import Mapping
 from pathlib import Path
@@ -11,12 +11,12 @@ import pandas as pd
 
 MISSING_SPECIES_INDEX = -100
 
-# Explicitly approved *single-species* dataset fills. HappyWhale is multi-species
-# and is collapsed to whale/dolphin from the official competition labels.
+# Explicitly approved single-species dataset fills at the shared category level.
+# Humpbacks use "whale" to match HappyWhale's coarse whale/dolphin supervision.
 BHCA_DATASET_TO_SPECIES = {
     "CzechLynx": "lynx",
     "SalamanderID2025": "salamander",
-    "humpback-whale-identification": "humpback-whale",
+    "humpback-whale-identification": "whale",
 }
 
 DEFAULT_HAPPYWHALE_SPECIES_CSV = (
@@ -36,6 +36,8 @@ class SpeciesEnrichmentReport:
     canonical_dataset_species: dict
     unresolved_datasets: list
     happywhale_rows_filled_from_official: int = 0
+    rows_normalized: int = 0
+    rows_normalized_by_dataset: dict = field(default_factory=dict)
 
     def to_dict(self):
         return asdict(self)
@@ -48,6 +50,16 @@ def _known_species(value):
     if not value or value.lower() in {"nan", "none", "null", "unknown", "-100"}:
         return None
     return value
+
+
+def _canonicalize_whale_category(value):
+    """Normalize explicit whale aliases without inferring from other columns."""
+    known = _known_species(value)
+    if known is not None and known.casefold() in {
+        "whale", "humpback-whale", "humpback_whale", "humpback whale"
+    }:
+        return "whale"
+    return known
 
 
 def canonicalize_happywhale_species(value):
@@ -192,12 +204,15 @@ def enrich_species_metadata(
     happywhale_species_csv=None,
     require_complete=True,
 ):
-    """Fill missing species from approved rules without changing rows.
+    """Fill missing species and normalize whale categories without changing rows.
 
     HappyWhale rows are filled as ``whale`` or ``dolphin`` from
     ``data/og happy ids/train.csv`` (or ``happywhale_species_csv``): if the
     official species string contains ``dolphin``, the label is ``dolphin``;
     otherwise ``whale``. Other datasets use ``BHCA_DATASET_TO_SPECIES``.
+    Existing ``humpback-whale``, ``humpback_whale`` and ``humpback whale``
+    labels (case-insensitive) become ``whale`` before conflict validation.
+    Identity labels, dataset names, paths and row membership are preserved.
     """
     frame = data.copy() if isinstance(data, pd.DataFrame) else pd.read_csv(data)
     if dataset_column not in frame.columns:
@@ -222,11 +237,18 @@ def enrich_species_metadata(
         for key, value in mapping.items()
     ):
         raise ValueError("Dataset/species mapping keys and values must be non-empty strings.")
+    mapping = {
+        key: _canonicalize_whale_category(value)
+        for key, value in mapping.items()
+    }
+    if any(value is None for value in mapping.values()):
+        raise ValueError("Dataset/species mapping values must name a known category.")
 
     original_index = frame.index.copy()
     original_columns = list(frame.columns)
     original_non_species = frame.drop(columns=[species_column]).copy(deep=True)
-    normalized_species = frame[species_column].map(_known_species)
+    original_species = frame[species_column].map(_known_species)
+    normalized_species = original_species.map(_canonicalize_whale_category)
     null_before = int(normalized_species.isna().sum())
     rows_by_dataset = {}
     happywhale_filled = 0
@@ -314,6 +336,11 @@ def enrich_species_metadata(
         check_dtype=True,
         check_like=False,
     )
+    normalized_mask = original_species.notna() & original_species.ne(normalized_species)
+    normalized_by_dataset = (
+        frame.loc[normalized_mask, dataset_column]
+        .astype(str).str.strip().value_counts().sort_index().to_dict()
+    )
     report = SpeciesEnrichmentReport(
         num_rows=int(len(frame)),
         null_species_before=null_before,
@@ -323,6 +350,8 @@ def enrich_species_metadata(
         canonical_dataset_species=mapping,
         unresolved_datasets=unresolved_datasets,
         happywhale_rows_filled_from_official=happywhale_filled,
+        rows_normalized=int(normalized_mask.sum()),
+        rows_normalized_by_dataset=normalized_by_dataset,
     )
     return frame, report
 
