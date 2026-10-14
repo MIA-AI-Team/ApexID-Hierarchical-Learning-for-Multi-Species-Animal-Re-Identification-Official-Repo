@@ -1,0 +1,270 @@
+\section{Dataset Construction and Handling}
+\label{sec:dataset}
+
+ApexID combines publicly available wildlife individual-identification datasets
+that differ in taxonomic coverage, annotation conventions, image quality, and
+metadata. We standardize these sources through four stages: data collection and
+label harmonization, near-duplicate removal and animal-focused preprocessing,
+manual curation, and observation-aware train--validation partitioning. External
+test datasets remain fully excluded from model development.
+
+\subsection{Dataset Sources and Scope}
+\label{sec:dataset:sources}
+
+We retain images with a reliable individual identity and map each sample to a
+common representation containing its source dataset, species or coarser animal
+category, identity, and available observation metadata. Identity labels are
+namespaced by source to prevent collisions between independently collected
+datasets. Table~\ref{tab:apexid_train_datasets} consolidates the composition and
+partition statistics of the corpus after all processing; the original releases
+remain the authoritative sources for collection and annotation protocols.
+
+\begin{table*}[t]
+\centering
+\caption{Datasets in the ApexID corpus after preprocessing and manual
+curation. ``Train IDs'' counts identities represented in the training
+partition; image and observation totals include both training and validation.}
+\label{tab:apexid_train_datasets}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{l l r r r r r}
+\toprule
+\textbf{Dataset} & \textbf{Species / Taxon} & \textbf{Train IDs} &
+\textbf{\# Images} & \textbf{\# Observations} & \textbf{Train} &
+\textbf{Validation} \\
+\midrule
+AmvrakikosTurtles~\cite{adam2025exploiting} & Sea turtle & 41 & 141 & 141 & 59 & 82 \\
+BalearicLizard~\cite{alcaraz2026long} & Lizard & 656 & 4,359 & 4,359 & 2,859 & 1,500 \\
+CTai~\cite{freytag2016chimpanzee} & Chimpanzee & 57 & 3,609 & 3,609 & 2,443 & 1,166 \\
+CzechLynx~\cite{picek2026czechlynx} & Lynx & 279 & 37,829 & 37,829 & 28,792 & 9,037 \\
+GiraffeZebraID~\cite{parham2017animal} & Giraffe; zebra & 876 & 4,333 & 4,333 & 3,569 & 764 \\
+Giraffes~\cite{miele2021revisiting} & Giraffe & 136 & 892 & 892 & 651 & 241 \\
+HappyWhale~\cite{cheeseman2026happywhale} & Whales; dolphins & 5,538 & 41,407 & 41,407 & 26,304 & 15,103 \\
+HyenaID2022~\cite{botswana2022hyena} & Hyena & 211 & 2,422 & 2,422 & 1,599 & 823 \\
+IPanda50~\cite{wang2021giant} & Panda & 42 & 5,167 & 5,167 & 3,619 & 1,548 \\
+Jaguar\_data~\cite{rueda2025jaguars} & Jaguar & 27 & 1,178 & 1,178 & 795 & 383 \\
+LeopardID2022~\cite{botswana2022leopard} & Leopard & 251 & 4,953 & 4,953 & 3,494 & 1,459 \\
+NDD20~\cite{trotter2020ndd20} & Dolphin & 68 & 2,122 & 2,122 & 1,488 & 634 \\
+NyalaData~\cite{vcermak2024wildlifedatasets} & Nyala & 150 & 1,442 & 1,442 & 951 & 491 \\
+ReunionTurtles~\cite{adam2025exploiting} & Sea turtle & 69 & 237 & 237 & 104 & 133 \\
+SalamanderID2025~\cite{animalclef2025} & Salamander & 242 & 1,078 & 1,078 & 675 & 403 \\
+SealID~\cite{nepovinnykh2022sealID} & Seal & 48 & 1,668 & 1,668 & 1,101 & 567 \\
+WhaleSharkID~\cite{holmberg2009estimating} & Whale shark & 388 & 5,958 & 5,958 & 3,855 & 2,103 \\
+ZakynthosTurtles~\cite{adam2025exploiting} & Sea turtle & 33 & 114 & 114 & 47 & 67 \\
+HumpbackWhaleID~\cite{vcermak2024wildlifedatasets} & Humpback whale & 2,565 & 13,624 & 13,624 & 8,516 & 5,108 \\
+\midrule
+\textbf{Total} & \textbf{Multi-species} & \textbf{11,677} &
+\textbf{132,533} & \textbf{132,533} & \textbf{90,921} &
+\textbf{41,612} \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+The training partition contains 11,677 identities. The validation partition
+contains 12,439 identities, comprising 10,768 identities also represented in
+training and 1,671 validation-only identities. Observation counts are computed
+from the observation-group identifiers rather than directly from image rows;
+in the final training and validation partitions, each retained image has a
+distinct observation identifier.
+
+\subsection{Preprocessing and Curation}
+\label{sec:dataset:curation}
+
+The public releases are first converted to a common directory and annotation
+format. Because source file structures and metadata conventions differ, this
+step is implemented separately for each dataset before the shared pipeline is
+applied.
+
+\paragraph{Near-duplicate removal.}
+\label{sec:dataset:duplicates}
+Repeated images can encourage memorization and inflate evaluation when
+correlated samples cross partitions. We therefore compute MegaDescriptor
+embeddings~\cite{vcermak2024wildlifedatasets} and compare images only within
+the same identity. If their cosine similarity exceeds the dataset-specific
+threshold in Table~\ref{tab:duplicate_thresholds}, one image is removed. We do
+not compare different identities because legitimately similar individuals
+must remain represented. A threshold of $2.0$ disables filtering for datasets
+where it was not applied, since cosine similarity cannot exceed $1$.
+
+\begin{table}[t]
+\centering
+\caption{Cosine-similarity thresholds for within-identity near-duplicate
+removal. A value of $2.0$ denotes disabled filtering.}
+\label{tab:duplicate_thresholds}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{l r l r}
+\toprule
+\textbf{Dataset} & \textbf{Threshold} &
+\textbf{Dataset} & \textbf{Threshold} \\
+\midrule
+AmvrakikosTurtles & 0.87 & BalearicLizard & 0.91 \\
+CTai & 2.00 & CzechLynx & 0.93 \\
+GiraffeZebraID & 0.89 & Giraffes & 0.87 \\
+HappyWhale & 2.00 & HyenaID2022 & 0.90 \\
+IPanda50 & 0.97 & Jaguar\_data & 2.00 \\
+LeopardID2022 & 0.95 & NDD20 & 0.87 \\
+NyalaData & 0.96 & ReunionTurtles & 0.95 \\
+SalamanderID2025 & 2.00 & SealID & 0.92 \\
+WhaleSharkID & 0.93 & ZakynthosTurtles & 0.90 \\
+HumpbackWhaleID & 2.00 & -- & -- \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\paragraph{Animal-focused segmentation.}
+\label{sec:dataset:segmentation}
+After duplicate removal, we use the pretrained Segment Anything Model~3
+(SAM~3)~\cite{carion2025sam3} with a species-level text prompt, such as
+``photo of a giraffe.'' The
+highest-confidence valid animal mask is applied to the RGB image, and pixels
+outside the mask are replaced with black. This common preprocessing reduces
+access to location and background cues while retaining the animal appearance
+used for re-identification.
+
+\paragraph{Manual curation.}
+The processed corpus is then reviewed manually using \textit{V-Rush}, our
+in-house data-curation software~\cite{elbassat_vrush_2026}. Reviewers inspect the images for invalid or
+poor-quality samples, incomplete segmentations, and dataset-specific inconsistencies. Samples whose identity cannot be resolved reliably are excluded rather than relabeled by inference. The counts in
+Table~\ref{tab:apexid_train_datasets} refer to the data retained after this
+manual review.
+
+\subsection{Observation-Aware Partitioning}
+\label{sec:dataset:partitioning}
+
+An \emph{identity} denotes one annotated animal, whereas an
+\emph{observation} groups images from the same encounter, capture event, or
+acquisition sequence. Images within an observation can share pose,
+illumination, background, and camera conditions and therefore should not be
+treated as independent evidence.
+
+Following the MegaDescriptor splitting strategy~\cite{vcermak2024wildlifedatasets},
+we use timestamps to construct temporally separated training and validation
+observations whenever they are available. Otherwise, DINO image embeddings are
+used to group visually similar samples, and each group is assigned wholly to
+one partition. The same identity may occur in both partitions only through
+independent observations; images in the same timestamp-derived observation or
+DINO similarity group remain together.
+
+\subsection{External Test Datasets}
+\label{sec:dataset:test}
+
+ELPephants, GCN-ID, BristolGorillas2020, and a private jaguar dataset are
+reserved for cross-dataset evaluation and are never used for optimization,
+checkpoint selection, or hyperparameter tuning.
+Table~\ref{tab:apexid_test_datasets} reports the versions used after
+evaluation-specific preprocessing.
+
+\begin{table*}[t]
+\centering
+\caption{Completely held-out datasets used for external evaluation. Counts
+report the samples assigned to gallery, known-query, or novel-query roles in
+each of the five evaluation seeds, excluding processed samples that do not
+satisfy the role-assignment requirements.}
+\label{tab:apexid_test_datasets}
+\begin{tabular}{l l r r r}
+\toprule
+\textbf{Dataset} & \textbf{Species} & \textbf{\# Identities} &
+\textbf{\# Images} & \textbf{\# Observations} \\
+\midrule
+ELPephants~\cite{korschens2019elpephants} & African forest elephant & 272 & 2,049 & 2,028 \\
+GCN-ID~\cite{rosa2025gcnid} & Great crested newt & 207 & 1,232 & 1,152 \\
+BristolGorillas2020~\cite{brookes2021bristolgorillas2020,brookes2021gorillas} & Western lowland gorilla & 7 & 5,324 & 4,215 \\
+Private jaguar test set & Jaguar & 51 & 1,029 & 672 \\
+\midrule
+\textbf{Total} & -- & \textbf{537} & \textbf{9,634} & \textbf{8,067} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\paragraph{ELPephants.}
+ELPephants~\cite{korschens2019elpephants} is used as a single held-out test set,
+and the ApexID training corpus contains no elephant images. Table~\ref{tab:elpephants_curation}
+summarizes its curation. We remove three unusable images, eight images forming
+four duplicate pairs with contradictory identity labels, and one image from
+each of 16 consistently labeled duplicate pairs. The final set contains 2,051
+images of 274 identities. SAM~3 produces 1,274 masks automatically, while the
+remaining 777 masks are refined before evaluation. Of this processed pool,
+2,049 images from 272 identities and 2,028 observations satisfy the
+evaluation-role requirements used in Table~\ref{tab:apexid_test_datasets}.
+
+Images are segmented using pretrained SAM~3 with the text prompt
+``elephant'' and detection and mask thresholds of $0.30$. All detected elephant
+instances are merged into a single foreground mask, and pixels outside the
+merged mask are replaced with black.
+
+\begin{table}[t]
+\centering
+\caption{Curation of the ELPephants external test set.}
+\label{tab:elpephants_curation}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{l r r}
+\toprule
+\textbf{Stage} & \textbf{Images} & \textbf{Identities} \\
+\midrule
+ELPephants (original) & 2,078 & 276 \\
+$-$ Unusable (ambiguous subject or ear only) & $-3$ & 0 \\
+$-$ Duplicate pairs with contradictory labels & $-8$ & $-2$ \\
+$-$ Consistent duplicate copies & $-16$ & 0 \\
+\midrule
+\textbf{Final test set} & \textbf{2,051} & \textbf{274} \\
+\quad Automatic SAM~3 masks & 1,274 & -- \\
+\quad Refined masks & 777 & -- \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\paragraph{GCN-ID.}
+GCN-ID contains 1,232 images of 207 Great Crested Newts. Each image is
+converted to RGB and processed with SAM~3 using the prompt ``newt or
+salamander,'' a detection threshold of $0.5$, and a mask threshold of $0.5$.
+When multiple masks are returned, we retain the highest-confidence mask. Five
+images without a valid prediction are segmented manually rather than removed.
+
+\paragraph{Private jaguar test set.}
+This private evaluation dataset is distinct from the
+Jaguar\_data source used in the ApexID training corpus. It remains completely
+held out from model development and contains 1,040 processed images of 54
+individuals, grouped into 675 observations. After applying the evaluation-role
+requirements, 1,029 images from 51 individuals and 672 observations are
+assigned to the gallery and query roles in each seed.
+
+\paragraph{BristolGorillas2020.}
+\label{sec:dataset:bristol}
+BristolGorillas2020~\cite{brookes2021bristolgorillas2020,brookes2021gorillas}
+contains images of seven western lowland gorillas and is used exclusively for
+external evaluation. We preserve its original train--test organization and
+identity-folder structure throughout preprocessing.
+
+We apply annotation-guided foreground segmentation using pretrained SAM~3
+without additional fine-tuning~\cite{carion2025sam3}. Each image is converted to RGB,
+and its YOLO-format face annotation is parsed. SAM~3 is queried sequentially
+with the prompts ``gorilla,'' ``western lowland gorilla,'' ``gorilla body,''
+and ``ape.'' Candidate masks are filtered using SAM confidence, foreground
+area, correspondence with the annotated face location, face coverage, and
+containment of the face box. Duplicate candidates are removed based on mask
+overlap. If no candidate passes these criteria, a fallback stage prompts SAM~3
+with expanded face regions. The selected foreground is retained against a
+black background with $10\%$ spatial padding.
+
+Of 5,409 source images, 5,324 remain after excluding invalid annotations and
+images without an accepted mask, yielding a retention rate of $98.43\%$. The
+retained data comprise 4,238 training and 1,086 test images across all seven
+identities. These original partitions are preserved, and the segmented images
+are evaluated without further training or identity-specific adaptation.
+
+\subsection{Responsible Data Handling}
+\label{sec:dataset:responsible}
+
+All sources remain governed by their original licenses, and ApexID does not
+claim ownership of their images. Where redistribution is prohibited, we
+release identifiers, preprocessing code, and acquisition instructions instead
+of the data. Dataset-level attribution is retained throughout the unified
+corpus.
+
+The collection is subject to geographic, taxonomic, and acquisition biases:
+species and locations are represented unevenly, and some identities are tied
+to particular cameras or environments. We therefore report source-level
+statistics and evaluate on independent datasets rather than interpreting an
+aggregate result as uniform performance across wildlife populations.

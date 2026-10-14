@@ -1,0 +1,120 @@
+\section{Experimental Setup}
+\label{sec:experiments}
+
+\subsection{Evaluation Protocols}
+\label{sec:experiments:protocols}
+
+We use two complementary evaluation pipelines. The first is a frozen
+closed-set retrieval protocol, and the second is a separate AnimalCLEF-style
+open-set discovery protocol. The two protocols use distinct split
+constructions, similarity artifacts, calibration procedures, and evaluation
+outputs, and are therefore reported separately. All external test identities
+and images are excluded from training and checkpoint selection.
+
+\paragraph{Closed-set retrieval.}
+For each external dataset, the gallery is formed from the frozen database
+partition and queries are drawn from held-out test observations. Gallery and
+query observations are disjoint; images from the same observation are never
+split across the two roles. We extract one $\ell_2$-normalized embedding per
+image and rank gallery images by cosine similarity. The predicted identity is
+the identity of the highest-ranked gallery observation. We repeat the
+deterministic gallery/query construction for five prescribed split seeds and
+report both per-seed results and a dataset-macro average, so that large
+datasets do not dominate the aggregate.
+
+The closed-set split is observation-aware and time-aware. When capture
+timestamps or reliable date metadata are available, images from the same
+encounter or acquisition sequence are kept together and temporally separated
+between gallery and query roles; later observations are used as queries where
+the dataset protocol permits this ordering. When timestamps are unavailable,
+we use the dataset-specific encounter and filename structure, followed by
+visual-similarity grouping for samples without temporal or reliable naming
+information. In all cases, a group is assigned wholly to one partition, so
+correlated frames, burst images, and near-duplicates cannot be split between
+gallery and query. The resulting split manifests and observation-leakage checks are frozen and
+reused for every model.
+
+\paragraph{AnimalCLEF-style open-set discovery.}
+The AnimalCLEF-style protocol constructs observation-aware roles for each
+dataset. It first forms encounter
+groups using exact-image matches, reliable dates and encounter tokens, and
+dataset-specific naming or folder conventions. Temporal grouping is preferred
+when available; only identities lacking temporal or naming structure use
+visual-similarity grouping. Approximately 20\% of eligible identities are
+assigned to \texttt{query\_novel}, while known identities contribute
+encounter-disjoint \texttt{gallery} and \texttt{query\_known} roles. Identities
+with only one observation group remain query-only unknowns rather than being
+forced into a gallery. The Jaguar Antonio setting is gallery-free and is
+evaluated as query-only discovery. WildFusion then produces query--query and
+query--gallery similarity matrices using a fixed calibration cohort.
+Per-animal clustering configurations are selected on development
+similarities, while gallery-free cases use label-free defaults. The selected
+configurations are then frozen and applied to held-out similarity matrices
+using Chinese Whispers. Clustering thresholds are not refit on evaluation
+matrices and the observation-aware splits are not rebuilt.
+
+Thus, the AnimalCLEF-style results measure open-set association and
+discovery from similarity matrices, rather than closed-set retrieval from the
+model gallery. The final clustering labels are compared with ground truth
+only for reporting discovery metrics; they are not used to alter the frozen
+split or clustering configurations.
+
+\subsection{Baselines}
+\label{sec:experiments:baselines}
+
+We compare four ConvNeXt-Small RGB embedding models using the same frozen
+preprocessing, gallery construction, split seeds, and evaluation procedures:
+ArcFace (AF), Dynamic ArcFace (DAF), SphereFace2 (SF2), and the proposed
+Balanced Hierarchical Category--Animal identity Sub-center SphereFace2
+(BHCA-SCSF2). The first three models are loss-function baselines; BHCA-SCSF2
+is the proposed hierarchical objective. Unless stated otherwise, each model
+is evaluated from its corresponding frozen checkpoint and produces a
+2048-dimensional $\ell_2$-normalized embedding. No model is fine-tuned on an
+external test dataset.
+
+\subsection{Evaluation Metrics}
+\label{sec:experiments:metrics}
+
+For closed-set retrieval, we report Rank-1, Rank-5, Rank-10, CMC@20, CMC@50,
+mean average precision (mAP), and identity-balanced Rank-1. Rank-$k$ is the
+fraction of queries whose true identity occurs among the first $k$ retrieved
+gallery identities. mAP is computed per query over the ranked gallery and
+then averaged; identity-balanced Rank-1 first averages within identity and
+then across identities. Dataset-macro averages give every external dataset
+equal weight.
+
+For open-world evaluation, known-identity retrieval is reported with the same
+rank and AP measures on queries whose identities occur in the database.
+Novelty detection is evaluated using the frozen knownness score with AUROC,
+precision, recall, and F1. End-to-end known recognition additionally requires
+both a correct known/novel decision and a correct identity assignment.
+Novel-identity association and discovery are evaluated with adjusted Rand
+index (ARI), adjusted mutual information (AMI), V-measure, and standard
+item-averaged B$^3$ precision, recall, and F1. For online runs we additionally
+report reassociation accuracy for repeated observations of discovered
+identities. Results are summarized per dataset, openness level, and stream
+seed before macro-averaging.
+
+\subsection{Implementation Details}
+\label{sec:experiments:implementation}
+
+All models use the same animal-focused RGB preprocessing and their
+model-specific frozen checkpoint configuration. Embeddings are normalized
+before similarity computation. Closed-set retrieval uses cosine similarity
+against the complete frozen gallery. The AnimalCLEF-style protocol uses a
+fixed WildFusion calibration cohort and per-animal configurations selected on
+development similarities. These configurations are applied to held-out
+similarity matrices without refitting thresholds or rebuilding splits. The
+closed-set and AnimalCLEF-style pipelines therefore have separate provenance,
+calibration, and result artifacts.
+
+The closed-set benchmark uses five split seeds and 1,000 paired bootstrap
+replicates for confidence intervals. Paired model comparisons reuse identical
+queries and split seeds, and confidence intervals are computed with the
+identity-block bootstrap. The AnimalCLEF-style pipeline uses its sealed
+observation-aware roles, WildFusion calibration sample, per-animal frozen
+configuration, and Chinese Whispers clustering protocol.
+We record the checkpoint, preprocessing configuration, split-manifest hashes,
+calibrator hashes, random seeds, and software environment with every result
+bundle. Numerical values are reported in Sec.~\ref{sec:results} once the
+corresponding final-test runs are complete.

@@ -1,0 +1,26 @@
+Dataset,Species / Taxon,# Identities,# Images,# Observations,Train Images,Validation Images,Test Images (5-seed mean),Test Identities (5-seed mean),Test Observations (5-seed mean)
+AmvrakikosTurtles,sea turtle,41,59,59,59.0,82.0,,,
+BalearicLizard,lizard,656,2859,2859,2859.0,1500.0,,,
+CTai,chimpanzee,57,2443,2443,2443.0,1166.0,,,
+CzechLynx,lynx,279,28792,28792,28792.0,9037.0,,,
+GiraffeZebraID,giraffe; zebra,876,3569,3569,3569.0,764.0,,,
+Giraffes,giraffe,136,651,651,651.0,241.0,,,
+HappyWhale,unknown,5538,26304,26304,26304.0,15103.0,,,
+HyenaID2022,hyena,211,1599,1599,1599.0,823.0,,,
+IPanda50,panda,42,3619,3619,3619.0,1548.0,,,
+Jaguar_data,jaguar,27,795,795,795.0,383.0,,,
+LeopardID2022,leopard,251,3494,3494,3494.0,1459.0,,,
+NDD20,dolphin,68,1488,1488,1488.0,634.0,,,
+NyalaData,nyala,150,951,951,951.0,491.0,,,
+ReunionTurtles,sea turtle,69,104,104,104.0,133.0,,,
+SalamanderID2025,unknown,242,675,675,675.0,403.0,,,
+SealID,seal,48,1101,1101,1101.0,567.0,,,
+WhaleSharkID,whaleshark,388,3855,3855,3855.0,2103.0,,,
+ZakynthosTurtles,sea turtle,33,47,47,47.0,67.0,,,
+bristol_gorillas,western_lowland_gorilla,7,5324,4215,,,5324.0,7.0,4215.0
+elephants,unknown,274,2051,2030,,,2051.0,274.0,2030.0
+gcn_id,unknown,207,1232,1152,,,1232.0,207.0,1152.0
+humpback-whale-identification,unknown,2565,8516,8516,8516.0,5108.0,,,
+jaguar_antonio,jaguar,54,1040,675,,,1040.0,54.0,675.0
+spac_wild,unknown,16,21001,7084,,,21001.0,16.0,7084.0
+Total Multi-species,chimpanzee; dolphin; giraffe; hyena; jaguar; leopard; lizard; lynx; nyala; panda; sea turtle; seal; whaleshark; zebra,13348,132533,132533,90921.0,41612.0,30648.0,558.0,15156.0

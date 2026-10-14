@@ -1,0 +1,10 @@
+{
+  "expected_external_test_split_count": 25,
+  "external_test_split_count": 25,
+  "external_tests_passed": true,
+  "note": "Observations are counted from observation_group_id, not from image rows.",
+  "split_v2_passed": true,
+  "test_observation_role_crossings": 0,
+  "train_validation_exact_hash_overlap": 0,
+  "train_validation_image_path_overlap": 0
+}
