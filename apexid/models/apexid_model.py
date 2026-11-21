@@ -13,8 +13,8 @@ class ApexID(nn.Module):
 
     def __init__(
         self,
-        backbone_name="osnet_x1_0",
-        embedding_dim=512,
+        backbone_name="convnext_small",
+        embedding_dim=2048,
         input_channels=3,
         backbone_kwargs=None,
     ):

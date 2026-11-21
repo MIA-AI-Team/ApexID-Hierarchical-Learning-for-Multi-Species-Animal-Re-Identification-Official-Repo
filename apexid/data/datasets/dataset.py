@@ -176,11 +176,11 @@ class ApexID_Dataset(Dataset):
 
     @staticmethod
     def _identity_source_column(df):
-        """Return the species/source column used to detect non-global labels."""
-        if 'species' in df.columns:
-            return 'species'
+        """Prefer dataset provenance when checking whether labels are globally scoped."""
         if 'dataset' in df.columns:
             return 'dataset'
+        if 'species' in df.columns:
+            return 'species'
         return None
 
     @staticmethod
@@ -242,7 +242,7 @@ class ApexID_Dataset(Dataset):
             "Identity labels are not globally unique across species/source values. "
             f"Column '{identity_column}' has the same raw identity in multiple "
             f"'{source_column}' groups. Use globally scoped identities such as "
-            "'species_identity' before training. Examples: " + "; ".join(examples)
+            "'dataset_identity' before training. Examples: " + "; ".join(examples)
         )
 
     @staticmethod
@@ -292,14 +292,9 @@ class ApexID_Dataset(Dataset):
         """
         train_df = ApexID_Dataset._standardize_columns(train_df)
         val_df = ApexID_Dataset._standardize_columns(val_df)
-        ApexID_Dataset._validate_global_identity_values(train_df, identity_column=identity_column)
-        ApexID_Dataset._validate_global_identity_values(val_df, identity_column=identity_column)
-        train_ids = set(train_df[identity_column].dropna().unique().tolist())
-        val_ids = set(val_df[identity_column].dropna().unique().tolist())
-        all_ids = sorted(train_ids | val_ids)
-        label_map = {label: idx for idx, label in enumerate(all_ids)}
-        ApexID_Dataset._validate_label_mapping(label_map, name="metrics_label_map")
-        return label_map
+        return ApexID_Dataset.build_label_mapping(
+            pd.concat([train_df, val_df], ignore_index=True), identity_column=identity_column
+        )
     
     def _build_identity_index(self):
         """Build the sampling index for identities known to the classifier.

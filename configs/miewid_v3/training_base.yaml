@@ -1,0 +1,16 @@
+extends: ../training_base.yaml
+model:
+  name: apexid
+  embedding_dim: 2152
+  input_channels: 3
+  backbone:
+    name: miewid_msv3_pt
+    kwargs:
+      pretrained: true
+      revision: 4f1d7f2b521149e5fe34bb85f377248ce9971a7d
+      expected_sha256: adff92b39678f37eb74861c6399a741639a8907ec2382738e903d6120727b348
+dataloader:
+  batch_size: 32
+  val_batch_size: 64
+  sampler:
+    num_identities: 8

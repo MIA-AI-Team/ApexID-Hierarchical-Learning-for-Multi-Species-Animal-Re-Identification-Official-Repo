@@ -30,7 +30,7 @@ class MegaDescriptorBackbone(nn.Module):
         if self.embedding_dim <= 0:
             raise ValueError("MegaDescriptor embedding_dim must be positive.")
         if self.input_channels != 3:
-            raise ValueError("MegaDescriptor requires input_channels=3 and data.wavelet=false.")
+            raise ValueError("MegaDescriptor requires input_channels=3 for RGB images.")
 
         # timm handles the original checkpoint's Swin key conversion. The
         # scratch path stays entirely offline, including checkpoint restoration.

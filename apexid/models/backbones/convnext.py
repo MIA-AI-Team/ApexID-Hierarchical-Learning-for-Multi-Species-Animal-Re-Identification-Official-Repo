@@ -10,43 +10,6 @@ from torchvision import models
 
 from apexid.utils.provenance import sha256_file
 
-from .osnet_pt import WaveletStem
-
-__all__ = [
-    "ConvNeXtBackbone",
-    "convnext_base",
-    "convnext_base_pt",
-    "convnext_large",
-    "convnext_large_pt",
-    "convnext_small",
-    "convnext_small_pt",
-    "convnext_tiny",
-    "convnext_tiny_pt",
-]
-
-
-_CONVNEXT_VARIANTS = {
-    "tiny": ("convnext_tiny", "ConvNeXt_Tiny_Weights"),
-    "small": ("convnext_small", "ConvNeXt_Small_Weights"),
-    "base": ("convnext_base", "ConvNeXt_Base_Weights"),
-    "large": ("convnext_large", "ConvNeXt_Large_Weights"),
-}
-
-
-def _builder_for_variant(variant: str):
-    try:
-        builder_name, _ = _CONVNEXT_VARIANTS[str(variant).lower()]
-    except KeyError as exc:
-        available = ", ".join(sorted(_CONVNEXT_VARIANTS))
-        raise ValueError(f"Unknown ConvNeXt variant '{variant}'. Available variants: {available}") from exc
-    return getattr(models, builder_name)
-
-
-def _imagenet_weights_for_variant(variant: str):
-    _, weights_name = _CONVNEXT_VARIANTS[str(variant).lower()]
-    return getattr(models, weights_name).IMAGENET1K_V1
-
-
 def _init_convnext_projection(module: nn.Module) -> None:
     if isinstance(module, (nn.Conv2d, nn.Linear)):
         nn.init.trunc_normal_(module.weight, std=0.02)
@@ -59,15 +22,13 @@ class ConvNeXtBackbone(nn.Module):
 
     def __init__(
         self,
-        variant: str,
-        embedding_dim: int = 512,
+        embedding_dim: int = 2048,
         input_channels: int = 3,
         pretrained: bool = False,
         progress: bool = True,
         **kwargs,
     ):
         super().__init__()
-        self.variant = str(variant).lower()
         self.embedding_dim = int(embedding_dim)
         self.feature_dim = self.embedding_dim
         self.input_channels = int(input_channels)
@@ -75,22 +36,15 @@ class ConvNeXtBackbone(nn.Module):
 
         if self.embedding_dim <= 0:
             raise ValueError("ConvNeXt embedding_dim must be a positive integer.")
-        if self.input_channels <= 0:
-            raise ValueError("ConvNeXt input_channels must be a positive integer.")
+        if self.input_channels != 3:
+            raise ValueError("ConvNeXt-Small expects three RGB channels.")
         if "weights" in kwargs:
             raise ValueError("Use pretrained=True/False for ConvNeXt weights; do not pass weights directly.")
         if "num_classes" in kwargs:
             raise ValueError("Use embedding_dim for ConvNeXt output size; do not pass num_classes.")
-        if self.pretrained and self.input_channels not in {3, 6}:
-            raise ValueError(
-                "Pretrained ConvNeXt supports input_channels 3 or 6, "
-                f"got {self.input_channels}."
-            )
 
-        weights = _imagenet_weights_for_variant(self.variant) if self.pretrained else None
-        builder = _builder_for_variant(self.variant)
-        self.stem = WaveletStem() if self.pretrained and self.input_channels == 6 else nn.Identity()
-        self.model = builder(weights=weights, progress=progress, **kwargs)
+        weights = models.ConvNeXt_Small_Weights.IMAGENET1K_V1 if self.pretrained else None
+        self.model = models.convnext_small(weights=weights, progress=progress, **kwargs)
         self.pretrained_provenance = None
         if weights is not None:
             filename = Path(urlparse(weights.url).path).name
@@ -105,36 +59,8 @@ class ConvNeXtBackbone(nn.Module):
                 "filename_hash_prefix": filename.rsplit("-", 1)[-1].removesuffix(".pth") if "-" in filename else None,
             }
 
-        if not self.pretrained and self.input_channels != 3:
-            self._replace_input_conv(self.input_channels)
-
         in_features = self._classifier_in_features()
         self._replace_classifier(in_features)
-
-    def _first_conv(self) -> nn.Conv2d:
-        try:
-            conv = self.model.features[0][0]
-        except (AttributeError, IndexError, TypeError) as exc:
-            raise ValueError("TorchVision ConvNeXt stem layout is not supported.") from exc
-        if not isinstance(conv, nn.Conv2d):
-            raise ValueError("TorchVision ConvNeXt first stem layer is not a Conv2d.")
-        return conv
-
-    def _replace_input_conv(self, input_channels: int) -> None:
-        conv = self._first_conv()
-        replacement = nn.Conv2d(
-            input_channels,
-            conv.out_channels,
-            kernel_size=conv.kernel_size,
-            stride=conv.stride,
-            padding=conv.padding,
-            dilation=conv.dilation,
-            groups=conv.groups,
-            bias=conv.bias is not None,
-            padding_mode=conv.padding_mode,
-        )
-        _init_convnext_projection(replacement)
-        self.model.features[0][0] = replacement
 
     def _classifier_in_features(self) -> int:
         classifier = getattr(self.model, "classifier", None)
@@ -151,24 +77,21 @@ class ConvNeXtBackbone(nn.Module):
         self.model.classifier[len(self.model.classifier) - 1] = projection
 
     def featuremaps(self, x):
-        x = self.stem(x)
         return self.model.features(x)
 
     def forward(self, x):
-        x = self.stem(x)
         return self.model(x)
 
 
-def _make_convnext_builder(variant: str, pretrained_default: bool = False):
+def _make_convnext_builder(pretrained_default: bool = False):
     def builder(
-        embedding_dim: int = 512,
+        embedding_dim: int = 2048,
         input_channels: int = 3,
         pretrained: bool = pretrained_default,
         progress: bool = True,
         **kwargs,
     ):
         return ConvNeXtBackbone(
-            variant=variant,
             embedding_dim=embedding_dim,
             input_channels=input_channels,
             pretrained=pretrained,
@@ -179,12 +102,5 @@ def _make_convnext_builder(variant: str, pretrained_default: bool = False):
     return builder
 
 
-convnext_tiny = _make_convnext_builder("tiny", pretrained_default=False)
-convnext_small = _make_convnext_builder("small", pretrained_default=False)
-convnext_base = _make_convnext_builder("base", pretrained_default=False)
-convnext_large = _make_convnext_builder("large", pretrained_default=False)
-
-convnext_tiny_pt = _make_convnext_builder("tiny", pretrained_default=True)
-convnext_small_pt = _make_convnext_builder("small", pretrained_default=True)
-convnext_base_pt = _make_convnext_builder("base", pretrained_default=True)
-convnext_large_pt = _make_convnext_builder("large", pretrained_default=True)
+convnext_small = _make_convnext_builder(pretrained_default=False)
+convnext_small_pt = _make_convnext_builder(pretrained_default=True)

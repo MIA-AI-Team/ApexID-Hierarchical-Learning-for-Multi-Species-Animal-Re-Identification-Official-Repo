@@ -10,15 +10,22 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from apexid.models.heads import (
-    ArcFaceSubCenterDynamicHead,
-    BHCAArcFace,
-    BHCASubCenterArcFace,
-    BHCASubCenterSphereFace2,
-    SphereFace2Head,
-)
-from apexid.engine.loggers import NullLogger
+from apexid.models.heads import ApexIDHierarchicalHead, SphereFace2Head
 from apexid.engine.checkpoint import LegacyCheckpointWarning
+
+
+@pytest.fixture(autouse=True)
+def stub_convnext(monkeypatch):
+    class TinyConvNeXt(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.features = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten())
+            self.classifier = nn.Sequential(nn.Linear(3, 2))
+
+        def forward(self, images):
+            return self.classifier(self.features(images))
+
+    monkeypatch.setattr("apexid.models.backbones.convnext.models.convnext_small", lambda **kwargs: TinyConvNeXt())
 
 
 def _load_train_script():
@@ -83,7 +90,7 @@ def _base_cfg(tmp_path):
         "model": {
             "name": "apexid",
             "embedding_dim": 8,
-            "backbone": {"name": "osnet_x0_25", "kwargs": {}},
+            "backbone": {"name": "convnext_small", "kwargs": {}},
         },
         "head": {
             "name": "arcface",
@@ -183,14 +190,11 @@ def test_train_script_builds_datasets_and_loaders_from_train_val_paths(tmp_path)
 def test_train_script_builds_finetune_optimizer_param_groups(tmp_path):
     train_script = _load_train_script()
     cfg = _base_cfg(tmp_path)
-    cfg["model"]["backbone"] = {"name": "osnet_x0_25_pt", "kwargs": {"pretrained": False}}
-    cfg.setdefault("finetune", {})["optimizer"] = {
-        "backbone_weight_decay": 1e-5,
-        "head_weight_decay": 5e-4,
+    cfg["optimizer"] = {
+        "name": "adamw", "backbone_lr": 1e-5, "head_lr": 1e-4, "kwargs": {"weight_decay": 1e-4},
     }
-    cfg = train_script.resolve_training_profile(cfg)
-    _, _, num_classes = train_script.build_datasets(cfg)
-    model, head, _ = train_script.build_components(cfg, num_classes=num_classes)
+    model = nn.Linear(2, 2)
+    head = TrainHead()
     optimizer = train_script.build_optimizer(cfg, model, head)
 
     assert len(optimizer.param_groups) == 2
@@ -198,8 +202,8 @@ def test_train_script_builds_finetune_optimizer_param_groups(tmp_path):
     assert optimizer.param_groups[1]["param_group_name"] == "head"
     assert optimizer.param_groups[0]["lr"] == pytest.approx(1e-5)
     assert optimizer.param_groups[1]["lr"] == pytest.approx(1e-4)
-    assert optimizer.param_groups[0]["weight_decay"] == pytest.approx(1e-5)
-    assert optimizer.param_groups[1]["weight_decay"] == pytest.approx(5e-4)
+    assert optimizer.param_groups[0]["weight_decay"] == pytest.approx(1e-4)
+    assert optimizer.param_groups[1]["weight_decay"] == pytest.approx(1e-4)
 
 
 def test_train_script_builds_cosine_warmup_scheduler(tmp_path):
@@ -210,10 +214,24 @@ def test_train_script_builds_cosine_warmup_scheduler(tmp_path):
         "kwargs": {"T_max": 10, "eta_min": 1e-6},
         "warmup": {"enabled": True, "epochs": 2, "start_lr": 1e-6},
     }
-    optimizer = torch.optim.SGD([torch.nn.Parameter(torch.ones(1))], lr=1e-3)
+    weights = [nn.Parameter(torch.ones(1)), nn.Parameter(torch.ones(1))]
+    optimizer = torch.optim.AdamW([
+        {"params": [weights[0]], "lr": 1e-5}, {"params": [weights[1]], "lr": 1e-4},
+    ])
     scheduler = train_script.build_scheduler(cfg, optimizer, total_epochs=10)
 
     assert isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
+    assert scheduler.get_last_lr() == pytest.approx([1e-6, 1e-6])
+    optimizer.step()
+    scheduler.step()
+    assert scheduler.get_last_lr() == pytest.approx([5.5e-6, 5.05e-5])
+    optimizer.step()
+    scheduler.step()
+    assert scheduler.get_last_lr() == pytest.approx([1e-5, 1e-4])
+    for _ in range(8):
+        optimizer.step()
+        scheduler.step()
+    assert scheduler.get_last_lr() == pytest.approx([1e-6, 1e-6])
 
 
 def test_train_script_builds_optimizer_and_scheduler(tmp_path):
@@ -252,141 +270,6 @@ def test_train_script_builds_cyclic_lr_scheduler_from_loader_length(tmp_path):
     assert scheduler.step_ratio == 0.5
 
 
-def test_train_script_auto_applies_lr_range_test_overrides(tmp_path):
-    train_script = _load_train_script()
-    cfg = _base_cfg(tmp_path)
-    cfg["lr_range_test"] = {
-        "enabled": True,
-        "mode": "auto_apply",
-        "start_lr": 1e-5,
-        "end_lr": 1e-2,
-        "num_iter": 4,
-        "smooth_beta": 0.98,
-        "stop_factor": 4.0,
-        "base_lr_divisor": 4.0,
-        "output_dir": str(tmp_path / "lr_auto"),
-    }
-    backbone = nn.Linear(2, 2)
-    head = TrainHead()
-    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.01)
-
-    overrides = train_script.maybe_run_lr_range_test(
-        cfg,
-        backbone,
-        head,
-        nn.CrossEntropyLoss(),
-        optimizer,
-        _tensor_loader(),
-        torch.device("cpu"),
-        resume_path=None,
-    )
-
-    assert set(overrides) == {"base_lr", "max_lr"}
-    assert optimizer.param_groups[0]["lr"] == overrides["base_lr"]
-    assert overrides["max_lr"] > overrides["base_lr"]
-    assert (tmp_path / "lr_auto" / "lr_range_test.json").exists()
-    assert (tmp_path / "lr_auto" / "lr_range_test.csv").exists()
-
-
-def test_train_script_report_only_lr_range_test_keeps_optimizer_lr(tmp_path):
-    train_script = _load_train_script()
-    cfg = _base_cfg(tmp_path)
-    cfg["lr_range_test"] = {
-        "enabled": True,
-        "mode": "report_only",
-        "start_lr": 1e-5,
-        "end_lr": 1e-2,
-        "num_iter": 4,
-        "output_dir": str(tmp_path / "lr_report"),
-    }
-    backbone = nn.Linear(2, 2)
-    head = TrainHead()
-    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.01)
-
-    overrides = train_script.maybe_run_lr_range_test(
-        cfg,
-        backbone,
-        head,
-        nn.CrossEntropyLoss(),
-        optimizer,
-        _tensor_loader(),
-        torch.device("cpu"),
-        resume_path=None,
-    )
-
-    assert overrides is None
-    assert optimizer.param_groups[0]["lr"] == 0.01
-    assert (tmp_path / "lr_report" / "lr_range_test.json").exists()
-
-
-def test_train_script_skips_lr_range_test_when_resuming(tmp_path):
-    train_script = _load_train_script()
-    cfg = _base_cfg(tmp_path)
-    cfg["lr_range_test"] = {
-        "enabled": True,
-        "mode": "auto_apply",
-        "output_dir": str(tmp_path / "lr_resume"),
-    }
-    backbone = nn.Linear(2, 2)
-    head = TrainHead()
-    optimizer = torch.optim.SGD(list(backbone.parameters()) + list(head.parameters()), lr=0.01)
-
-    overrides = train_script.maybe_run_lr_range_test(
-        cfg,
-        backbone,
-        head,
-        nn.CrossEntropyLoss(),
-        optimizer,
-        _tensor_loader(),
-        torch.device("cpu"),
-        resume_path=str(tmp_path / "checkpoint.pt"),
-    )
-
-    assert overrides is None
-    assert optimizer.param_groups[0]["lr"] == 0.01
-    assert not (tmp_path / "lr_resume").exists()
-
-
-def test_train_script_builds_embedding_plotter_with_default_output_dirs(tmp_path):
-    train_script = _load_train_script()
-    cfg = _base_cfg(tmp_path)
-    cfg["embedding_plot"] = {
-        "enabled": True,
-        "split": "val",
-        "output_dir": None,
-        "best_output_dir": None,
-        "n_neighbors": 5,
-        "min_dist": 0.2,
-        "metric": "cosine",
-        "random_state": None,
-        "point_size": 9,
-        "alpha": 0.7,
-        "dpi": 150,
-        "max_points": 100,
-        "filename_template": "epoch_{epoch_number:03d}_umap.png",
-        "best_filename": "best_embedding_space.png",
-    }
-
-    plotter = train_script.build_embedding_plotter(cfg)
-
-    assert plotter.output_dir == tmp_path / "outputs" / "embedding_space"
-    assert plotter.best_output_dir == tmp_path / "checkpoints"
-    assert plotter.n_neighbors == 5
-    assert plotter.min_dist == 0.2
-    assert plotter.metric == "cosine"
-    assert plotter.random_state == 42
-    assert plotter.max_points == 100
-
-
-def test_train_script_rejects_non_validation_embedding_plot_split(tmp_path):
-    train_script = _load_train_script()
-    cfg = _base_cfg(tmp_path)
-    cfg["embedding_plot"] = {"enabled": True, "split": "train"}
-
-    with pytest.raises(ValueError, match="supports only 'val'"):
-        train_script.build_embedding_plotter(cfg)
-
-
 def test_train_script_builds_sphereface2_internal_loss_components(tmp_path):
     train_script = _load_train_script()
     cfg = _base_cfg(tmp_path)
@@ -412,40 +295,8 @@ def test_train_script_builds_sphereface2_internal_loss_components(tmp_path):
     assert len(optimizer.param_groups[0]["params"]) > 0
 
 
-def test_train_script_builds_subcenter_arcface_components(tmp_path):
-    train_script = _load_train_script()
-    cfg = _base_cfg(tmp_path)
-    cfg["head"] = {
-        "name": "arcface_subcenter_dynamic",
-        "kwargs": {
-            "s": 16.0,
-            "k": 2,
-            "margin_default": 0.3,
-            "margins_source": "uniform",
-        },
-    }
-    cfg["loss"] = {"name": "cross_entropy", "kwargs": {}}
-    _, _, num_classes = train_script.build_datasets(cfg)
-
-    model, head, criterion = train_script.build_components(cfg, num_classes=num_classes)
-    optimizer = train_script.build_optimizer(cfg, model, head)
-
-    assert isinstance(head, ArcFaceSubCenterDynamicHead)
-    assert criterion is not None
-    assert len(optimizer.param_groups[0]["params"]) > 0
-
-
-@pytest.mark.parametrize(
-    ("name", "expected_type"),
-    [
-        ("BHCA-A", BHCAArcFace),
-        ("BHCA-SCA", BHCASubCenterArcFace),
-        ("BHCA-SCSF2", BHCASubCenterSphereFace2),
-    ],
-)
-def test_train_script_builds_bhca_aliases_from_training_only_mapping(
-    tmp_path, name, expected_type
-):
+@pytest.mark.parametrize("name", ["apexid_hierarchical", "BHCA-SCSF2"])
+def test_train_script_builds_hierarchy_from_training_only_mapping(tmp_path, name):
     train_script = _load_train_script()
     cfg = _base_cfg(tmp_path)
     for split_key in (
@@ -464,45 +315,11 @@ def test_train_script_builds_bhca_aliases_from_training_only_mapping(
     train_dataset, _, num_classes = train_script.build_datasets(cfg)
     assert len(train_dataset[0]) == 4
     assert train_dataset.species_enrichment_reports["train"]["rows_filled"] == 4
-    resolved = train_script._apply_bhca_hierarchy_config(cfg, train_dataset, num_classes)
+    resolved = train_script._apply_hierarchy_config(cfg, train_dataset, num_classes)
     _, head, criterion = train_script.build_components(resolved, num_classes=num_classes)
-    assert isinstance(head, expected_type)
+    assert isinstance(head, ApexIDHierarchicalHead)
     assert criterion is None
     assert head.class_to_species.tolist() == [0, 0]
-
-
-def test_train_script_builds_frequency_bin_margins_for_subcenter_head(tmp_path):
-    train_script = _load_train_script()
-    cfg = _base_cfg(tmp_path)
-    train_csv = Path(cfg["data"]["train_path"])
-    image_dir = Path(cfg["data"]["root_dir"])
-    _make_csv(train_csv, image_dir, ["a", "a", "a", "b"])
-    cfg["head"] = {
-        "name": "arcface_subcenter_dynamic",
-        "kwargs": {
-            "s": 16.0,
-            "k": 2,
-            "margins_source": "frequency_bins",
-            "margin_min": 0.2,
-            "margin_max": 0.4,
-        },
-    }
-    train_dataset, _, num_classes = train_script.build_datasets(cfg)
-
-    resolved_cfg = train_script._apply_subcenter_margin_config(cfg, train_dataset, num_classes)
-    margins = resolved_cfg["head"]["kwargs"]["margins"]
-
-    assert len(margins) == num_classes
-    assert min(margins) >= 0.2 - 1e-6
-    assert max(margins) <= 0.4 + 1e-6
-    assert margins[1] > margins[0]
-    assert resolved_cfg["head"]["kwargs"]["margin_min"] == 0.2
-    assert resolved_cfg["head"]["kwargs"]["margin_max"] == 0.4
-
-    resolved_cfg["loss"] = {"name": "cross_entropy", "kwargs": {}}
-    _, head, criterion = train_script.build_components(resolved_cfg, num_classes=num_classes)
-    assert isinstance(head, ArcFaceSubCenterDynamicHead)
-    assert criterion is not None
 
 
 def test_train_script_resolve_resume_path_auto_detects_last_checkpoint(tmp_path):
@@ -549,31 +366,12 @@ def test_train_script_keeps_legacy_checkpoint_warning_visible():
     )
 
 
-def test_train_script_frequency_bin_margins_respect_explicit_margins(tmp_path):
-    train_script = _load_train_script()
-    cfg = _base_cfg(tmp_path)
-    cfg["head"] = {
-        "name": "arcface_subcenter_dynamic",
-        "kwargs": {
-            "s": 16.0,
-            "k": 2,
-            "margins_source": "frequency_bins",
-            "margins": [0.21, 0.31],
-        },
-    }
-    train_dataset, _, num_classes = train_script.build_datasets(cfg)
-
-    resolved_cfg = train_script._apply_subcenter_margin_config(cfg, train_dataset, num_classes)
-
-    assert resolved_cfg["head"]["kwargs"]["margins"] == [0.21, 0.31]
-
-
 def test_train_script_rejects_external_loss_for_sphereface2(tmp_path):
     train_script = _load_train_script()
     cfg = _base_cfg(tmp_path)
     cfg["head"] = {
-        "name": "sphereface2_focal",
-        "kwargs": {"alpha": 0.7, "focal_gamma": 2.0},
+        "name": "sphereface2",
+        "kwargs": {"alpha": 0.7},
     }
     _, _, num_classes = train_script.build_datasets(cfg)
 
@@ -616,30 +414,6 @@ def test_train_script_builds_trainer_verbose_from_config(tmp_path):
     )
 
     assert fallback_trainer.verbose is False
-
-
-def test_train_script_tracking_disabled_builds_null_logger(tmp_path):
-    train_script = _load_train_script()
-    cfg = _base_cfg(tmp_path)
-    cfg["tracking"] = {
-        "enabled": False,
-        "provider": "wandb",
-        "project": "ApexID",
-        "log_artifacts": "best",
-    }
-
-    logger = train_script.build_experiment_logger(
-        cfg,
-        metadata={
-            "num_classes": 2,
-            "train_dataset_size": 4,
-            "val_dataset_size": 3,
-            "device": "cpu",
-            "resume_path": None,
-        },
-    )
-
-    assert isinstance(logger, NullLogger)
 
 
 def test_train_script_requires_train_and_val_paths(tmp_path):

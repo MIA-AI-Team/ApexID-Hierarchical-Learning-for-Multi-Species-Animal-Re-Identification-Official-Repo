@@ -27,25 +27,13 @@ from .open_set_metrics import (
 from .benchmark_metrics import (
     B3_METRIC_VERSION,
     b3_metrics,
-    cluster_count_error,
     clustering_metrics,
-    discovery_metrics,
-    fragmentation_metrics,
-    merge_metrics,
     pairwise_metrics,
-)
-from .benchmark_evaluator import (
-    BOOTSTRAP_VERSION,
-    EVALUATOR_VERSION,
-    ONLINE_PROTOTYPE_UPDATE_VERSION,
 )
 from .hierarchy_diagnostics import compute_hierarchical_similarity_diagnostics
 
 __all__ = [
     "B3_METRIC_VERSION",
-    "BOOTSTRAP_VERSION",
-    "EVALUATOR_VERSION",
-    "ONLINE_PROTOTYPE_UPDATE_VERSION",
     "best_gallery_matches",
     "cluster_embeddings",
     "compute_dir_at_far",
@@ -69,11 +57,7 @@ __all__ = [
     "top5_accuracy",
     "topk_accuracy",
     "b3_metrics",
-    "cluster_count_error",
     "clustering_metrics",
-    "discovery_metrics",
-    "fragmentation_metrics",
-    "merge_metrics",
     "pairwise_metrics",
     "compute_hierarchical_similarity_diagnostics",
 ]

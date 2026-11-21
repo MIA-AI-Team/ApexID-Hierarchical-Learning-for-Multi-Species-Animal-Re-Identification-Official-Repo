@@ -1,0 +1,12 @@
+extends: ../training_base.yaml
+experiment:
+  name: convnext_small_arcface
+  output_dir: ${APEXID_OUTPUT_ROOT:-outputs}/convnext_small_arcface
+head:
+  name: arcface
+  kwargs:
+    s: 40.0
+    m: 0.3
+loss:
+  name: cross_entropy
+  kwargs: {}

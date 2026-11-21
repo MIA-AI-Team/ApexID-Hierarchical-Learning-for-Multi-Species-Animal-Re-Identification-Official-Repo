@@ -85,12 +85,10 @@ def sphereface2_loss_from_cosine(
     t=3.,
     lw=50.,
     bias=0.,
-    normalize_negatives=False,
 ):
     """Compute SphereFace2 from externally supplied per-class cosine scores.
 
-    The default reduction is numerically identical to ordinary SphereFace2.
-    BHCA's conditional branch normalizes sibling negatives per anchor.
+    The reduction sums negative identity penalties for each anchor.
     """
     labels = labels.long()
     logits = sphereface2_logits_from_cosine(
@@ -104,19 +102,9 @@ def sphereface2_loss_from_cosine(
     )
     targets = torch.zeros_like(cosine)
     targets.scatter_(1, labels.view(-1, 1), 1.)
-    if not normalize_negatives:
-        weight = float(alpha) * targets + (1. - float(alpha)) * (1. - targets)
-        weight = float(lw) * cosine.shape[1] / float(r) * weight
-        return F.binary_cross_entropy_with_logits(logits, targets, weight=weight)
-
-    element_loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
-    positive = (element_loss * targets).sum(dim=1)
-    negative_mask = 1. - targets
-    negative = (element_loss * negative_mask).sum(dim=1) / negative_mask.sum(dim=1).clamp_min(1.)
-    per_anchor = float(lw) / float(r) * (
-        float(alpha) * positive + (1. - float(alpha)) * negative
-    )
-    return per_anchor.mean()
+    weight = float(alpha) * targets + (1. - float(alpha)) * (1. - targets)
+    weight = float(lw) * cosine.shape[1] / float(r) * weight
+    return F.binary_cross_entropy_with_logits(logits, targets, weight=weight)
 
 
 class SphereFace2(nn.Module):

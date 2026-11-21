@@ -18,10 +18,9 @@ import yaml
 
 PROVENANCE_SCHEMA_VERSION = 1
 DEFAULT_DEPENDENCIES = (
-    "torch", "torchvision", "timm", "huggingface-hub", "transformers",
+    "torch", "torchvision", "timm", "huggingface-hub", "safetensors",
     "numpy", "pandas", "scikit-learn", "opencv-python-headless", "Pillow",
-    "albumentations", "PyYAML", "numba", "llvmlite", "umap-learn",
-    "matplotlib", "safetensors", "wandb",
+    "albumentations", "PyYAML", "matplotlib", "scipy",
 )
 
 
@@ -189,38 +188,8 @@ def artifact_hashes(paths: Mapping[str, str | Path | None]) -> dict[str, Any]:
     return records
 
 
-def validate_normalization_stats(
-    path: str | Path,
-    *,
-    train_csv: str | Path,
-    split_manifest: str | Path | None = None,
-) -> dict[str, Any]:
-    """Validate normalization statistics against the train CSV and optional manifest."""
-    path = Path(path)
-    if not path.is_file():
-        raise FileNotFoundError(f"Normalization statistics file does not exist: {path}")
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    expected_train_hash = payload.get("train_csv_sha256")
-    actual_train_hash = sha256_file(train_csv)
-    if expected_train_hash and expected_train_hash != actual_train_hash:
-        raise ValueError("normalization_stats.json train CSV hash does not match the configured training split")
-    if split_manifest is not None and Path(split_manifest).is_file():
-        expected_manifest_hash = payload.get("manifest_sha256")
-        actual_manifest_hash = sha256_file(split_manifest)
-        if expected_manifest_hash and expected_manifest_hash != actual_manifest_hash:
-            raise ValueError("normalization_stats.json manifest hash does not match split_manifest.csv")
-    std = payload.get("std")
-    if std is None:
-        std = payload.get("standard_deviation", [])
-    if len(payload.get("mean", [])) != 3 or len(std) != 3:
-        raise ValueError("normalization_stats.json must contain three-channel mean and standard deviation")
-    payload = dict(payload)
-    payload["std"] = std
-    return payload
-
-
 __all__ = [
     "PROVENANCE_SCHEMA_VERSION", "artifact_hashes", "capture_environment", "capture_git_state",
     "command_record", "dependency_versions", "require_clean_git", "sha256_file",
-    "utc_now", "validate_normalization_stats", "write_json_atomic", "write_yaml_atomic",
+    "utc_now", "write_json_atomic", "write_yaml_atomic",
 ]

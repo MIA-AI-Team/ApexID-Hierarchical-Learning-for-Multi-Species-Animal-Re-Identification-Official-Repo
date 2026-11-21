@@ -87,7 +87,6 @@
     "missing": 107089
   },
   "feature_cache": {
-    "checkpoint_path": "/sc/home/mohammed.mohammed/.cache/huggingface/hub/models--timm--vit_large_patch14_dinov2.lvd142m/snapshots/4741e1cafbf45415e77074bb0cb42dba76c8684a/model.safetensors",
     "checkpoint_sha256": "0424a5d1b515278cba3c6640ccbeaacc41de59d3a93df0dd5e494285eea2b355",
     "dtype": "float32",
     "feature": {
@@ -125,6 +124,16 @@
       1024
     ]
   },
+  "generation_output_hashes": {
+    "near_duplicate_candidates.csv": "80e074c66708bb5af9aa78bcdd3a2894e93be1ac473e61c52e099834cb0c31a6",
+    "split_manifest.csv": "ed801d88a2f35d2a76db5a12f82c816bfc11d491b2e163e99653b5c97bc32ef7",
+    "train.csv": "4ef3a191b2e6544f80fe183353a0788496c7772986514edd79dd6f9fd3209ce4",
+    "unlabeled_ood.csv": "0ecf704678760f7ff6c2fce76aed0bfc85fa0c538c9810fb0f73dedfabcc8c4a",
+    "val.csv": "7eb61f778ccec5344131527410a74824b00f3e3072e8d5d7e69e6ac8b6e7ad14",
+    "val_known.csv": "f255d4432b6ff4e8569d992c540ee84a34468d1ef1805514161c1dd1b8da30d8",
+    "val_unknown.csv": "d23e873d3bebf1d1cdd0932859cf59d1284327948a555132558e53e254cd810e",
+    "val_unknown_extra.csv": "5c3d3e97f39078247d72ab211d964ed21c5918c7c6040179ac005e2274ded74d"
+  },
   "git": {
     "branch": "convnext",
     "commit": "9327e7955274af832bebdda096446f71b9c9b102",
@@ -158,7 +167,7 @@
     "validation": 0.3139746327329797
   },
   "metadata": {
-    "path": "/sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/metadata.csv",
+    "path": "metadata.csv",
     "rows": 158293,
     "sha256": "fd8a921f7ab5566b02fa166bfbbfc948375ee68226b15c29caab8b7fc3ebacf0"
   },
@@ -177,18 +186,17 @@
     "candidate_pairs": 247,
     "dhash_threshold": 4,
     "enabled": true,
-    "phash_threshold": 6,
-    "v1_candidate_pairs": null
+    "phash_threshold": 6
   },
   "output_hashes": {
-    "near_duplicate_candidates.csv": "80e074c66708bb5af9aa78bcdd3a2894e93be1ac473e61c52e099834cb0c31a6",
-    "split_manifest.csv": "ed801d88a2f35d2a76db5a12f82c816bfc11d491b2e163e99653b5c97bc32ef7",
-    "train.csv": "4ef3a191b2e6544f80fe183353a0788496c7772986514edd79dd6f9fd3209ce4",
-    "unlabeled_ood.csv": "0ecf704678760f7ff6c2fce76aed0bfc85fa0c538c9810fb0f73dedfabcc8c4a",
-    "val.csv": "7eb61f778ccec5344131527410a74824b00f3e3072e8d5d7e69e6ac8b6e7ad14",
-    "val_known.csv": "f255d4432b6ff4e8569d992c540ee84a34468d1ef1805514161c1dd1b8da30d8",
-    "val_unknown.csv": "d23e873d3bebf1d1cdd0932859cf59d1284327948a555132558e53e254cd810e",
-    "val_unknown_extra.csv": "5c3d3e97f39078247d72ab211d964ed21c5918c7c6040179ac005e2274ded74d"
+    "near_duplicate_candidates.csv": "e01088d8bfaccaacdac5d8bb70e315d96b321b62885b7688a0dbc21d94cb4661",
+    "split_manifest.csv": "74305020a36d37f5f9ac8656d0074536f0efe037b88fa236e2a0e94d2db79301",
+    "train.csv": "3ebd48e8cf9bac049f34b2ef01480d164e51052f3f2771e98110174c50fa7e16",
+    "unlabeled_ood.csv": "0d4356b8152c4c91786ad06399ee38e69e90329b82dd957dfd1e984e3515130a",
+    "val.csv": "3f684d81a9cfe9ea4bd6f6a663b9baec25d6ae5aaab65479f5d575e1b01fcd82",
+    "val_known.csv": "cd635bf996faa4b7f627a6ccea2ddf8edbb26b7d0688a75f2640d6a1ebbed3af",
+    "val_unknown.csv": "3985ff0068ea4803c2e9bb645c3d1fa0d0ea2e76c370f797722eedabc04aaaec",
+    "val_unknown_extra.csv": "c14b84bfabd0b4cd402b4f788b3aca1f90b74cdd64d778ad80c7521431db4e73"
   },
   "parser_statistics": {
     "CTai": {
@@ -1042,9 +1050,5 @@
   "unresolved_cases": {
     "malformed_date_rows": 0,
     "train_only_similarity_rows": 44732
-  },
-  "v1_v2_comparison": {
-    "available": false,
-    "path": "/sc/projects/sci-aisc/apex-id/extracted/apexid-dataset/open_set_splits"
   }
 }

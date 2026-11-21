@@ -270,8 +270,13 @@ def test_outputs_are_deterministic_and_complete(tmp_path):
         writer.writeheader()
         writer.writerows({name: row[name] for name in FIELDNAMES} for row in rows)
     assert validate_written_v2(first, metadata)["passed"]
+    assert validate_written_v2(first)["passed"]
     with pytest.raises(FileExistsError):
         write_v2_artifacts(first, splits, manifest_rows(rows, config), dict(summary))
+    train_csv = first / "train.csv"
+    train_csv.write_bytes(train_csv.read_bytes().replace(b",animal,", b",other,"))
+    with pytest.raises(ValueError, match="recorded hashes.*train.csv"):
+        validate_written_v2(first)
 
 
 def test_unrelated_source_rows_do_not_reshuffle_an_identity():

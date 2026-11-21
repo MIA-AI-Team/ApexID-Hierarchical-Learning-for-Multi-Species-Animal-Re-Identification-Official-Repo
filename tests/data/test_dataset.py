@@ -82,6 +82,14 @@ def test_apexid_dataset_rejects_identity_collisions_across_species():
         ApexID_Dataset(data)
 
 
+def test_apexid_dataset_detects_source_collisions_across_splits():
+    train = pd.DataFrame({"identity": ["001"], "dataset": ["Set A"], "species": ["whale"]})
+    validation = pd.DataFrame({"identity": ["001"], "dataset": ["Set B"], "species": ["whale"]})
+
+    with pytest.raises(ValueError, match="not globally unique.*"):
+        ApexID_Dataset.build_label_mapping_union(train, validation)
+
+
 def test_apexid_dataset_applies_transform_after_rgb_loading(tmp_path):
     image_path = tmp_path / "animal.png"
     rgb = np.full((6, 7, 3), [15, 25, 35], dtype=np.uint8)

@@ -7,8 +7,8 @@ they deliberately have no model- or threshold-selection dependencies.
 from __future__ import annotations
 
 import math
-from collections import Counter, defaultdict
-from typing import Iterable, Mapping
+from collections import Counter
+from typing import Iterable
 
 import numpy as np
 from sklearn.metrics import adjusted_mutual_info_score, adjusted_rand_score, normalized_mutual_info_score
@@ -102,62 +102,4 @@ def clustering_metrics(true_labels: Iterable[object], predicted_labels: Iterable
     }
 
 
-def fragmentation_metrics(true_labels: Iterable[object], predicted_labels: Iterable[object]) -> dict[str, float]:
-    true, predicted = _validate(true_labels, predicted_labels)
-    if true.size == 0:
-        return {
-            "mean_fragments_per_identity": float("nan"), "median_fragments_per_identity": float("nan"),
-            "max_fragments_per_identity": float("nan"), "fraction_true_identities_fragmented": float("nan"),
-        }
-    groups: dict[object, set[object]] = defaultdict(set)
-    for target, prediction in zip(true, predicted):
-        groups[target].add(prediction)
-    fragments = np.asarray([len(values) for values in groups.values()], dtype=float)
-    return {
-        "mean_fragments_per_identity": float(fragments.mean()),
-        "median_fragments_per_identity": float(np.median(fragments)),
-        "max_fragments_per_identity": float(fragments.max()),
-        "fraction_true_identities_fragmented": float(np.mean(fragments > 1)),
-    }
-
-
-def merge_metrics(true_labels: Iterable[object], predicted_labels: Iterable[object]) -> dict[str, float]:
-    true, predicted = _validate(true_labels, predicted_labels)
-    if true.size == 0:
-        return {
-            "mean_true_ids_per_predicted_cluster": float("nan"), "max_true_ids_per_predicted_cluster": float("nan"),
-            "fraction_predicted_clusters_merged": float("nan"),
-        }
-    groups: dict[object, set[object]] = defaultdict(set)
-    for target, prediction in zip(true, predicted):
-        groups[prediction].add(target)
-    merged = np.asarray([len(values) for values in groups.values()], dtype=float)
-    return {
-        "mean_true_ids_per_predicted_cluster": float(merged.mean()),
-        "max_true_ids_per_predicted_cluster": float(merged.max()),
-        "fraction_predicted_clusters_merged": float(np.mean(merged > 1)),
-    }
-
-
-def cluster_count_error(true_labels: Iterable[object], predicted_labels: Iterable[object]) -> dict[str, float]:
-    true, predicted = _validate(true_labels, predicted_labels)
-    true_count = len(set(true.tolist()))
-    predicted_count = len(set(predicted.tolist()))
-    error = abs(predicted_count - true_count)
-    return {
-        "true_identity_count": float(true_count),
-        "predicted_cluster_count": float(predicted_count),
-        "absolute_cluster_count_error": float(error),
-        "relative_cluster_count_error": float(error / true_count) if true_count else float("nan"),
-    }
-
-
-def discovery_metrics(true_labels: Iterable[object], predicted_labels: Iterable[object]) -> dict[str, float]:
-    """Aggregate all cluster-structure diagnostics for an unknown subset."""
-    return clustering_metrics(true_labels, predicted_labels) | fragmentation_metrics(true_labels, predicted_labels) | merge_metrics(true_labels, predicted_labels) | cluster_count_error(true_labels, predicted_labels)
-
-
-__all__ = [
-    "B3_METRIC_VERSION", "b3_metrics", "cluster_count_error", "clustering_metrics", "discovery_metrics",
-    "fragmentation_metrics", "merge_metrics", "pairwise_metrics",
-]
+__all__ = ["B3_METRIC_VERSION", "b3_metrics", "clustering_metrics", "pairwise_metrics"]

@@ -1,6 +1,7 @@
 import pandas as pd
 import pytest
 
+import apexid.data.species_metadata as species_metadata
 from apexid.data.species_metadata import (
     BHCA_DATASET_TO_SPECIES,
     canonicalize_happywhale_species,
@@ -99,6 +100,27 @@ def test_enrichment_fills_happywhale_as_whale_or_dolphin(tmp_path):
     assert enriched["species"].tolist() == ["dolphin", "whale", "dolphin"]
     assert report.happywhale_rows_filled_from_official == 3
     assert report.rows_by_dataset["HappyWhale"] == 3
+
+
+def test_enrichment_fills_only_matching_happywhale_rows_from_frozen_manifest(tmp_path, monkeypatch):
+    manifest = tmp_path / "split_manifest.csv"
+    manifest.write_text(
+        "identity,path,species,dataset\n"
+        "id1,images/HappyWhale/same.jpg,dolphin,HappyWhale\n"
+    )
+    monkeypatch.setattr(species_metadata, "FROZEN_SPLIT_MANIFEST", manifest)
+    frame = pd.DataFrame({
+        "identity": ["id1", "other_id", "uncached_id"],
+        "path": ["mounted/same.jpg", "mounted/same.jpg", "mounted/other.jpg"],
+        "species": [None, None, "bottlenose_dolpin"],
+        "dataset": ["HappyWhale"] * 3,
+    })
+
+    enriched, report = enrich_species_metadata(frame, require_complete=False)
+
+    assert enriched["species"].tolist() == ["dolphin", None, "dolphin"]
+    assert report.rows_by_dataset["HappyWhale"] == 1
+    assert report.happywhale_rows_filled_from_official == 0
 
 
 def test_enrichment_rejects_happywhale_conflict_with_official(tmp_path):

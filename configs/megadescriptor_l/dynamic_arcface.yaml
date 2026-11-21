@@ -1,0 +1,14 @@
+extends: training_base.yaml
+experiment:
+  name: megadescriptor_l_dynamic_arcface
+  output_dir: ${APEXID_OUTPUT_ROOT:-outputs}/megadescriptor_l_dynamic_arcface
+head:
+  name: dynamic_arcface
+  kwargs:
+    s: 30.0
+    k1: 1.1
+    k2: 0.8
+    k3: 0.332
+loss:
+  name: cross_entropy
+  kwargs: {}

@@ -8,7 +8,6 @@ from .provenance import (
     command_record,
     require_clean_git,
     sha256_file,
-    validate_normalization_stats,
     write_json_atomic,
     write_yaml_atomic,
 )
@@ -32,7 +31,6 @@ __all__ = [
     "command_record",
     "require_clean_git",
     "sha256_file",
-    "validate_normalization_stats",
     "write_json_atomic",
     "write_yaml_atomic",
 ]

@@ -1,0 +1,27 @@
+extends: training_base.yaml
+experiment:
+  name: miewid_v3_apexid_hierarchical
+  output_dir: ${APEXID_OUTPUT_ROOT:-outputs}/miewid_v3_apexid_hierarchical
+head:
+  name: apexid_hierarchical
+  kwargs:
+    magn_type: A
+    alpha: 0.9
+    r: 40.0
+    identity_margin: 0.3
+    t: 3.0
+    lw: 20.0
+    species_margin: 0.1
+    species_weight: 0.5
+    num_subcenters: 2
+loss:
+  name: null
+  kwargs: {}
+validation:
+  every_n_epochs: 150
+evaluation:
+  diagnostics_every_n_epochs: 150
+  diagnostics:
+    enabled: false
+checkpoint:
+  resume_path: null

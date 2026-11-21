@@ -1,0 +1,2 @@
+# Keep the frozen training split checksums stable across operating systems.
+/open_set_splits_v2/*.csv text eol=lf

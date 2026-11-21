@@ -1,0 +1,29 @@
+extends: ../training_base.yaml
+model:
+  name: apexid
+  embedding_dim: 1536
+  input_channels: 3
+  backbone:
+    name: megadescriptor_l_384_pt
+    kwargs:
+      pretrained: true
+      revision: 33b3c6f4ee0c386a4126cc3dcd23843920613fa1
+      grad_checkpointing: true
+dataloader:
+  batch_size: 16
+  val_batch_size: 16
+  sampler:
+    num_identities: 4
+data:
+  image_size:
+  - 384
+  - 384
+  transforms:
+    mean:
+    - 0.5
+    - 0.5
+    - 0.5
+    std:
+    - 0.5
+    - 0.5
+    - 0.5

@@ -982,7 +982,7 @@ def validate_splits(
         violations.append("repeated paths appear across component outputs")
 
     split_by_index = {int(row["_idx"]): str(row["_split"]) for row in component_rows}
-    for field, label in (
+    for group_column, label in (
         ("_image_sha256", "exact-content"),
         ("_duplicate_group_id", "duplicate"),
         ("_explicit_group_id", "explicit-source"),
@@ -991,11 +991,11 @@ def validate_splits(
     ):
         grouped: dict[str, set[str]] = defaultdict(set)
         for row in rows:
-            value = str(row.get(field, ""))
+            value = str(row.get(group_column, ""))
             if value:
                 grouped[value].add(split_by_index[int(row["_idx"])])
         for group_splits in grouped.values():
-            if field in {"_image_sha256", "_duplicate_group_id"} and len(group_splits) > 1:
+            if group_column in {"_image_sha256", "_duplicate_group_id"} and len(group_splits) > 1:
                 violations.append(f"{label} group crosses component partitions")
                 break
             if "train" in group_splits and "val_known" in group_splits:
@@ -1222,20 +1222,51 @@ def read_split(path: Path) -> list[dict[str, str]]:
 
 def validate_written_v2(
     output_dir: Path,
-    metadata_path: Path,
+    metadata_path: Path | None = None,
     data_root: Path | None = None,
     verify_images: bool = False,
 ) -> dict[str, object]:
+    """Verify a frozen split bundle, optionally against its source metadata."""
     output_dir = Path(output_dir)
     manifest_path = output_dir / "split_manifest.csv"
-    if not manifest_path.is_file():
-        raise ValueError("split_manifest.csv is required for Split V2 validation")
     with manifest_path.open(newline="", encoding="utf-8") as handle:
-        manifest = list(csv.DictReader(handle))
-    source = read_rows(metadata_path)
+        reader = csv.DictReader(handle)
+        if reader.fieldnames != MANIFEST_FIELDS:
+            raise ValueError(f"Unexpected columns in {manifest_path}: {reader.fieldnames!r}")
+        manifest = list(reader)
+
+    splits = {name: read_split(output_dir / f"{name}.csv") for name in OUTPUT_SPLITS}
+    if splits["val"] != splits["val_known"] + splits["val_unknown"]:
+        raise ValueError("val.csv must contain val_known.csv followed by val_unknown.csv")
+
+    # Category labels may be harmonized after freezing split membership.
+    membership_fields = [name for name in FIELDNAMES if name != "species"]
+    manifest_membership = Counter(
+        (row["split"], *(row[field] for field in membership_fields)) for row in manifest
+    )
+    split_membership = Counter(
+        (name, *(row[field] for field in membership_fields))
+        for name in COMPONENT_SPLITS
+        for row in splits[name]
+    )
+    if manifest_membership != split_membership:
+        raise ValueError("Split CSV membership differs from split_manifest.csv")
+    manifest_paths = {row["path"] for row in manifest}
+    if len(manifest_paths) != len(manifest):
+        raise ValueError("Repeated image paths in split_manifest.csv")
+    if metadata_path is not None:
+        source = read_rows(metadata_path)
+        source_membership = Counter(
+            tuple(row[field] for field in membership_fields) for row in source
+        )
+        if source_membership != Counter(
+            tuple(row[field] for field in membership_fields) for row in manifest
+        ):
+            raise ValueError("Split manifest does not account for source metadata exactly once")
+
     if verify_images:
         failures = []
-        for row in source:
+        for row in manifest:
             path = resolve_image_path(str(row["path"]), data_root)
             try:
                 with Image.open(path) as image:
@@ -1246,15 +1277,6 @@ def validate_written_v2(
                     break
         if failures:
             raise ValueError(f"Image verification failed: {failures}")
-    if len(manifest) != len(source):
-        raise ValueError("Manifest row count does not match authoritative metadata")
-    splits = {name: read_split(output_dir / f"{name}.csv") for name in OUTPUT_SPLITS}
-    if splits["val"] != splits["val_known"] + splits["val_unknown"]:
-        raise ValueError("val.csv is not byte-order equivalent to val_known + val_unknown")
-    component_paths = [row["path"] for name in COMPONENT_SPLITS for row in splits[name]]
-    source_paths = [str(row["path"]) for row in source]
-    if Counter(component_paths) != Counter(source_paths):
-        raise ValueError("Written component CSVs do not account for metadata exactly once")
     train_ids = identity_keys(splits["train"])
     known_ids = identity_keys(splits["val_known"])
     unknown_ids = identity_keys(splits["val_unknown"])
@@ -1267,16 +1289,16 @@ def validate_written_v2(
         raise ValueError("Written identity-disjointness invariants failed")
     grouped: dict[tuple[str, str], set[str]] = defaultdict(set)
     for row in manifest:
-        for field in (
+        for group_column in (
             "image_sha256",
             "observation_group_id",
             "duplicate_group_id",
             "explicit_group_id",
             "similarity_cluster_id",
         ):
-            value = row[field]
+            value = row[group_column]
             if value:
-                grouped[(field, value)].add(row["split"])
+                grouped[(group_column, value)].add(row["split"])
     bad = [
         key
         for key, values in grouped.items()
@@ -1287,14 +1309,23 @@ def validate_written_v2(
     ]
     if bad:
         raise ValueError(f"Manifest group crosses train/val_known: {bad[:5]}")
+
+    summary = json.loads((output_dir / "split_summary.json").read_text(encoding="utf-8"))
+    actual_hashes = {
+        path.name: sha256_file(path) for path in sorted(output_dir.iterdir()) if path.is_file()
+    }
+    wrong_hashes = [
+        name for name, digest in summary["output_hashes"].items()
+        if actual_hashes.get(name) != digest
+    ]
+    if wrong_hashes:
+        raise ValueError(f"Split files differ from their recorded hashes: {wrong_hashes}")
     return {
         "passed": True,
-        "metadata_rows": len(source),
+        "metadata_rows": len(manifest),
         "images_verified": verify_images,
-        "manifest_sha256": sha256_file(manifest_path),
-        "output_hashes": {
-            path.name: sha256_file(path) for path in sorted(output_dir.iterdir()) if path.is_file()
-        },
+        "manifest_sha256": actual_hashes[manifest_path.name],
+        "output_hashes": actual_hashes,
     }
 
 

@@ -1,62 +1,19 @@
-# Third-Party Provenance
+# Third-party provenance
 
-ApexID source is Apache-2.0. That license does not grant rights to external
-datasets, pretrained weights, model-provider code, or their trademarks. Users
-must obtain and comply with those materials separately.
+The [Apache-2.0 license](LICENSE) covers the ApexID source code. External datasets, pretrained weights, and their provider code are subject to their respective terms.
 
-## Dependency environment
+## Pretrained encoders
 
-`requirements.txt` is the readable input. `requirements-lock.txt` is the exact
-Python 3.13.5 training/evaluation environment validated on CPU; the splitter
-keeps its separate `requirements-split-v2.txt`. Important upstream licenses
-include:
+| Artifact | Upstream revision |
+| --- | --- |
+| ConvNeXt-Small | TorchVision 0.25.0 `ConvNeXt_Small_Weights.IMAGENET1K_V1` |
+| MIEW-ID v3 | [conservationxlabs/miewid-msv3](https://huggingface.co/conservationxlabs/miewid-msv3/tree/4f1d7f2b521149e5fe34bb85f377248ce9971a7d) at `4f1d7f2b521149e5fe34bb85f377248ce9971a7d` |
+| MegaDescriptor-L | [BVRA/MegaDescriptor-L-384](https://huggingface.co/BVRA/MegaDescriptor-L-384/tree/33b3c6f4ee0c386a4126cc3dcd23843920613fa1) at `33b3c6f4ee0c386a4126cc3dcd23843920613fa1` |
 
-| Component | Version/source | Upstream license/provenance |
-|---|---|---|
-| PyTorch / TorchVision | 2.10.0 / 0.25.0 | BSD-3-Clause |
-| timm | 1.0.27 | Apache-2.0 |
-| Transformers / Hugging Face Hub | 5.5.0 / 1.13.0 | Apache-2.0 |
-| OpenCV headless | 4.13.0.92 | Apache-2.0 |
-| NumPy / pandas / SciPy / scikit-learn | locked versions | BSD-family licenses |
-| Albumentations | 2.0.8 | MIT |
-| PyYAML | 6.0.2 | MIT |
-| Matplotlib | 3.10.0 | Matplotlib/PSF-compatible license |
-| W&B SDK | 0.29.0 | MIT |
-| WildlifeDatasets | commit `67380d7951b89f02e48c84a7d3546188b9dbec8a` (v1.0.9) | AGPL-3.0-or-later |
+The MIEW-ID v3 loader checks the SHA-256 of `model.safetensors` against `adff92b39678f37eb74861c6399a741639a8907ec2382738e903d6120727b348`. The MegaDescriptor-L loader uses timm's Swin checkpoint conversion. Training records the resolved upstream artifact information in its run manifest.
 
-WildlifeDatasets is scientific provenance for the frozen Split V2 thresholds;
-the splitter does not import its code. Its commit remains in the readable input
-and dedicated Split V2 environment. The canonical training lock intentionally
-does not expand its unused downloader graph (`gdown`, Kaggle, GUI OpenCV, and
-dataset clients).
+## Data preparation
 
-This table is a release aid, not legal advice. The installed distributions'
-license files and metadata remain authoritative.
+The observation-aware splitter uses frozen DINOv2 embeddings for its similarity fallback. The [data guide](data/README.md) and frozen split metadata document the model, thresholds, and source catalogues. Some thresholds were taken from WildlifeDatasets v1.0.9, commit `67380d7951b89f02e48c84a7d3546188b9dbec8a`. The splitter implements the grouping locally.
 
-## Pretrained artifacts
-
-| Artifact | Provider and immutable revision | Verified weight SHA-256 |
-|---|---|---|
-| DINOv3 ConvNeXt Small LVD-1689M | [`facebook/dinov3-convnext-small-pretrain-lvd1689m`](https://huggingface.co/api/models/facebook/dinov3-convnext-small-pretrain-lvd1689m?blobs=true), `421020015aa4266363db803b6049a529999afb1e` | `8182492b73345ceb449ed6be0de486d778a73afb273ba2684de785a71ef1da9d` |
-| DINOv3 ViT-B/16 LVD-1689M | [`facebook/dinov3-vitb16-pretrain-lvd1689m`](https://huggingface.co/api/models/facebook/dinov3-vitb16-pretrain-lvd1689m?blobs=true), `5931719e67bbdb9737e363e781fb0c67687896bc` | `9a21ac3df0c63839d62612dda6f454d816c25611cc7a52966ed5a5a94921dc8b` |
-| ConvNeXt V2 Base ImageNet-22k 384 | [`facebook/convnextv2-base-22k-384`](https://huggingface.co/api/models/facebook/convnextv2-base-22k-384?blobs=true), `53ec0af6e1bd11bf7eba3e9131d29b69625accf3` | `70dd4eb0d73cbad0f93236564e093cec20ab76a877d2e4d155512097ebf06fd9` |
-| OSNet x1.0 | [`kaiyangzhou/osnet`](https://huggingface.co/api/models/kaiyangzhou/osnet?blobs=true), `a5c5cc037c24235cda3b21085b93ad77c9616224` | `fe2d63f9157c28a4a8d8ca29bec12d5b2988ac0346d712025789ea9174968e79` |
-| OSNet x0.75 | same | `37add23d2ebc7a22584203d6c22976fdda0f7f29c7b7d79257ac22ae20aec809` |
-| OSNet x0.5 | same | `f10ea9e26ee55b1a65cee3c6e88aa1ae105fe981af3e37692fa68a72fc64bf8e` |
-| OSNet x0.25 | same | `f54941a66bad4ddd07f2907f498c810ce639ce7a1abeaf2a151f8da118d84693` |
-| OSNet IBN x1.0 | same | `4e6fbaa3f5e31170aae76372a9ebbe36551e4011a4ed88b139d50bc98729e23a` |
-
-DINOv3 weights are governed by the provider's separate DINOv3 license, not
-ApexID's Apache-2.0 license. Inspect the model repository license at the frozen
-revision before redistribution or commercial use. ConvNeXt V2 weights are
-Apache-2.0. OSNet weights likewise remain third-party artifacts.
-
-TorchVision ConvNeXt uses the installed enum's `IMAGENET1K_V1` artifact. Each
-run records TorchVision version, enum, resolved URL, filename hash prefix, and
-the full cached-file SHA-256 when present.
-
-## External data
-
-The prepared ApexID corpus, benchmark private ground truth, original wildlife
-datasets, and Split V2 image artifacts are not distributed under ApexID's
-source license. Run manifests hash mounted inputs but do not confer data rights.
+The paper's prepared training and evaluation images and private jaguar labels are obtained separately under their sources' terms.

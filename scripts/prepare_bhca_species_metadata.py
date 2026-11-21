@@ -35,7 +35,6 @@ _provenance = _load_module(
     "apexid/utils/provenance.py",
 )
 enrich_species_metadata = _species_metadata.enrich_species_metadata
-DEFAULT_HAPPYWHALE_SPECIES_CSV = _species_metadata.DEFAULT_HAPPYWHALE_SPECIES_CSV
 write_json_atomic = _provenance.write_json_atomic
 
 
@@ -98,11 +97,7 @@ def parse_args():
     parser.add_argument(
         "--happywhale-species",
         type=Path,
-        default=None,
-        help=(
-            "Official HappyWhale image/species/individual_id CSV. "
-            f"Defaults to auto-detect ({DEFAULT_HAPPYWHALE_SPECIES_CSV}) when present."
-        ),
+        help="Optional official HappyWhale CSV with image, species, and individual_id columns.",
     )
     return parser.parse_args()
 
@@ -116,15 +111,12 @@ def main():
     output_path = args.input if args.in_place else args.output
     if not args.check_only and output_path is None:
         raise SystemExit("Provide --output, --in-place, or --check-only.")
-    happywhale_csv = args.happywhale_species
-    if happywhale_csv is None and DEFAULT_HAPPYWHALE_SPECIES_CSV.is_file():
-        happywhale_csv = DEFAULT_HAPPYWHALE_SPECIES_CSV
     report = prepare_species_csv(
         args.input,
         output_path,
         check_only=args.check_only,
         report_path=args.report,
-        happywhale_species_csv=happywhale_csv,
+        happywhale_species_csv=args.happywhale_species,
     )
     print(
         "BHCA species metadata valid: "

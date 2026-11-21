@@ -1,37 +1,12 @@
 #!/usr/bin/env python3
 import argparse
-import logging
-import os
 import sys
 import warnings
 import copy
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
-
-def _suppress_library_warnings():
-    """Silence noisy third-party warnings/logs for training runs."""
-    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
-    os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
-    os.environ.setdefault("GLOG_minloglevel", "3")
-    os.environ.setdefault("ABSL_LOGGING_MIN_LOG_LEVEL", "3")
-    os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
-    warnings.filterwarnings("ignore")
-    logging.captureWarnings(True)
-    for logger_name in (
-        "absl",
-        "matplotlib",
-        "numba",
-        "tensorflow",
-        "umap",
-        "wandb",
-    ):
-        logging.getLogger(logger_name).setLevel(logging.ERROR)
-
-
-_suppress_library_warnings()
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -50,24 +25,12 @@ from apexid.data.samplers import PKBatchSampler
 from apexid.engine import (
     LegacyCheckpointWarning,
     Trainer,
-    build_experiment_logger,
     load_training_checkpoint,
 )
 from apexid.models import build_components
-from apexid.training.finetune import (
-    apply_finetune_phase,
-    apply_suggest_lr_from_range_test,
-    collect_backbone_params,
-    collect_head_params,
-    finetune_lr_range_test_cfg,
-    is_finetune_active,
-    resolve_training_profile,
-    should_run_lr_range_test,
-)
+from apexid.models.model_factory import HIERARCHICAL_HEAD_NAMES
 from apexid.utils.config import DEFAULT_CONFIG_PATH, load_config
 from apexid.utils.device import get_device
-from apexid.utils.embedding_umap import EmbeddingUMAPPlotter
-from apexid.utils.lr_range_test import run_lr_range_test, write_lr_range_test_artifacts
 from apexid.utils.provenance import (
     artifact_hashes,
     capture_environment,
@@ -75,14 +38,13 @@ from apexid.utils.provenance import (
     command_record,
     require_clean_git,
     utc_now,
-    validate_normalization_stats,
     write_json_atomic,
     write_yaml_atomic,
 )
 from apexid.utils.seed import DEFAULT_SEED, make_torch_generator, seed_everything, seed_worker
 
 
-# Keep this scientific-resume warning visible despite third-party warning suppression.
+# Keep loss of exact resume reproducibility visible.
 warnings.filterwarnings("always", category=LegacyCheckpointWarning)
 
 
@@ -147,48 +109,6 @@ def _normalise_name(value):
     return str(value).strip().lower()
 
 
-def _class_counts_from_train_dataset(train_dataset, num_classes):
-    """Return per-class counts aligned with training class indices."""
-    identity_series = train_dataset.data_csv[train_dataset.identity_column]
-    label_to_idx = train_dataset.label_to_idx
-    class_indices = [label_to_idx[identity] for identity in identity_series if identity in label_to_idx]
-    if not class_indices:
-        raise ValueError("Unable to compute class frequencies: training dataset is empty.")
-    counts = np.bincount(np.asarray(class_indices, dtype=np.int64), minlength=int(num_classes)).astype(np.float32)
-    if counts.shape[0] != int(num_classes):
-        raise ValueError("Computed class counts do not match the configured number of classes.")
-    if np.any(counts <= 0):
-        raise ValueError(
-            "Class frequency margins require at least one sample per class. "
-            "Found one or more classes with zero samples."
-        )
-    return counts
-
-
-def _build_frequency_bin_margins(train_dataset, num_classes, margin_min=0.2, margin_max=0.5):
-    """Compute MiewID-style per-class margins from class frequencies."""
-    margin_min = float(margin_min)
-    margin_max = float(margin_max)
-    if not 0 < margin_min < np.pi / 2:
-        raise ValueError("head.kwargs.margin_min must be in the open interval (0, pi/2).")
-    if not 0 < margin_max < np.pi / 2:
-        raise ValueError("head.kwargs.margin_max must be in the open interval (0, pi/2).")
-    if margin_max <= margin_min:
-        raise ValueError("head.kwargs.margin_max must be greater than head.kwargs.margin_min.")
-
-    class_counts = _class_counts_from_train_dataset(train_dataset, num_classes)
-    # Match MiewID behavior: rarer classes get larger margins.
-    raw = np.sqrt(1.0 / np.sqrt(class_counts))
-    raw_min = float(raw.min())
-    raw_max = float(raw.max())
-    if np.isclose(raw_max, raw_min):
-        margins = np.full((int(num_classes),), margin_max, dtype=np.float32)
-    else:
-        margins = (raw - raw_min) / (raw_max - raw_min)
-        margins = margins * (margin_max - margin_min) + margin_min
-    return margins.tolist()
-
-
 def _is_null_config_value(value):
     """Return True for empty YAML null-like sentinel values."""
     if value is None:
@@ -223,54 +143,11 @@ def _resolve_resume_path(cfg, repo_root=None):
     return None
 
 
-def _apply_subcenter_margin_config(cfg, train_dataset, num_classes):
-    """Resolve sub-center margin modes and inject explicit per-class margins."""
-    cfg = copy.deepcopy(_as_dict(cfg))
-    head_cfg = _as_dict(cfg.get("head", {}))
-    head_name = _normalise_name(head_cfg.get("name", ""))
-    if head_name not in {"arcface_subcenter_dynamic", "arcface_subcenter", "subcenter_arcface"}:
-        return cfg
-
-    head_kwargs = dict(_as_dict(head_cfg.get("kwargs", {})))
-    if head_kwargs.get("margins") is not None:
-        return cfg
-
-    margins_source = _normalise_name(head_kwargs.get("margins_source", "uniform"))
-    if margins_source != "frequency_bins":
-        return cfg
-
-    margin_min = head_kwargs.get("margin_min", 0.2)
-    margin_max = head_kwargs.get("margin_max", head_kwargs.get("margin_default", 0.3))
-    head_kwargs["margins"] = _build_frequency_bin_margins(
-        train_dataset=train_dataset,
-        num_classes=num_classes,
-        margin_min=margin_min,
-        margin_max=margin_max,
-    )
-
-    cfg["head"] = dict(head_cfg)
-    cfg["head"]["kwargs"] = head_kwargs
-    return cfg
-
-
-BHCA_HEAD_NAMES = {
-    "bhca_arcface",
-    "bhca_a",
-    "bhca-a",
-    "bhca_subcenter_arcface",
-    "bhca_sca",
-    "bhca-sca",
-    "bhca_subcenter_sphereface2",
-    "bhca_scsf2",
-    "bhca-scsf2",
-}
-
-
-def _apply_bhca_hierarchy_config(cfg, train_dataset, num_classes, output_dir=None):
+def _apply_hierarchy_config(cfg, train_dataset, num_classes, output_dir=None):
     """Inject hierarchy state derived exclusively from the training split."""
     cfg = copy.deepcopy(_as_dict(cfg))
     head_cfg = _as_dict(cfg.get("head", {}))
-    if _normalise_name(head_cfg.get("name", "")) not in BHCA_HEAD_NAMES:
+    if _normalise_name(head_cfg.get("name", "")) not in HIERARCHICAL_HEAD_NAMES:
         return cfg
 
     metadata = build_training_hierarchy(
@@ -280,7 +157,7 @@ def _apply_bhca_hierarchy_config(cfg, train_dataset, num_classes, output_dir=Non
         species_column="species",
     )
     if metadata.num_training_identities != int(num_classes):
-        raise ValueError("BHCA hierarchy mapping does not match the training class count.")
+        raise ValueError("ApexID hierarchy mapping does not match the training class count.")
 
     head_kwargs = dict(_as_dict(head_cfg.get("kwargs", {})))
     configured_balance = _normalise_name(
@@ -288,7 +165,7 @@ def _apply_bhca_hierarchy_config(cfg, train_dataset, num_classes, output_dir=Non
     )
     if configured_balance != "sqrt_inverse_identity_frequency":
         raise ValueError(
-            "BHCA currently supports species_balance='sqrt_inverse_identity_frequency' only."
+            "ApexID supports species_balance='sqrt_inverse_identity_frequency' only."
         )
     head_kwargs["class_to_species"] = metadata.class_to_species
     head_kwargs["species_names"] = metadata.species_names
@@ -300,16 +177,16 @@ def _apply_bhca_hierarchy_config(cfg, train_dataset, num_classes, output_dir=Non
     enrichment_reports = dict(
         getattr(train_dataset, "species_enrichment_reports", {}) or {}
     )
-    cfg["bhca_training_diagnostics"] = diagnostics
-    cfg["bhca_species_enrichment"] = enrichment_reports
+    cfg["training_hierarchy"] = diagnostics
+    cfg["species_enrichment"] = enrichment_reports
     if output_dir is not None:
-        write_json_atomic(Path(output_dir) / "bhca_training_diagnostics.json", diagnostics)
+        write_json_atomic(Path(output_dir) / "training_hierarchy.json", diagnostics)
         write_json_atomic(
-            Path(output_dir) / "bhca_species_enrichment.json",
+            Path(output_dir) / "species_enrichment.json",
             enrichment_reports,
         )
     print(
-        "BHCA training hierarchy: "
+        "ApexID training hierarchy: "
         f"identities={metadata.num_training_identities}, "
         f"species={metadata.num_training_species}, "
         f"known_parents={metadata.known_parent_identities} "
@@ -361,7 +238,7 @@ def build_datasets(cfg):
     train_transforms = build_train_transforms(config=cfg)
     eval_transforms = build_eval_transforms(config=cfg)
 
-    is_bhca = _normalise_name(_as_dict(cfg.get("head", {})).get("name", "")) in BHCA_HEAD_NAMES
+    uses_hierarchy = _normalise_name(_as_dict(cfg.get("head", {})).get("name", "")) in HIERARCHICAL_HEAD_NAMES
     split_sources = {
         "train": train_path,
         "val_known": val_known_path,
@@ -369,10 +246,10 @@ def build_datasets(cfg):
         "val": val_path,
     }
     enrichment_reports = {}
-    if is_bhca:
+    if uses_hierarchy:
         for split_name, source in list(split_sources.items()):
             standardized = ApexID_Dataset._standardize_columns(source)
-            enriched, report = enrich_species_metadata(standardized, require_complete=True)
+            enriched, report = enrich_species_metadata(standardized, require_complete=False)
             split_sources[split_name] = enriched
             enrichment_reports[split_name] = report.to_dict()
 
@@ -385,7 +262,7 @@ def build_datasets(cfg):
     )
     unknown_label = _as_dict(cfg.get("training", {})).get("classification_ignore_index", -100)
     hierarchy_metadata = None
-    if is_bhca:
+    if uses_hierarchy:
         hierarchy_metadata = build_training_hierarchy(
             split_sources["train"],
             label_to_idx,
@@ -401,7 +278,7 @@ def build_datasets(cfg):
         unknown_label=unknown_label,
         metrics_label_map=metrics_label_map,
         species_to_idx=species_to_idx,
-        return_species_label=is_bhca,
+        return_species_label=uses_hierarchy,
     )
     gallery_dataset = ApexID_Dataset(
         split_sources["train"],
@@ -412,7 +289,7 @@ def build_datasets(cfg):
         unknown_label=unknown_label,
         metrics_label_map=metrics_label_map,
         species_to_idx=species_to_idx,
-        return_species_label=is_bhca,
+        return_species_label=uses_hierarchy,
     )
     val_known_dataset = ApexID_Dataset(
         split_sources["val_known"],
@@ -423,7 +300,7 @@ def build_datasets(cfg):
         unknown_label=unknown_label,
         metrics_label_map=metrics_label_map,
         species_to_idx=species_to_idx,
-        return_species_label=is_bhca,
+        return_species_label=uses_hierarchy,
     )
     val_unknown_dataset = ApexID_Dataset(
         split_sources["val_unknown"],
@@ -434,7 +311,7 @@ def build_datasets(cfg):
         unknown_label=unknown_label,
         metrics_label_map=metrics_label_map,
         species_to_idx=species_to_idx,
-        return_species_label=is_bhca,
+        return_species_label=uses_hierarchy,
     )
     val_mixed_dataset = ApexID_Dataset(
         split_sources["val"],
@@ -445,7 +322,7 @@ def build_datasets(cfg):
         unknown_label=unknown_label,
         metrics_label_map=metrics_label_map,
         species_to_idx=species_to_idx,
-        return_species_label=is_bhca,
+        return_species_label=uses_hierarchy,
     )
     validation_datasets = {
         "gallery": gallery_dataset,
@@ -534,48 +411,49 @@ def build_optimizer(cfg, model, head):
     kwargs = dict(_as_dict(optimizer_cfg.get("kwargs", {})))
     shared_kwargs = {key: value for key, value in kwargs.items() if key != "lr"}
 
-    if is_finetune_active(cfg):
-        backbone_lr = float(cfg.get("_finetune_backbone_lr", kwargs.get("lr", 1.0e-5)))
-        head_lr = float(cfg.get("_finetune_head_lr", backbone_lr * 10.0))
-        backbone_group = {
-            "params": collect_backbone_params(model),
-            "lr": backbone_lr,
-            "param_group_name": "backbone",
-        }
-        head_group = {
-            "params": collect_head_params(head),
-            "lr": head_lr,
-            "param_group_name": "head",
-        }
-        backbone_weight_decay = cfg.get("_finetune_backbone_weight_decay")
-        head_weight_decay = cfg.get("_finetune_head_weight_decay")
-        if backbone_weight_decay not in {None, ""}:
-            backbone_group["weight_decay"] = float(backbone_weight_decay)
-        if head_weight_decay not in {None, ""}:
-            head_group["weight_decay"] = float(head_weight_decay)
-        param_groups = [
-            backbone_group,
-            head_group,
-        ]
-        if name == "adam":
-            return torch.optim.Adam(param_groups, **shared_kwargs)
-        if name == "adamw":
-            return torch.optim.AdamW(param_groups, **shared_kwargs)
-        if name == "sgd":
-            return torch.optim.SGD(param_groups, **shared_kwargs)
-        raise ValueError("Unknown optimizer '{}'. Available: adam, adamw, sgd.".format(name))
-
-    params = list(model.parameters()) + list(head.parameters())
-    if name == "adam":
-        return torch.optim.Adam(params, **kwargs)
-    if name == "adamw":
-        return torch.optim.AdamW(params, **kwargs)
-    if name == "sgd":
-        return torch.optim.SGD(params, **kwargs)
-    raise ValueError("Unknown optimizer '{}'. Available: adam, adamw, sgd.".format(name))
+    backbone_lr = optimizer_cfg.get("backbone_lr", cfg.get("_finetune_backbone_lr"))
+    head_lr = optimizer_cfg.get("head_lr", cfg.get("_finetune_head_lr"))
+    if backbone_lr is not None or head_lr is not None:
+        if backbone_lr is None or head_lr is None:
+            raise ValueError("Set both optimizer.backbone_lr and optimizer.head_lr.")
+        params = []
+        for group_name, module, rate in (("backbone", model, backbone_lr), ("head", head, head_lr)):
+            group = {"params": list(module.parameters()), "lr": float(rate), "param_group_name": group_name}
+            historical_decay = cfg.get(f"_finetune_{group_name}_weight_decay")
+            if historical_decay is not None:
+                group["weight_decay"] = float(historical_decay)
+            params.append(group)
+        kwargs = shared_kwargs
+    else:
+        params = list(model.parameters()) + list(head.parameters())
+    optimizers = {"adam": torch.optim.Adam, "adamw": torch.optim.AdamW, "sgd": torch.optim.SGD}
+    if name not in optimizers:
+        raise ValueError(f"Unknown optimizer '{name}'. Available: {', '.join(optimizers)}.")
+    return optimizers[name](params, **kwargs)
 
 
-def build_scheduler(cfg, optimizer, train_loader=None, overrides=None, total_epochs=None):
+class _LinearWarmup(torch.optim.lr_scheduler.LRScheduler):
+    """Warm up each parameter group from the same absolute learning rate."""
+
+    def __init__(self, optimizer, start_lr, total_iters):
+        self.start_lrs = [float(start_lr)] * len(optimizer.param_groups)
+        self.total_iters = int(total_iters)
+        super().__init__(optimizer)
+
+    def get_lr(self):
+        fraction = min(self.last_epoch, self.total_iters) / self.total_iters
+        return [start + fraction * (end - start) for start, end in zip(self.start_lrs, self.base_lrs)]
+
+    def load_state_dict(self, state_dict):
+        # Reuse historical relative warmup rates when resuming an older run.
+        if "start_factor" in state_dict:
+            state_dict = dict(state_dict)
+            old_factor = state_dict.pop("start_factor")
+            state_dict["start_lrs"] = [old_factor * lr for lr in state_dict["base_lrs"]]
+        super().load_state_dict(state_dict)
+
+
+def build_scheduler(cfg, optimizer, train_loader=None, total_epochs=None):
     """Build an optional learning-rate scheduler from config."""
     scheduler_cfg = _as_dict(cfg.get("scheduler", {}))
     name = scheduler_cfg.get("name")
@@ -600,15 +478,7 @@ def build_scheduler(cfg, optimizer, train_loader=None, overrides=None, total_epo
                 raise ValueError("scheduler.warmup.epochs must be smaller than cosine T_max.")
             base_lrs = [group["lr"] for group in optimizer.param_groups]
             start_lr = float(warmup_cfg.get("start_lr", min(base_lrs) / 10.0))
-            start_factors = [
-                max(start_lr / max(float(lr), 1e-12), 1e-8) for lr in base_lrs
-            ]
-            warmup = torch.optim.lr_scheduler.LinearLR(
-                optimizer,
-                start_factor=min(start_factors),
-                end_factor=1.0,
-                total_iters=warmup_epochs,
-            )
+            warmup = _LinearWarmup(optimizer, start_lr, warmup_epochs)
             cosine_kwargs = dict(kwargs)
             cosine_kwargs["T_max"] = int(kwargs["T_max"]) - warmup_epochs
             cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, **cosine_kwargs)
@@ -621,8 +491,6 @@ def build_scheduler(cfg, optimizer, train_loader=None, overrides=None, total_epo
     if name in {"reduce_on_plateau", "reduce_lr_on_plateau", "reducelronplateau"}:
         return torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **kwargs)
     if name in {"cyclic_lr", "cycliclr", "cyclic"}:
-        if overrides is not None:
-            kwargs.update(_as_dict(overrides))
         step_size_epochs = kwargs.pop("step_size_epochs", None)
         if "step_size_up" not in kwargs:
             if train_loader is None:
@@ -637,104 +505,6 @@ def build_scheduler(cfg, optimizer, train_loader=None, overrides=None, total_epo
     )
 
 
-def maybe_run_lr_range_test(cfg, model, head, criterion, optimizer, train_loader, device, resume_path=None):
-    """Run the optional LR range test and return scheduler overrides."""
-    lr_test_cfg = finetune_lr_range_test_cfg(cfg)
-    if not should_run_lr_range_test(cfg, resume_path=resume_path):
-        return None
-
-    mode = str(lr_test_cfg.get("mode", "auto_apply")).lower()
-    allowed_modes = {"auto_apply", "report_only", "suggest_lr"}
-    if mode not in allowed_modes:
-        raise ValueError("lr_range_test.mode must be one of: auto_apply, report_only, suggest_lr.")
-
-    experiment_dir = Path(_as_dict(cfg.get("experiment", {})).get("output_dir", "outputs/apexid_run"))
-    output_dir = lr_test_cfg.get("output_dir")
-    if output_dir in {None, ""}:
-        output_dir = experiment_dir / "lr_range_test"
-
-    result = run_lr_range_test(
-        backbone=model,
-        head=head,
-        criterion=criterion,
-        train_loader=train_loader,
-        optimizer=optimizer,
-        device=device,
-        start_lr=float(lr_test_cfg.get("start_lr", 1e-7)),
-        end_lr=float(lr_test_cfg.get("end_lr", 1e-2)),
-        num_iter=int(lr_test_cfg.get("num_iter", 100)),
-        smooth_beta=float(lr_test_cfg.get("smooth_beta", 0.98)),
-        stop_factor=float(lr_test_cfg.get("stop_factor", 4.0)),
-        base_lr_divisor=float(lr_test_cfg.get("base_lr_divisor", 4.0)),
-        classification_ignore_index=_as_dict(cfg.get("training", {})).get("classification_ignore_index", -100),
-        gradient_clip_norm=_as_dict(cfg.get("training", {})).get("gradient_clip_norm"),
-    )
-    artifact_paths = write_lr_range_test_artifacts(result, output_dir)
-
-    print(
-        "LR range test: "
-        f"base_lr={result.suggested_base_lr:.3e}, "
-        f"max_lr={result.suggested_max_lr:.3e}, "
-        f"stop_reason={result.stop_reason}, "
-        f"artifacts={artifact_paths['json']}"
-    )
-
-    if mode == "report_only":
-        return None
-
-    if mode == "suggest_lr" or is_finetune_active(cfg):
-        apply_suggest_lr_from_range_test(cfg, optimizer, result)
-        return None
-
-    for group in optimizer.param_groups:
-        group["lr"] = result.suggested_base_lr
-    return {
-        "base_lr": result.suggested_base_lr,
-        "max_lr": result.suggested_max_lr,
-    }
-
-
-def build_embedding_plotter(cfg):
-    """Build the optional validation embedding UMAP plotter from config."""
-    plot_cfg = _as_dict(cfg.get("embedding_plot", {}))
-    if not bool(plot_cfg.get("enabled", False)):
-        return None
-
-    split = str(plot_cfg.get("split", "val")).lower()
-    if split not in {"val", "validation"}:
-        raise ValueError("embedding_plot.split currently supports only 'val'.")
-
-    experiment_dir = Path(_as_dict(cfg.get("experiment", {})).get("output_dir", "outputs/apexid_run"))
-    checkpoint_cfg = _as_dict(cfg.get("checkpoint", {}))
-    early_cfg = _as_dict(cfg.get("early_stopping", {}))
-    output_dir = plot_cfg.get("output_dir")
-    if output_dir in {None, ""}:
-        output_dir = experiment_dir / "embedding_space"
-    best_output_dir = plot_cfg.get("best_output_dir")
-    if best_output_dir in {None, ""}:
-        best_output_dir = early_cfg.get("output_dir", checkpoint_cfg.get("output_dir", "checkpoints"))
-
-    random_state = plot_cfg.get("random_state")
-    if random_state in {None, ""}:
-        random_state = int(cfg.get("seed", DEFAULT_SEED) or DEFAULT_SEED)
-
-    return EmbeddingUMAPPlotter(
-        output_dir=output_dir,
-        best_output_dir=best_output_dir,
-        split="val",
-        n_neighbors=int(plot_cfg.get("n_neighbors", 15)),
-        min_dist=float(plot_cfg.get("min_dist", 0.1)),
-        metric=plot_cfg.get("metric", "euclidean"),
-        random_state=int(random_state),
-        point_size=float(plot_cfg.get("point_size", 8)),
-        alpha=float(plot_cfg.get("alpha", 0.85)),
-        dpi=int(plot_cfg.get("dpi", 200)),
-        max_points=plot_cfg.get("max_points"),
-        filename_template=plot_cfg.get("filename_template", "epoch_{epoch_number:03d}_umap.png"),
-        best_filename=plot_cfg.get("best_filename", "best_embedding_space.png"),
-    )
-
-
 def build_trainer(
     cfg,
     model,
@@ -743,14 +513,14 @@ def build_trainer(
     optimizer,
     scheduler,
     device,
-    experiment_logger=None,
-    embedding_plotter=None,
 ):
     """Build the ApexID Trainer from config-derived components."""
     training_cfg = _as_dict(cfg.get("training", {}))
     validation_cfg = _as_dict(cfg.get("validation", {}))
     checkpoint_cfg = _as_dict(cfg.get("checkpoint", {}))
     early_cfg = _as_dict(cfg.get("early_stopping", {}))
+    experiment_dir = Path(_as_dict(cfg.get("experiment", {})).get("output_dir", "outputs/apexid_run"))
+    checkpoint_dir = checkpoint_cfg.get("output_dir", experiment_dir / "checkpoints")
 
     return Trainer(
         model,
@@ -767,7 +537,7 @@ def build_trainer(
         gradient_clip_norm=training_cfg.get("gradient_clip_norm"),
         validation_every_n_epochs=int(validation_cfg.get("every_n_epochs", 1)),
         validation_metric_chunk_size=int(validation_cfg.get("metric_chunk_size", 1024)),
-        checkpoint_dir=checkpoint_cfg.get("output_dir", "checkpoints"),
+        checkpoint_dir=checkpoint_dir,
         checkpoint_every_n_epochs=int(checkpoint_cfg.get("every_n_epochs", 1)),
         checkpoint_filename=checkpoint_cfg.get("filename", "last_checkpoint.pt"),
         checkpoint_delete_previous=bool(checkpoint_cfg.get("delete_previous", True)),
@@ -776,15 +546,12 @@ def build_trainer(
         early_stopping_mode=early_cfg.get("mode", "max"),
         early_stopping_patience=int(early_cfg.get("patience", 7)),
         early_stopping_min_delta=float(early_cfg.get("min_delta", 0.0)),
-        early_stopping_dir=early_cfg.get("output_dir", checkpoint_cfg.get("output_dir", "checkpoints")),
+        early_stopping_dir=early_cfg.get("output_dir", checkpoint_dir),
         early_stopping_full_model_name=early_cfg.get("full_model_name", "best_full_model.pt"),
         early_stopping_backbone_name=early_cfg.get("backbone_name", "best_backbone.pt"),
         early_stopping_metadata_name=early_cfg.get("metadata_name", "best_metadata.json"),
         metrics_base_seed=int(cfg.get("seed", DEFAULT_SEED) or DEFAULT_SEED),
-        experiment_logger=experiment_logger,
-        embedding_plotter=embedding_plotter,
         evaluation_config=_as_dict(cfg.get("evaluation", {})),
-        finetune_config=_as_dict(cfg.get("finetune", {})) if is_finetune_active(cfg) else None,
     )
 
 
@@ -797,7 +564,6 @@ def train_from_config(cfg, *, config_path=None, command=None, require_clean_git_
     Returns:
         dict: Training history returned by ``Trainer.train``.
     """
-    cfg = resolve_training_profile(cfg)
     git_state = capture_git_state(REPO_ROOT)
     if require_clean_git_state:
         require_clean_git(git_state)
@@ -818,21 +584,6 @@ def train_from_config(cfg, *, config_path=None, command=None, require_clean_git_
     data_cfg = _as_dict(cfg.get("data", {}))
     train_path = Path(_data_path(data_cfg, "train_path", "train_csv"))
     split_root = train_path.parent
-    normalization_path = data_cfg.get("normalization_stats_path")
-    if normalization_path in {None, ""}:
-        normalization_path = split_root / "normalization_stats.json"
-    split_manifest_path = split_root / "split_manifest.csv"
-    normalization_record = None
-    if Path(normalization_path).is_file():
-        normalization_record = validate_normalization_stats(
-            normalization_path,
-            train_csv=train_path,
-            split_manifest=split_manifest_path,
-        )
-        normalization_record = dict(normalization_record) | {
-            "validated_stats_file": True,
-            "path": str(normalization_path),
-        }
     run_manifest = {
         "schema_version": 1,
         "run_type": "training",
@@ -848,23 +599,20 @@ def train_from_config(cfg, *, config_path=None, command=None, require_clean_git_
             "val_known_csv": data_cfg.get("val_known_path") or data_cfg.get("val_known_csv"),
             "val_unknown_csv": data_cfg.get("val_unknown_path") or data_cfg.get("val_unknown_csv"),
             "val_csv": data_cfg.get("val_path") or data_cfg.get("val_csv"),
-            "split_manifest": split_manifest_path,
+            "split_manifest": split_root / "split_manifest.csv",
             "split_summary": split_root / "split_summary.json",
-            "normalization_stats": normalization_path,
             "metadata_data_root": Path(data_cfg.get("root_dir", "ApexID_Dataset")) / "metadata.csv",
             "metadata_repository_root": REPO_ROOT / "metadata.csv",
         }),
-        "normalization": normalization_record or {
+        "normalization": {
             "mean": _as_dict(data_cfg.get("transforms", {})).get("mean"),
             "std": _as_dict(data_cfg.get("transforms", {})).get("std"),
-            "validated_stats_file": False,
         },
     }
     write_json_atomic(output_dir / "run_manifest.json", run_manifest)
 
     train_dataset, validation_datasets, num_classes = build_datasets(cfg)
-    cfg = _apply_subcenter_margin_config(cfg, train_dataset, num_classes)
-    cfg = _apply_bhca_hierarchy_config(
+    cfg = _apply_hierarchy_config(
         cfg,
         train_dataset,
         num_classes,
@@ -873,20 +621,9 @@ def train_from_config(cfg, *, config_path=None, command=None, require_clean_git_
     write_yaml_atomic(output_dir / "config_resolved.yaml", cfg)
     train_loader, validation_loaders = build_dataloaders(cfg, train_dataset, validation_datasets, device)
 
-    checkpoint_cfg = _as_dict(cfg.get("checkpoint", {}))
-    resume_path = _resolve_resume_path(cfg, repo_root=REPO_ROOT)
+    resume_path = _resolve_resume_path(cfg)
     if resume_path is not None:
         print(f"Resuming training from checkpoint: {resume_path}")
-    tracking_metadata = {
-        "num_classes": int(num_classes),
-        "train_dataset_size": int(len(train_dataset)),
-        "gallery_dataset_size": int(len(validation_datasets["gallery"])),
-        "val_known_dataset_size": int(len(validation_datasets["known"])),
-        "val_unknown_dataset_size": int(len(validation_datasets["unknown"])),
-        "val_dataset_size": int(len(validation_datasets["mixed"])),
-        "device": str(device),
-        "resume_path": resume_path,
-    }
     run_manifest["dataset_counts"] = {
         "classes": int(num_classes),
         "train": int(len(train_dataset)),
@@ -905,32 +642,9 @@ def train_from_config(cfg, *, config_path=None, command=None, require_clean_git_
     write_json_atomic(output_dir / "run_manifest.json", run_manifest)
     model.to(device)
     head.to(device)
-    apply_finetune_phase(model, head, cfg, epoch=0)
     optimizer = build_optimizer(cfg, model, head)
-    training_epochs = int(_as_dict(cfg.get("training", {})).get("epochs", 100))
-    scheduler_overrides = maybe_run_lr_range_test(
-        cfg,
-        model,
-        head,
-        criterion,
-        optimizer,
-        train_loader,
-        device,
-        resume_path=resume_path,
-    )
-    scheduler = build_scheduler(
-        cfg,
-        optimizer,
-        train_loader=train_loader,
-        overrides=scheduler_overrides,
-        total_epochs=training_epochs,
-    )
-    experiment_logger = build_experiment_logger(cfg, metadata=tracking_metadata)
-    embedding_plotter = build_embedding_plotter(cfg)
-    trainer = build_trainer(cfg, model, head, criterion, optimizer, scheduler, device,
-        experiment_logger=experiment_logger,
-        embedding_plotter=embedding_plotter,
-    )
+    scheduler = build_scheduler(cfg, optimizer, train_loader=train_loader)
+    trainer = build_trainer(cfg, model, head, criterion, optimizer, scheduler, device)
 
     start_epoch = 0
     resume_history = None

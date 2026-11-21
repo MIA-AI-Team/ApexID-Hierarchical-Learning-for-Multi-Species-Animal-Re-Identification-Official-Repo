@@ -1,0 +1,16 @@
+extends: training_base.yaml
+experiment:
+  name: megadescriptor_l_sphereface2
+  output_dir: ${APEXID_OUTPUT_ROOT:-outputs}/megadescriptor_l_sphereface2
+head:
+  name: sphereface2
+  kwargs:
+    magn_type: A
+    alpha: 0.9
+    r: 40.0
+    m: 0.3
+    t: 3.0
+    lw: 20.0
+loss:
+  name: null
+  kwargs: {}

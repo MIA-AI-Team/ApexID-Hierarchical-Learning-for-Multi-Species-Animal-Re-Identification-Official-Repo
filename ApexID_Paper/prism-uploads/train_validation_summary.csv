@@ -1,5 +1,0 @@
-partition,images,identities,observations,species_taxa
-train,90921,11677,90921,chimpanzee; dolphin; giraffe; hyena; jaguar; leopard; lizard; lynx; nyala; panda; sea turtle; seal; whaleshark; zebra
-validation,41612,12439,41612,chimpanzee; dolphin; giraffe; hyena; jaguar; leopard; lizard; lynx; nyala; panda; sea turtle; seal; whaleshark; zebra
-validation_known,28070,10768,28070,chimpanzee; dolphin; giraffe; hyena; jaguar; leopard; lizard; lynx; nyala; panda; sea turtle; seal; whaleshark; zebra
-validation_unknown,13542,1671,13542,chimpanzee; dolphin; giraffe; hyena; jaguar; leopard; lizard; lynx; nyala; panda; sea turtle; seal; whaleshark; zebra

@@ -1,0 +1,25 @@
+# Inference configuration for the original provider weights.
+seed: 42
+data:
+  image_size:
+  - 440
+  - 440
+  transforms:
+    mean:
+    - 0.485
+    - 0.456
+    - 0.406
+    std:
+    - 0.229
+    - 0.224
+    - 0.225
+model:
+  backbone:
+    kwargs:
+      expected_sha256: adff92b39678f37eb74861c6399a741639a8907ec2382738e903d6120727b348
+      pretrained: true
+      revision: 4f1d7f2b521149e5fe34bb85f377248ce9971a7d
+    name: miewid_msv3_pt
+  embedding_dim: 2152
+  input_channels: 3
+  name: apexid

@@ -69,7 +69,7 @@ class MiewIDBackbone(nn.Module):
         if self.embedding_dim <= 0:
             raise ValueError("MiewID embedding_dim must be positive.")
         if self.input_channels != 3:
-            raise ValueError("MiewID-msv3 requires input_channels=3 and data.wavelet=false.")
+            raise ValueError("MiewID-msv3 requires input_channels=3 for RGB images.")
 
         self.model = _MiewIDEmbedding()
         self.pretrained_provenance = None

@@ -1,15 +1,20 @@
-.vscode
-data_preprocessing.py
+# Python and local development
 __pycache__/
-outputs/
-wandb/
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
+.venv-*/
+.vscode/
 .env
 .env.*
-!.env.example
+
+# Local datasets and generated artifacts
 ApexID_Dataset/
-merged.csv
-apexid_benchmark/
-results/
 metadata.csv
-AUDIT.md
-.venv-hs/
+outputs/
+results/
+checkpoints/
+wandb/
+*.pt
+*.pth
+*.safetensors

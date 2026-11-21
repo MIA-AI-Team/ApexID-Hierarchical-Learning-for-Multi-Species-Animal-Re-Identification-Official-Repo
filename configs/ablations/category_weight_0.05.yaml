@@ -1,0 +1,7 @@
+extends: ../default.yaml
+experiment:
+  name: convnext_small_category_weight_0.05
+  output_dir: ${APEXID_OUTPUT_ROOT:-outputs}/convnext_small_category_weight_0.05
+head:
+  kwargs:
+    species_weight: 0.05

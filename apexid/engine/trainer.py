@@ -15,7 +15,6 @@ from apexid.engine.validator import (
     _unpack_batch,
 )
 from apexid.utils.seed import DEFAULT_SEED, seed_everything
-from apexid.training.finetune import apply_finetune_phase
 
 
 seed_everything(DEFAULT_SEED)
@@ -133,9 +132,7 @@ class Trainer:
         early_stopping_path=None,
         metrics_base_seed=DEFAULT_SEED,
         experiment_logger=None,
-        embedding_plotter=None,
         evaluation_config=None,
-        finetune_config=None,
     ):
         """Initialize the training helper.
 
@@ -190,8 +187,6 @@ class Trainer:
             metrics_base_seed (int): Stored for experiment reproducibility.
             experiment_logger (ExperimentLogger, optional): Logger used for
                 epoch metrics and selected artifacts.
-            embedding_plotter (optional): Object with ``plot_epoch`` and
-                ``save_best`` methods used to visualize validation embeddings.
             evaluation_config (dict, optional): Open-set evaluation settings
                 passed to validators that support three-split validation.
 
@@ -215,10 +210,7 @@ class Trainer:
         self.checkpoint_delete_previous = bool(checkpoint_delete_previous)
         self.metrics_base_seed = int(metrics_base_seed)
         self.experiment_logger = experiment_logger or NullLogger()
-        self.embedding_plotter = embedding_plotter
         self.evaluation_config = dict(evaluation_config or {})
-        self.finetune_config = dict(finetune_config or {}) if finetune_config else None
-        self._finetune_phase = None
 
         if self.validation_every_n_epochs <= 0:
             raise ValueError("validation_every_n_epochs must be > 0.")
@@ -372,10 +364,6 @@ class Trainer:
         train_loader,
         epoch,
         epochs,
-        *,
-        scheduler_enabled=True,
-        backbone_train=True,
-        phase_label="Train",
     ):
         """Run one training epoch.
 
@@ -384,15 +372,10 @@ class Trainer:
                 batches.
             epoch (int): Zero-based epoch index.
             epochs (int): Total number of epochs.
-            scheduler_enabled (bool): Whether to step per-batch schedulers.
-            backbone_train (bool): Whether the backbone should be in train mode.
-                Use ``False`` for frozen head-only warmup.
-            phase_label (str): Progress-bar prefix for the phase.
-
         Returns:
             dict: Training metrics with key ``loss``.
         """
-        self.backbone.train(bool(backbone_train))
+        self.backbone.train()
         self.head.train()
 
         total_loss = 0.0
@@ -401,7 +384,7 @@ class Trainer:
 
         iterator = tqdm(
             train_loader,
-            desc=f"{phase_label} [{epoch + 1}/{epochs}]",
+            desc=f"Train [{epoch + 1}/{epochs}]",
             leave=False,
             dynamic_ncols=True,
             disable=not self.progress,
@@ -436,7 +419,7 @@ class Trainer:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.gradient_clip_norm), foreach=True)
 
             self.optimizer.step()
-            if scheduler_enabled and isinstance(self.scheduler, torch.optim.lr_scheduler.CyclicLR):
+            if isinstance(self.scheduler, torch.optim.lr_scheduler.CyclicLR):
                 self.scheduler.step()
 
             batch_size = int(images.size(0))
@@ -482,55 +465,6 @@ class Trainer:
             self.scheduler.step(metric)
         else:
             self.scheduler.step()
-
-    def _optimizer_lrs(self):
-        """Return current optimizer learning rates."""
-        return [float(group["lr"]) for group in self.optimizer.param_groups]
-
-    def _optimizer_base_lrs(self):
-        """Return optimizer base LRs before scheduler initialization effects."""
-        scheduler_base_lrs = list(getattr(self.scheduler, "base_lrs", []) or [])
-        lrs = []
-        for index, group in enumerate(self.optimizer.param_groups):
-            lr = group.get("initial_lr")
-            if lr is None and index < len(scheduler_base_lrs):
-                lr = scheduler_base_lrs[index]
-            if lr is None:
-                lr = group["lr"]
-            lrs.append(float(lr))
-        return lrs
-
-    def _set_optimizer_lrs(self, lrs):
-        """Set optimizer learning rates without changing scheduler state."""
-        for group, lr in zip(self.optimizer.param_groups, lrs):
-            group["lr"] = float(lr)
-
-    def _head_first_warmup_epochs(self):
-        """Return extra head-only warmup epochs for active head-first finetuning."""
-        if self.finetune_config is None:
-            return 0
-        strategy = str(self.finetune_config.get("strategy", "full")).lower()
-        if strategy != "head_first":
-            return 0
-        return max(0, int(self.finetune_config.get("head_only_epochs", 3)))
-
-    def _apply_and_log_finetune_phase(self, phase_epoch):
-        """Apply finetune freeze state and log phase changes once."""
-        if self.finetune_config is None:
-            return None
-        # Trainer only stores the finetune block; force enabled=True so
-        # is_finetune_active() does not require model.backbone for "auto".
-        finetune_cfg = {"finetune": {**self.finetune_config, "enabled": True}}
-        phase = apply_finetune_phase(self.backbone, self.head, finetune_cfg, phase_epoch)
-        if phase != self._finetune_phase:
-            self._finetune_phase = phase
-            if self.verbose:
-                tqdm.write(
-                    f"Finetune phase: {phase.get('phase')} "
-                    f"(strategy={phase.get('strategy')}, "
-                    f"backbone_trainable={phase.get('backbone_trainable')})"
-                )
-        return phase
 
     def _append_history(self, history, train_metrics, val_metrics):
         """Append one epoch of train/validation metrics to history."""
@@ -621,7 +555,7 @@ class Trainer:
         required = {"gallery", "known", "unknown", "mixed"}
         return required.issubset(set(val_loader.keys()))
 
-    def _run_validation(self, val_loader, epoch, epochs, return_embeddings=False):
+    def _run_validation(self, val_loader, epoch, epochs):
         """Dispatch to the compatible single-loader or open-set validator path."""
         if self._is_open_set_loader_bundle(val_loader):
             validate_open_set = getattr(self.validator, "validate_open_set", None)
@@ -635,14 +569,6 @@ class Trainer:
                 evaluation_config=self.evaluation_config,
                 epoch=epoch,
                 epochs=epochs,
-                return_embeddings=return_embeddings,
-            )
-        if return_embeddings:
-            return self.validator.validate(
-                val_loader,
-                epoch=epoch,
-                epochs=epochs,
-                return_embeddings=True,
             )
         return self.validator.validate(val_loader, epoch=epoch, epochs=epochs)
 
@@ -671,7 +597,7 @@ class Trainer:
 
         return metrics
 
-    def _log_best_artifacts(self, epoch, metrics, embedding_artifacts=None):
+    def _log_best_artifacts(self, epoch, metrics):
         """Log best-model files produced by EarlyStopping."""
         if self.early_stopping is None:
             return
@@ -682,13 +608,6 @@ class Trainer:
             (self.early_stopping.backbone_path, "best_backbone", "model"),
             (self.early_stopping.metadata_path, "best_metadata", "metadata"),
         ]
-        if embedding_artifacts is not None:
-            artifact_specs.extend(
-                [
-                    (embedding_artifacts["png"], "best_embedding_space", "image"),
-                    (embedding_artifacts["json"], "best_embedding_space_metadata", "metadata"),
-                ]
-            )
         for path, name, artifact_type in artifact_specs:
             self.experiment_logger.log_artifact(
                 path,
@@ -719,7 +638,6 @@ class Trainer:
             raise ValueError("epochs must be provided either to Trainer(...) or train(...).")
 
         history = resume_history if resume_history is not None else self.empty_history()
-        warmup_epochs = self._head_first_warmup_epochs()
 
         try:
             if self.early_stopping is not None and self.early_stopping.early_stop:
@@ -727,54 +645,18 @@ class Trainer:
                     print("Early stopping was already triggered in the resumed checkpoint.")
                 return history
 
-            if int(start_epoch) == 0 and warmup_epochs > 0:
-                scheduler_start_lrs = self._optimizer_lrs()
-                self._set_optimizer_lrs(self._optimizer_base_lrs())
-                try:
-                    for warmup_epoch in range(warmup_epochs):
-                        self._apply_and_log_finetune_phase(warmup_epoch)
-                        self._set_train_loader_epoch(train_loader, warmup_epoch)
-                        self.train_one_epoch(
-                            train_loader,
-                            warmup_epoch,
-                            warmup_epochs,
-                            scheduler_enabled=False,
-                            backbone_train=False,
-                            phase_label="Warmup",
-                        )
-                finally:
-                    self._set_optimizer_lrs(scheduler_start_lrs)
-
             for epoch in range(int(start_epoch), int(epochs)):
-                phase_epoch = warmup_epochs + epoch
-                self._apply_and_log_finetune_phase(phase_epoch)
-                self._set_train_loader_epoch(train_loader, phase_epoch)
+                self._set_train_loader_epoch(train_loader, epoch)
                 train_metrics = self.train_one_epoch(train_loader, epoch, epochs)
                 run_validation = ((epoch + 1) % self.validation_every_n_epochs == 0) or (epoch == epochs - 1)
-                return_embeddings = bool(self.embedding_plotter) and run_validation
                 if run_validation:
                     val_metrics = self._run_validation(
                         val_loader,
                         epoch=epoch,
                         epochs=epochs,
-                        return_embeddings=return_embeddings,
                     )
                 else:
                     val_metrics = None
-                embedding_plot_artifacts = None
-                if val_metrics is not None and self.embedding_plotter is not None:
-                    embeddings = val_metrics.pop("embeddings", None)
-                    metric_labels = val_metrics.pop("metric_labels", None)
-                    if embeddings is None or metric_labels is None:
-                        raise ValueError(
-                            "Embedding plotting requires validator.validate(..., return_embeddings=True) "
-                            "to return 'embeddings' and 'metric_labels'."
-                        )
-                    embedding_plot_artifacts = self.embedding_plotter.plot_epoch(
-                        embeddings,
-                        metric_labels,
-                        epoch=epoch,
-                    )
                 self._append_history(history, train_metrics, val_metrics)
 
                 epoch_metrics = self._prefixed_epoch_metrics(train_metrics, val_metrics)
@@ -783,12 +665,8 @@ class Trainer:
                 self._print_epoch_summary(epoch, epochs, train_metrics, val_metrics)
 
                 early_stopping_improved = False
-                best_embedding_artifacts = None
                 if self.early_stopping is not None and val_metrics is not None:
                     early_stopping_improved = self.early_stopping(epoch_metrics, model=self.model, epoch=epoch)
-                    if early_stopping_improved and embedding_plot_artifacts is not None:
-                        best_embedding_artifacts = self.embedding_plotter.save_best(embedding_plot_artifacts)
-
                 log_metrics = self._epoch_log_metrics(
                     epoch,
                     epochs,
@@ -798,11 +676,7 @@ class Trainer:
                 )
                 self.experiment_logger.log_metrics(log_metrics)
                 if early_stopping_improved:
-                    self._log_best_artifacts(
-                        epoch,
-                        log_metrics,
-                        embedding_artifacts=best_embedding_artifacts,
-                    )
+                    self._log_best_artifacts(epoch, log_metrics)
 
                 save_training_checkpoint(
                     epoch=epoch,

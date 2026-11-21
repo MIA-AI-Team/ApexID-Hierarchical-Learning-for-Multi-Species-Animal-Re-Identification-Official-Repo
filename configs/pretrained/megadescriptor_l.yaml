@@ -1,0 +1,24 @@
+# Inference configuration for the original provider weights.
+seed: 42
+data:
+  image_size:
+  - 384
+  - 384
+  transforms:
+    mean:
+    - 0.5
+    - 0.5
+    - 0.5
+    std:
+    - 0.5
+    - 0.5
+    - 0.5
+model:
+  backbone:
+    kwargs:
+      pretrained: true
+      revision: 33b3c6f4ee0c386a4126cc3dcd23843920613fa1
+    name: megadescriptor_l_384_pt
+  embedding_dim: 1536
+  input_channels: 3
+  name: apexid

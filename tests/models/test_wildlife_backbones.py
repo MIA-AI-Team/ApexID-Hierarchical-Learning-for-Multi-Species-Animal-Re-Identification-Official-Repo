@@ -11,7 +11,6 @@ from apexid.models import ApexID
 from apexid.models.backbones import available_backbones, build_backbone
 from apexid.models.backbones import megadescriptor, miewid
 from apexid.models.model_factory import build_components
-from apexid.training.finetune import apply_finetune_phase, resolve_training_profile
 from apexid.utils.config import load_config
 
 
@@ -138,10 +137,11 @@ def test_invalid_input_channels_fail_before_loading(name, fake_timm):
     ("megadescriptor_l_384", 384, [0.5] * 3, [0.5] * 3),
 ])
 def test_finetune_recipe_backward_and_preprocessing(name, size, mean, std, fake_timm):
-    path = Path(__file__).resolve().parents[2] / "configs" / f"finetune_{name}.yaml"
-    cfg = resolve_training_profile(load_config(config_path=path))
-    assert cfg["_finetune_backbone_lr"] == pytest.approx(1e-5)
-    assert cfg["_finetune_head_lr"] == pytest.approx(1e-4)
+    folder = "miewid_v3" if name.startswith("miew") else "megadescriptor_l"
+    path = Path(__file__).resolve().parents[2] / "configs" / folder / "sphereface2.yaml"
+    cfg = load_config(config_path=path)
+    assert cfg["optimizer"]["backbone_lr"] == pytest.approx(1e-5)
+    assert cfg["optimizer"]["head_lr"] == pytest.approx(1e-4)
     assert cfg["dataloader"]["batch_size"] == (
         cfg["dataloader"]["sampler"]["num_identities"] * cfg["dataloader"]["sampler"]["num_instances"]
     )
@@ -149,7 +149,7 @@ def test_finetune_recipe_backward_and_preprocessing(name, size, mean, std, fake_
     cfg["model"]["backbone"]["kwargs"]["pretrained"] = False
     model, head, criterion = build_components(cfg, num_classes=3)
     assert criterion is None
-    assert apply_finetune_phase(model, head, cfg, epoch=0)["backbone_trainable"]
+    assert all(p.requires_grad for p in model.parameters())
     transform = build_eval_transforms(config=cfg)
     image = transform(image=np.full((16, 20, 3), 255, dtype=np.uint8))["image"]
     assert image.shape == (3, size, size)

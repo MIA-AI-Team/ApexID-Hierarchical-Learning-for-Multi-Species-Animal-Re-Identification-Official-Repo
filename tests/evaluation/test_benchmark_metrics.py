@@ -4,10 +4,6 @@ import numpy as np
 import pytest
 
 from apexid.evaluation import B3_METRIC_VERSION
-from apexid.evaluation.benchmark_evaluator import (
-    tune_cluster_threshold,
-    tune_discovery_threshold,
-)
 from apexid.evaluation.benchmark_metrics import b3_metrics
 
 
@@ -100,33 +96,3 @@ def test_b3_matches_independent_itemwise_reference_on_random_partitions():
 
 def test_b3_metric_version_is_public_and_specific():
     assert B3_METRIC_VERSION == "standard_item_averaged_v2"
-
-
-def test_b3_discovery_objective_uses_and_reports_correct_metric():
-    embeddings = np.asarray(
-        [[-1.0, 0.0], [-0.98, 0.02], [0.0, -1.0], [0.02, -0.98]],
-        dtype=np.float32,
-    )
-    labels = ["A", "A", "B", "B"]
-
-    threshold, curve = tune_discovery_threshold(
-        embeddings,
-        labels,
-        objective="b3_f1",
-        seed=42,
-        permutations=3,
-    )
-
-    assert threshold in curve["threshold"].to_numpy()
-    np.testing.assert_allclose(curve["objective"], curve["mean_b3_f1"])
-    assert {"mean_ari", "mean_b3_f1"}.issubset(curve.columns)
-
-
-def test_discovery_threshold_helpers_reject_unknown_objectives():
-    embeddings = np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
-    labels = ["A", "B"]
-
-    with pytest.raises(ValueError, match="ari or b3_f1"):
-        tune_discovery_threshold(embeddings, labels, "unknown", seed=42, permutations=1)
-    with pytest.raises(ValueError, match="ari or b3_f1"):
-        tune_cluster_threshold(embeddings, labels, "unknown")

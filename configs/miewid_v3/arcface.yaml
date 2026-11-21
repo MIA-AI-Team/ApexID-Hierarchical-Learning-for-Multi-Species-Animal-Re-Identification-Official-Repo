@@ -1,0 +1,12 @@
+extends: training_base.yaml
+experiment:
+  name: miewid_v3_arcface
+  output_dir: ${APEXID_OUTPUT_ROOT:-outputs}/miewid_v3_arcface
+head:
+  name: arcface
+  kwargs:
+    s: 40.0
+    m: 0.3
+loss:
+  name: cross_entropy
+  kwargs: {}

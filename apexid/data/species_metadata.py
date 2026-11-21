@@ -19,9 +19,7 @@ BHCA_DATASET_TO_SPECIES = {
     "humpback-whale-identification": "whale",
 }
 
-DEFAULT_HAPPYWHALE_SPECIES_CSV = (
-    Path(__file__).resolve().parents[2] / "data" / "og happy ids" / "train.csv"
-)
+FROZEN_SPLIT_MANIFEST = Path(__file__).resolve().parents[2] / "open_set_splits_v2" / "split_manifest.csv"
 
 
 @dataclass(frozen=True)
@@ -79,9 +77,9 @@ def canonicalize_happywhale_species(value):
     return "whale"
 
 
-def load_happywhale_official_species(path=None):
+def load_happywhale_official_species(path):
     """Load official HappyWhale labels collapsed to whale/dolphin."""
-    path = Path(path) if path is not None else DEFAULT_HAPPYWHALE_SPECIES_CSV
+    path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(f"HappyWhale official species CSV not found: {path}")
     official = pd.read_csv(path)
@@ -115,7 +113,7 @@ def load_happywhale_official_species(path=None):
 
 def fill_happywhale_species_from_official(
     frame,
-    official=None,
+    official,
     *,
     dataset_column="dataset",
     species_column="species",
@@ -128,9 +126,7 @@ def fill_happywhale_species_from_official(
     Matching is by image basename under ``path``. When ``identity`` is present it
     must equal the official ``individual_id``. Returns ``(species_series, rows_filled)``.
     """
-    if official is None:
-        official = load_happywhale_official_species()
-    elif not isinstance(official, pd.DataFrame):
+    if not isinstance(official, pd.DataFrame):
         official = load_happywhale_official_species(official)
 
     if dataset_column not in frame.columns:
@@ -193,6 +189,19 @@ def fill_happywhale_species_from_official(
     return species, rows_filled
 
 
+def _frozen_happywhale_categories():
+    if not FROZEN_SPLIT_MANIFEST.is_file():
+        return {}
+    manifest = pd.read_csv(
+        FROZEN_SPLIT_MANIFEST, usecols=["dataset", "identity", "path", "species"], dtype=str
+    )
+    happywhale = manifest.loc[manifest["dataset"].eq("HappyWhale")].dropna()
+    return {
+        (row.identity, Path(row.path).name): row.species
+        for row in happywhale.itertuples(index=False)
+    }
+
+
 def enrich_species_metadata(
     data,
     *,
@@ -206,10 +215,10 @@ def enrich_species_metadata(
 ):
     """Fill missing species and normalize whale categories without changing rows.
 
-    HappyWhale rows are filled as ``whale`` or ``dolphin`` from
-    ``data/og happy ids/train.csv`` (or ``happywhale_species_csv``): if the
-    official species string contains ``dolphin``, the label is ``dolphin``;
-    otherwise ``whale``. Other datasets use ``BHCA_DATASET_TO_SPECIES``.
+    HappyWhale categories are harmonized to ``whale`` or ``dolphin``. Missing
+    labels use matching identities and image basenames in the frozen split
+    manifest. An explicitly supplied official CSV also validates existing labels.
+    Other datasets use ``BHCA_DATASET_TO_SPECIES``.
     Existing ``humpback-whale``, ``humpback_whale`` and ``humpback whale``
     labels (case-insensitive) become ``whale`` before conflict validation.
     Identity labels, dataset names, paths and row membership are preserved.
@@ -254,37 +263,31 @@ def enrich_species_metadata(
     happywhale_filled = 0
 
     happywhale_mask = frame[dataset_column].astype(str).str.strip().eq("HappyWhale")
-    happywhale_source = None
-    if happywhale_mask.any() and path_column in frame.columns:
-        if happywhale_species_csv is not None:
-            happywhale_source = Path(happywhale_species_csv)
-        elif DEFAULT_HAPPYWHALE_SPECIES_CSV.is_file():
-            try:
-                official_preview = load_happywhale_official_species(
-                    DEFAULT_HAPPYWHALE_SPECIES_CSV
-                )
-            except (OSError, ValueError):
-                official_preview = None
-            if official_preview is not None:
-                basenames = (
-                    frame.loc[happywhale_mask, path_column]
-                    .astype(str)
-                    .map(lambda value: Path(str(value).replace("\\", "/")).name)
-                )
-                if set(basenames).issubset(set(map(str, official_preview.index))):
-                    happywhale_source = DEFAULT_HAPPYWHALE_SPECIES_CSV
-    if happywhale_source is not None:
-        frame = frame.copy()
+    happywhale_missing = happywhale_mask & normalized_species.isna()
+    if happywhale_mask.any() and happywhale_species_csv is not None:
         frame[species_column] = normalized_species
         normalized_species, happywhale_filled = fill_happywhale_species_from_official(
             frame,
-            happywhale_source,
+            happywhale_species_csv,
             dataset_column=dataset_column,
             species_column=species_column,
             path_column=path_column,
             identity_column=identity_column,
         )
         rows_by_dataset["HappyWhale"] = happywhale_filled
+    else:
+        normalized_species.loc[happywhale_mask] = normalized_species.loc[happywhale_mask].map(
+            canonicalize_happywhale_species
+        )
+        if happywhale_missing.any() and {identity_column, path_column} <= set(frame.columns):
+            frozen = _frozen_happywhale_categories()
+            requested = frame.loc[happywhale_missing, [identity_column, path_column]]
+            labels = [
+                frozen.get((str(identity).strip(), Path(str(path).replace("\\", "/")).name))
+                for identity, path in requested.itertuples(index=False, name=None)
+            ]
+            normalized_species.loc[happywhale_missing] = labels
+            rows_by_dataset["HappyWhale"] = sum(label is not None for label in labels)
 
     for dataset, canonical_species in mapping.items():
         canonical_species = str(canonical_species).strip()
@@ -491,7 +494,6 @@ def build_training_hierarchy(
 
 __all__ = [
     "BHCA_DATASET_TO_SPECIES",
-    "DEFAULT_HAPPYWHALE_SPECIES_CSV",
     "MISSING_SPECIES_INDEX",
     "SpeciesEnrichmentReport",
     "TrainingHierarchyMetadata",

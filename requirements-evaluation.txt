@@ -1,0 +1,9 @@
+# Notebook kernel and the dependencies for the external open-set workflow.
+# Start with the core environment and apply requirements-lock.txt as constraints.
+ipykernel==7.4.0
+optuna==5.1.0
+networkx==3.6.1
+tqdm==4.70.0
+datasets==5.0.1
+wildlife-datasets @ git+https://github.com/WildlifeDatasets/wildlife-datasets@4dbb81633f7a031b48f1ec452be0cc5e04569af9
+wildlife-tools @ git+https://github.com/WildlifeDatasets/wildlife-tools@31d6016fe197c6a3092ca7179dfed102bb526815
