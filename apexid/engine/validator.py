@@ -136,6 +136,10 @@ def _compute_loss_and_logits(head, criterion, embeddings, labels, species_target
     _validate_labels(labels, num_classes, context="classification")
 
     if species_targets is not None and bool(getattr(head, "accepts_species_targets", False)):
+        # BHCA heads already encode identity→species via class_to_species; per-row
+        # CSV species indices can disagree with that mapping and trigger a hard error.
+        if getattr(head, "class_to_species", None) is not None:
+            species_targets = None
         head_output = head(embeddings, labels, species_targets=species_targets)
     else:
         head_output = head(embeddings, labels)

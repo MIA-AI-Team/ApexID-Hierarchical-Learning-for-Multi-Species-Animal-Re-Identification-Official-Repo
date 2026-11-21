@@ -41,8 +41,9 @@ echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}"
 echo "REPO_ROOT=$REPO_ROOT"
 echo "CONFIG=$CONFIG"
 
-WORKDIR="${SLURM_TMPDIR:-/tmp}/apexid_train_${SLURM_JOB_ID}"
-mkdir -p "$WORKDIR"
+# Per-job venvs under node /tmp exhaust local disk (torch+triton ~3GB each).
+# Use one shared venv on home/project storage unless overridden.
+VENV="${APEXID_SLURM_VENV:-$REPO_ROOT/.venv-slurm-h100}"
 
 UV="${UV_BIN:-$(command -v uv || true)}"
 if [ -z "$UV" ]; then
@@ -50,13 +51,71 @@ if [ -z "$UV" ]; then
   exit 3
 fi
 
-VENV="$WORKDIR/venv"
-$UV venv --no-project "$VENV"
-PY="$VENV/bin/python"
+venv_ready() {
+  [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c "import cv2, torch" 2>/dev/null
+}
 
-$UV pip install --python "$PY" --torch-backend="${APEXID_TORCH_BACKEND:-auto}" torch==2.10.0 torchvision==0.25.0
-$UV pip install --python "$PY" --no-deps -r "$REPO_ROOT/requirements-lock.txt"
-$PY -c "import cv2; print('cv2', cv2.__version__)"
+VENV_LOCK="${VENV}.install.lock"
+mkdir -p "$(dirname "$VENV")"
+
+VENV_MKDIR_LOCK_HELD=0
+
+acquire_venv_install_lock() {
+  local waited=0
+  local max_wait=7200
+  if command -v flock >/dev/null 2>&1; then
+    echo "Waiting for shared venv lock (flock): $VENV_LOCK"
+    exec 200>"$VENV_LOCK"
+    flock -w "$max_wait" 200 || return 1
+    return 0
+  fi
+  echo "WARN: flock not found; using mkdir lock at ${VENV_LOCK}.d"
+  while [ "$waited" -lt "$max_wait" ]; do
+    if venv_ready; then
+      return 0
+    fi
+    if mkdir "${VENV_LOCK}.d" 2>/dev/null; then
+      VENV_MKDIR_LOCK_HELD=1
+      return 0
+    fi
+    sleep 15
+    waited=$((waited + 15))
+  done
+  return 1
+}
+
+release_venv_install_lock() {
+  if [ "$VENV_MKDIR_LOCK_HELD" = "1" ]; then
+    rmdir "${VENV_LOCK}.d" 2>/dev/null || true
+    VENV_MKDIR_LOCK_HELD=0
+  fi
+  if command -v flock >/dev/null 2>&1; then
+    flock -u 200 2>/dev/null || true
+  fi
+}
+
+if ! acquire_venv_install_lock; then
+  echo "ERROR: timed out waiting for venv install lock (2h)."
+  exit 3
+fi
+
+if ! venv_ready || [ "${APEXID_REFRESH_VENV:-0}" = "1" ]; then
+  echo "Creating/updating Slurm venv at $VENV"
+  UV_VENV_ARGS=(--no-project)
+  if [ -d "$VENV" ] || [ -f "$VENV/pyvenv.cfg" ]; then
+    UV_VENV_ARGS+=(--clear)
+    echo "Replacing existing venv (--clear; was missing cv2/torch or APEXID_REFRESH_VENV=1)"
+  fi
+  $UV venv "${UV_VENV_ARGS[@]}" "$VENV"
+  PY="$VENV/bin/python"
+  $UV pip install --python "$PY" --torch-backend="${APEXID_TORCH_BACKEND:-auto}" torch==2.10.0 torchvision==0.25.0
+  $UV pip install --python "$PY" --no-deps -r "$REPO_ROOT/requirements-lock.txt"
+else
+  echo "Reusing Slurm venv at $VENV"
+  PY="$VENV/bin/python"
+fi
+$PY -c "import cv2, torch; print('cv2', cv2.__version__, 'torch', torch.__version__)"
+release_venv_install_lock
 
 export HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
 export HF_HUB_CACHE="${HF_HUB_CACHE:-$HF_HOME/hub}"
