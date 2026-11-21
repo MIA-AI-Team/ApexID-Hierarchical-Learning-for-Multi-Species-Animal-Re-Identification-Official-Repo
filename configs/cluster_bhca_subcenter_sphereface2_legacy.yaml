@@ -1,8 +1,10 @@
-# Archived mean-negative objective; old whale/humpback checkpoint mappings
-# still require their original metadata. See docs/BHCA_LOSS.md.
+# Legacy hierarchy_weight + mean sibling negatives (pre reweighting fix).
+# Does NOT write into outputs/apexid_convnext_small_bhca_scsf2_v2_rgb (keep that
+# run as the historical checkpoint). Use cluster_bhca_subcenter_sphereface2.yaml
+# for the corrected loss (reweighted_v2_rgb). See docs/BHCA_WEIGHTING_FIX.md.
 experiment:
-  name: apexid_convnext_small_bhca_scsf2_v2_rgb
-  output_dir: outputs/apexid_convnext_small_bhca_scsf2_v2_rgb
+  name: apexid_convnext_small_bhca_scsf2_legacy_v2_rgb
+  output_dir: outputs/apexid_convnext_small_bhca_scsf2_legacy_v2_rgb
 seed: 42
 device: {prefer_gpu: true, gpu_index: 0}
 data:
@@ -93,14 +95,14 @@ finetune:
     apply_to: head
     backbone_lr_divisor: 10.0
 training:
-  epochs: 300
+  epochs: 150
   progress: true
   verbose: true
   gradient_clip_norm: null
   classification_ignore_index: -100
   metric_ignore_index: null
 validation:
-  every_n_epochs: 3
+  every_n_epochs: 5
   metric_chunk_size: 1024
   metrics: [top1, top5, mAP, micro_f1]
 evaluation:
@@ -133,7 +135,7 @@ embedding_plot:
   filename_template: epoch_{epoch_number:03d}_umap.png
   best_filename: best_embedding_space.png
 checkpoint:
-  output_dir: outputs/apexid_convnext_small_bhca_scsf2_v2_rgb/checkpoints
+  output_dir: outputs/apexid_convnext_small_bhca_scsf2_legacy_v2_rgb/checkpoints
   every_n_epochs: 1
   filename: last_checkpoint.pt
   delete_previous: true
@@ -144,7 +146,7 @@ early_stopping:
   mode: max
   patience: 10
   min_delta: 0.0
-  output_dir: outputs/apexid_convnext_small_bhca_scsf2_v2_rgb/checkpoints
+  output_dir: outputs/apexid_convnext_small_bhca_scsf2_legacy_v2_rgb/checkpoints
   full_model_name: best_full_model.pt
   backbone_name: best_backbone.pt
   metadata_name: best_metadata.json
@@ -153,8 +155,8 @@ tracking:
   provider: wandb
   project: ApexID
   entity: MIA_AI_Team
-  run_name: ApexID-convnext-small-bhca-scsf2-v2-rgb
-  group: bhca-controlled-v2
+  run_name: ApexID-convnext-small-bhca-scsf2-legacy-v2-rgb
+  group: bhca-legacy-v2
   tags: [split_v2, rgb, convnext_small, pretrained, bhca, bhca_scsf2, emb2048]
   mode: online
   log_artifacts: none

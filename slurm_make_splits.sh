@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=apexid-splits
 #SBATCH --account=aisc
-#SBATCH --partition=aisc-batch
+#SBATCH --partition=pot-hpi-aisc-batch
 #SBATCH --constraint=ARCH:X86
 #SBATCH --nodes=1
 #SBATCH --ntasks=1

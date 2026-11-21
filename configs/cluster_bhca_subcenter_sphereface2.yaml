@@ -94,14 +94,14 @@ finetune:
     apply_to: head
     backbone_lr_divisor: 10.0
 training:
-  epochs: 300
+  epochs: 150
   progress: true
   verbose: true
   gradient_clip_norm: null
   classification_ignore_index: -100
   metric_ignore_index: null
 validation:
-  every_n_epochs: 3
+  every_n_epochs: 5
   metric_chunk_size: 1024
   metrics: [top1, top5, mAP, micro_f1]
 evaluation:
