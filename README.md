@@ -2,15 +2,17 @@
 
 # ApexID: Hierarchical Learning for Multi-Species Animal Re-Identification
 
-Seifeldin Elkerdany<sup>1,6</sup>, Mohamed ElBassat<sup>2,6</sup>, Gamal Abouelhamd<sup>1,6</sup>, Assem Elkady<sup>2,6</sup>, Jana Ghoneim<sup>2,6</sup>,<br>
-Matin Mahmood<sup>3</sup>, Abigail Allen Martin<sup>4</sup>, Gerard de Melo<sup>5</sup>, Antonio Rueda-Toicen<sup>5</sup>
+Seifeldin Elkerdany<sup>1,2,*,†</sup>, Mohamed ElBassat<sup>1,3,*,†</sup>, Gamal Abouelhamd<sup>1,2</sup>, Assem Elkady<sup>1,3</sup>, Jana Ghoneim<sup>1,3</sup>,<br>
+Matin Mahmood<sup>4</sup>, Abigail Allen Martin<sup>5</sup>, Gerard de Melo<sup>6</sup>, Antonio Rueda-Toicen<sup>6</sup>
 
-<sup>1</sup>[Alamein International University](https://aiu.edu.eg) &nbsp;
-<sup>2</sup>[Alexandria University](https://alexu.edu.eg) &nbsp;
-<sup>3</sup>[hyper³labs](https://hyper3labs.com) &nbsp;
-<sup>4</sup>[Universidade Federal de Mato Grosso](https://ufmt.br) &nbsp;
-<sup>5</sup>[Hasso Plattner Institute](https://hpi.de)<br>
-<sup>6</sup>[Made In Alexandria AI Team (M.I.A Robotics)](https://huggingface.co/Made-In-Alexandria-AI)
+<sup>1</sup>[Made In Alexandria AI Team (M.I.A Robotics)](https://huggingface.co/Made-In-Alexandria-AI) &nbsp;
+<sup>2</sup>[Alamein International University](https://aiu.edu.eg) &nbsp;
+<sup>3</sup>[Alexandria University](https://alexu.edu.eg)<br>
+<sup>4</sup>[hyper³labs](https://hyper3labs.com) &nbsp;
+<sup>5</sup>[Universidade Federal de Mato Grosso](https://ufmt.br) &nbsp;
+<sup>6</sup>[Hasso Plattner Institute](https://hpi.de)
+
+<sup>*</sup>Equal contribution &nbsp; <sup>†</sup>Corresponding authors: seifeldean.hosny.2024@aiu.edu.eg, cds.MohamedMohamed24510@alexu.edu.eg
 
 [![Project page](https://img.shields.io/badge/Project-page-367DBD)](https://mia-ai-team.github.io/ApexID-Hierarchical-Learning-for-Multi-Species-Animal-Re-Identification-Official-Repo/)
 [![arXiv](https://img.shields.io/badge/arXiv-coming%20soon-b31b1b)](#citation)
