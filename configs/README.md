@@ -19,16 +19,4 @@ The inference-only configs under [`pretrained/`](pretrained) select the pinned o
 
 The [category-weight sweep](ablations) changes only the category coefficient and output directory relative to the ConvNeXt-Small ApexID preset. Its 0.50 endpoint is the default recipe. The ConvNeXt-Small SphereFace2 preset is the paper's reference without category supervision.
 
-## Historical run mapping
-
-The matrix follows the archived `cluster_{convnext,miewid,megadescriptor}_{arcface,dynamic_arcface,sphereface2}_v2_rgb.yaml` presets for the baselines. The ApexID Hierarchical runs correspond to the E6 configs listed below. They use the global identity term, the balanced category term with weight 0.50, and two sub-centers per identity.
-
-| Encoder | Historical ApexID run directory | PK batch |
-| --- | --- | --- |
-| ConvNeXt-Small | `apexid_convnext_small_bhca_scsf2_ablation_e6_v2_rgb` | 16 × 4 |
-| MIEW-ID v3 | `apexid_miewid_msv3_bhca_scsf2_ablation_e6_v2_rgb` | 8 × 4 |
-| MegaDescriptor-L | `apexid_megadescriptor_l_384_bhca_scsf2_ablation_e6_v2_rgb` | 4 × 4 |
-
-The six smaller ConvNeXt-Small category weights correspond to historical E1 (0.025), A1 (0.05), E2 (0.075), E3 (0.10), E4 (0.15), and E5 (0.25). The released sweep uses the same final-epoch validation cadence across weights. A1's archived config scheduled intermediate validation.
-
-The public training presets follow Appendix B with a 150-epoch schedule, gradient-norm clipping at 5.0, and a five-epoch linear warmup from 1e-6 for both parameter groups. The archived ConvNeXt-Small YAMLs left clipping unset, and the historical scheduler applied the same relative warmup factor to both groups. These are paper-facing training presets. To resume a historical run, use a copy of its `config_resolved.yaml`, restore the original training inputs, and set `checkpoint.resume_path` to its `last_checkpoint.pt`. The checkpoint only needs matching encoder architecture and preprocessing for frozen inference.
+To resume a run, point `checkpoint.resume_path` at its `last_checkpoint.pt` and keep its `config_resolved.yaml` and training inputs. Frozen inference only needs the matching encoder architecture and preprocessing.

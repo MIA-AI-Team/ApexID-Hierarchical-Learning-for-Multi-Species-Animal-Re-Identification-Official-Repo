@@ -18,3 +18,18 @@ wandb/
 *.pt
 *.pth
 *.safetensors
+
+# Paper sources stay private
+/paper/
+/ApexID_Paper/
+/ApexID__Hierarchical_Learning_*/
+*.tex
+*.bib
+*.bst
+*.sty
+main.pdf
+
+# Local design tooling for the project page
+/PRODUCT.md
+/DESIGN.md
+/.impeccable/

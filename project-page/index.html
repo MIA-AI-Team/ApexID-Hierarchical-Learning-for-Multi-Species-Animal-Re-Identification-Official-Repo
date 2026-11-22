@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ApexID: Hierarchical Learning for Multi-Species Animal Re-Identification</title>
+<meta name="description" content="ApexID is a hierarchical SphereFace2-based loss that combines global identity discrimination with balanced animal-category supervision, trained on 132,533 curated images from 19 public animal re-identification datasets.">
+<meta property="og:title" content="ApexID: Hierarchical Learning for Multi-Species Animal Re-Identification">
+<meta property="og:description" content="A hierarchical category–identity objective for multi-species animal Re-ID. Code, weights, and data.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://mia-ai-team.github.io/ApexID-Hierarchical-Learning-for-Multi-Species-Animal-Re-Identification-Official-Repo/">
+<meta property="og:image" content="https://mia-ai-team.github.io/ApexID-Hierarchical-Learning-for-Multi-Species-Animal-Re-Identification-Official-Repo/assets/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#ffffff">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/stix-two-text-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/stix-two-text-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<a class="skip" href="#abstract">Skip to abstract</a>
+
+<svg width="0" height="0" class="sprite" aria-hidden="true">
+  <symbol id="i-paper" viewBox="0 0 24 24"><path d="M6 2.75h8.5L19.25 7.5v13.75H6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M14.25 2.75V7.75h5M9 12h7M9 15.5h7M9 19h4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-github" viewBox="0 0 24 24"><path fill="currentColor" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></symbol>
+  <symbol id="i-hf" viewBox="0 0 24 24"><path fill="currentColor" d="M12.025 1.13c-5.77 0-10.449 4.647-10.449 10.378 0 1.112.178 2.181.503 3.185.064-.222.203-.444.416-.577a.96.96 0 0 1 .524-.15c.293 0 .584.124.84.284.278.173.48.408.71.694.226.282.458.611.684.951v-.014c.017-.324.106-.622.264-.874s.403-.487.762-.543c.3-.047.596.06.787.203s.31.313.4.467c.15.257.212.468.233.542.01.026.653 1.552 1.657 2.54.616.605 1.01 1.223 1.082 1.912.055.537-.096 1.059-.38 1.572.637.121 1.294.187 1.967.187.657 0 1.298-.063 1.921-.178-.287-.517-.44-1.041-.384-1.581.07-.69.465-1.307 1.081-1.913 1.004-.987 1.647-2.513 1.657-2.539.021-.074.083-.285.233-.542.09-.154.208-.323.4-.467a1.080 1.080 0 0 1 .787-.203c.359.056.604.29.762.543s.247.55.265.874v.015c.225-.34.457-.67.683-.952.23-.286.432-.52.71-.694.257-.16.547-.284.84-.285a.97.97 0 0 1 .524.151c.228.143.373.388.43.625l.006.04a10.3 10.3 0 0 0 .534-3.273c0-5.731-4.678-10.378-10.449-10.378M8.327 6.583a1.5 1.5 0 0 1 .713.174 1.487 1.487 0 0 1 .617 2.013c-.183.343-.762-.214-1.102-.094-.38.134-.532.914-.917.71a1.487 1.487 0 0 1 .69-2.803m7.486 0a1.487 1.487 0 0 1 .689 2.803c-.385.204-.536-.576-.916-.71-.34-.12-.92.437-1.103.094a1.487 1.487 0 0 1 .617-2.013 1.5 1.5 0 0 1 .713-.174m-10.68 1.55a.96.96 0 1 1 0 1.921.96.96 0 0 1 0-1.92m13.838 0a.96.96 0 1 1 0 1.92.96.96 0 0 1 0-1.92M8.489 11.458c.588.01 1.965 1.157 3.572 1.164 1.607-.007 2.984-1.155 3.572-1.164.196-.003.305.12.305.454 0 .886-.424 2.328-1.563 3.202-.22-.756-1.396-1.366-1.63-1.32q-.011.001-.02.006l-.044.026-.01.008-.03.024q-.018.017-.035.036l-.032.04a1 1 0 0 0-.058.09l-.014.025q-.049.088-.11.19a1 1 0 0 1-.083.116 1.2 1.2 0 0 1-.173.18q-.035.029-.075.058a1.3 1.3 0 0 1-.251-.243 1 1 0 0 1-.076-.107c-.124-.193-.177-.363-.337-.444-.034-.016-.104-.008-.2.022q-.094.03-.216.087-.06.028-.125.063l-.13.074q-.067.04-.136.086a3 3 0 0 0-.135.096 3 3 0 0 0-.26.219 2 2 0 0 0-.12.121 2 2 0 0 0-.106.128l-.002.002a2 2 0 0 0-.09.132l-.001.001a1.2 1.2 0 0 0-.105.212q-.013.036-.024.073c-1.139-.875-1.563-2.317-1.563-3.203 0-.334.109-.457.305-.454m.836 10.354c.824-1.19.766-2.082-.365-3.194-1.13-1.112-1.789-2.738-1.789-2.738s-.246-.945-.806-.858-.97 1.499.202 2.362c1.173.864-.233 1.450-.685.640-.45-.812-1.683-2.896-2.322-3.295s-1.089-.175-.938.647 2.822 2.813 2.562 3.244-1.176-.506-1.176-.506-2.866-2.567-3.49-1.898.473 1.23 2.037 2.16c1.564.932 1.686 1.178 1.464 1.53s-3.675-2.511-4-1.297c-.323 1.214 3.524 1.567 3.287 2.405-.238.839-2.71-1.587-3.216-.642-.506.946 3.49 2.056 3.522 2.064 1.29.33 4.568 1.028 5.713-.624m5.349 0c-.824-1.19-.766-2.082.365-3.194 1.13-1.112 1.789-2.738 1.789-2.738s.246-.945.806-.858.97 1.499-.202 2.362c-1.173.864.233 1.45.685.64.451-.812 1.683-2.896 2.322-3.295s1.089-.175.938.647-2.822 2.813-2.562 3.244 1.176-.506 1.176-.506 2.866-2.567 3.49-1.898-.473 1.23-2.037 2.16c-1.564.932-1.686 1.178-1.464 1.53s3.675-2.511 4-1.297c.323 1.214-3.524 1.567-3.287 2.405.238.839 2.71-1.587 3.216-.642.506.946-3.49 2.056-3.522 2.064-1.29.33-4.568 1.028-5.713-.624"/></symbol>
+  <symbol id="i-data" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7.5" ry="2.75" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4.5 5.5v13c0 1.52 3.36 2.75 7.5 2.75s7.5-1.23 7.5-2.75v-13M4.5 12c0 1.52 3.36 2.75 7.5 2.75s7.5-1.23 7.5-2.75" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="i-quote" viewBox="0 0 24 24"><path d="M5 6.5h14M5 11h14M5 15.5h9M5 20h6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.25" y="8.25" width="12" height="12.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M15.75 8V4.75a1.5 1.5 0 0 0-1.5-1.5h-9a1.5 1.5 0 0 0-1.5 1.5v10a1.5 1.5 0 0 0 1.5 1.5H8" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M4.5 12.5l5 5 10-11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<nav class="runhead" aria-label="Sections">
+  <a class="runhead-title" href="#top">ApexID</a>
+  <ol class="runhead-links">
+    <li><a href="#abstract">Abstract</a></li>
+    <li><a href="#method">Method</a></li>
+    <li><a href="#data">Data</a></li>
+    <li><a href="#results">Results</a></li>
+    <li><a href="#transfer">Transfer</a></li>
+    <li><a href="#open-set">Open set</a></li>
+    <li><a href="#scorecam">ScoreCAM</a></li>
+    <li><a href="#resources">Resources</a></li>
+    <li><a href="#citation">Citation</a></li>
+  </ol>
+</nav>
+
+<main id="top" class="doc">
+
+<header class="titleblock">
+  <h1>ApexID: Hierarchical Learning for Multi-Species Animal Re-Identification</h1>
+  <ul class="authors">
+    <li>Seifeldin Elkerdany<sup>1,6</sup></li>
+    <li>Mohamed ElBassat<sup>2,6</sup></li>
+    <li>Gamal Abouelhamd<sup>1,6</sup></li>
+    <li>Assem Elkady<sup>2,6</sup></li>
+    <li>Jana Ghoneim<sup>2,6</sup></li>
+    <li>Matin Mahmood<sup>3</sup></li>
+    <li>Abigail Allen Martin<sup>4</sup></li>
+    <li>Gerard de Melo<sup>5</sup></li>
+    <li>Antonio Rueda-Toicen<sup>5</sup></li>
+  </ul>
+  <ul class="affiliations">
+    <li><sup>1</sup><a href="https://aiu.edu.eg">Alamein International University</a></li>
+    <li><sup>2</sup><a href="https://alexu.edu.eg">Alexandria University</a></li>
+    <li><sup>3</sup><a href="https://hyper3labs.com">hyper³labs</a></li>
+    <li><sup>4</sup><a href="https://ufmt.br">Universidade Federal de Mato Grosso</a></li>
+    <li><sup>5</sup><a href="https://hpi.de">Hasso Plattner Institute</a></li>
+    <li><sup>6</sup><a href="https://huggingface.co/Made-In-Alexandria-AI">Made In Alexandria AI Team (M.I.A Robotics)</a></li>
+  </ul>
+  <ul class="resources" aria-label="Resources">
+    <li><a class="res" id="paper-link" href="#citation" aria-disabled="true"><svg aria-hidden="true"><use href="#i-paper"/></svg><span>Paper</span><small>arXiv soon</small></a></li>
+    <li><a class="res" href="https://github.com/MIA-AI-Team/ApexID-Hierarchical-Learning-for-Multi-Species-Animal-Re-Identification-Official-Repo"><svg aria-hidden="true"><use href="#i-github"/></svg><span>Code</span></a></li>
+    <li><a class="res" href="https://huggingface.co/Made-In-Alexandria-AI"><svg aria-hidden="true"><use href="#i-hf"/></svg><span>Models</span></a></li>
+    <li><a class="res" href="https://huggingface.co/datasets/Made-In-Alexandria-AI/ApexID-Dataset"><svg aria-hidden="true"><use href="#i-data"/></svg><span>Dataset</span></a></li>
+    <li><a class="res" href="#citation"><svg aria-hidden="true"><use href="#i-quote"/></svg><span>BibTeX</span></a></li>
+  </ul>
+</header>
+
+<section id="abstract" class="abstract" aria-labelledby="abstract-h">
+  <h2 id="abstract-h">Abstract</h2>
+  <p>Animal re-identification (Re-ID) must distinguish individuals across species and capture conditions. We introduce ApexID, a hierarchical SphereFace2-based loss that integrates global identity discrimination with balanced animal-category supervision. Using 132,533 images curated from 19 public datasets, we evaluate three model families and four objectives on four external datasets with observation-aware retrieval protocols. ApexID achieves a dataset-averaged Rank-1 accuracy of 64.89% with ConvNeXt-Small and an mAP of 32.54% with MIEW-ID, outperforming their pretrained reference models. On elephants, a category absent from animal Re-ID training, our ConvNeXt-Small variant achieves the highest retrieval performance among the fourteen evaluated configurations. Scores vary by backbone and dataset, and open-set evaluation reveals remaining discovery challenges. These findings support hierarchical category–identity learning to improve transfer to unseen datasets and species.</p>
+</section>
+
+<figure class="wide fig-teaser">
+  <img src="assets/figures/apexid_hierarchical_loss.webp" width="2000" height="1333" alt="Diagram of the ApexID Hierarchical Loss. Images of jaguars, turtles and zebras with identity and category labels pass through a shared encoder and L2 normalization. The embedding is scored against an identity proxy bank with K sub-centers per identity, giving a global identity loss, and against one proxy per category, giving a weighted cross-entropy category loss. A unit hypersphere shows an anchor, its positive identity, and same-category negatives." decoding="async" fetchpriority="high">
+  <figcaption><span class="fig-n">Figure 1.</span> <b>ApexID Hierarchical Loss.</b> A shared encoder <i>f</i><sub>θ</sub> produces unit-normalized embeddings. Each training identity has <i>K</i> learned sub-center proxies, and the global identity term uses the positive identity against all others. Category supervision adds one proxy per animal category, trained with cross-entropy weighted by ω<sub><i>s</i></sub> ∝ <i>n<sub>s</sub></i><sup>−1/2</sup>, where <i>n<sub>s</sub></i> counts the training identities in category <i>s</i>.</figcaption>
+</figure>
+
+<section id="method" aria-labelledby="method-h">
+  <h2 id="method-h"><span class="sec-n">1.</span> Method</h2>
+  <p>Identity-only objectives ignore the category–identity structure that multi-species annotations already carry. ApexID maps curated animal foregrounds into one embedding space shared by every species and trains it with a two-level objective. An identity's parent is a broad animal category, such as <i>whale</i> or <i>sea turtle</i>, harmonized across all 19 sources.</p>
+  <div class="equation" role="group" aria-label="Equation 1">
+    <math display="block" aria-label="L A H equals L G plus lambda S P times L S P">
+      <mrow>
+        <msub><mi>&#x2112;</mi><mtext>AH</mtext></msub>
+        <mo>=</mo>
+        <msub><mi>&#x2112;</mi><mtext>G</mtext></msub>
+        <mo>+</mo>
+        <msub><mi>λ</mi><mtext>SP</mtext></msub>
+        <msub><mi>&#x2112;</mi><mtext>SP</mtext></msub>
+      </mrow>
+    </math>
+    <span class="eq-n">(1)</span>
+  </div>
+  <dl class="terms">
+    <dt>Global identity term <span class="sym">ℒ<sub>G</sub></span></dt>
+    <dd>A SphereFace2 objective over learnable identity sub-centers. The similarity to an identity is the largest cosine between the embedding and that identity's <i>K</i> proxies. Each image is pushed toward its true identity and away from every other training identity.</dd>
+    <dt>Balanced category term <span class="sym">ℒ<sub>SP</sub></span></dt>
+    <dd>One learned proxy per animal category, trained with cross-entropy weighted by ω<sub><i>s</i></sub> ∝ <i>n<sub>s</sub></i><sup>−1/2</sup>, so categories with few identities are not drowned out by whales and lynx.</dd>
+    <dt>Inference</dt>
+    <dd>Both heads are dropped. Retrieval ranks gallery images by cosine similarity between normalized embeddings. Query category labels are never needed.</dd>
+  </dl>
+</section>
+
+<section id="data" aria-labelledby="data-h">
+  <h2 id="data-h"><span class="sec-n">2.</span> A curated multi-source corpus</h2>
+  <p>We harmonize annotations from 19 public datasets and filter near-duplicates within each identity using MegaDescriptor embeddings. Foregrounds are segmented with SAM&nbsp;3. Every image is reviewed by hand in V-Rush, and incomplete masks are fixed with box-prompted MobileSAM and a manual brush. Each observation group sits wholly in one partition, so validation never sees a near-copy of a training image.</p>
+
+  <figure class="wide corpus" aria-labelledby="corpus-cap">
+    <div class="strip" id="corpus-strip" role="list" aria-label="Share of the 132,533 curated images contributed by each source dataset"></div>
+    <div class="corpus-readout" id="corpus-readout" aria-live="polite"></div>
+    <figcaption id="corpus-cap"><span class="fig-n">Figure 2.</span> Each segment is one source dataset, sized by its share of the 132,533 curated images. Hover over or focus a segment, or a row in the table below, to read its counts.</figcaption>
+  </figure>
+
+  <div class="table-wrap">
+    <table class="booktabs" id="corpus-table">
+      <caption><span class="fig-n">Table 1.</span> Sources in the training and validation partitions. Identities are counted within each source dataset. Click a column heading to sort.</caption>
+      <thead><tr>
+        <th scope="col"><button type="button" data-sort="name">Dataset</button></th>
+        <th scope="col"><button type="button" data-sort="species">Category</button></th>
+        <th scope="col" class="num"><button type="button" data-sort="images" aria-sort="descending">Images</button></th>
+        <th scope="col" class="num"><button type="button" data-sort="ids">Identities</button></th>
+      </tr></thead>
+      <tbody></tbody>
+      <tfoot><tr><th scope="row" colspan="2">Total (unique)</th><td class="num">132,533</td><td class="num">13,348</td></tr></tfoot>
+    </table>
+  </div>
+
+  <div class="table-wrap">
+    <table class="booktabs compact">
+      <caption><span class="fig-n">Table 2.</span> Primary partitions. Known-validation identities also appear in training through different observation groups.</caption>
+      <thead><tr><th scope="col">Partition</th><th scope="col" class="num">Images</th><th scope="col" class="num">Identities</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Training</th><td class="num">90,921</td><td class="num">11,677</td></tr>
+        <tr><th scope="row">Known-identity validation</th><td class="num">28,070</td><td class="num">10,768</td></tr>
+        <tr><th scope="row">Held-out-identity validation</th><td class="num">13,542</td><td class="num">1,671</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="results" aria-labelledby="results-h">
+  <h2 id="results-h"><span class="sec-n">3.</span> Closed-set retrieval</h2>
+  <p>We compare ConvNeXt-Small, MIEW-ID v3 and MegaDescriptor-L, each trained or fine-tuned with ArcFace, Dynamic ArcFace, SphereFace2 or the ApexID Hierarchical Loss. Together with the two unmodified animal Re-ID checkpoints, that gives fourteen configurations. Evaluation uses four external datasets that are excluded from all training: ELPephants, GCN-ID, Bristol Gorillas, and private jaguar data. Each dataset is scored over five observation-disjoint split seeds.</p>
+  <p>Within every backbone family, ApexID is best on all five macro metrics. All eight fine-tuned animal Re-ID configurations beat their original checkpoints on Rank-1 and mAP.</p>
+
+  <figure class="wide results-fig">
+    <div class="controls" role="group" aria-label="Results table controls">
+      <div class="seg" role="radiogroup" aria-label="Backbone" id="bb-filter">
+        <button type="button" role="radio" aria-checked="true" data-bb="all">All</button>
+        <button type="button" role="radio" aria-checked="false" data-bb="ConvNeXt-Small">ConvNeXt-S</button>
+        <button type="button" role="radio" aria-checked="false" data-bb="MIEW-ID v3">MIEW-ID v3</button>
+        <button type="button" role="radio" aria-checked="false" data-bb="MegaDescriptor-L">MegaDescriptor-L</button>
+      </div>
+      <label class="select">Bars show
+        <select id="bar-metric">
+          <option value="r1">Rank-1</option>
+          <option value="map">mAP</option>
+          <option value="minp">mINP</option>
+          <option value="idmap">ID-balanced mAP</option>
+          <option value="idr1">ID-balanced Rank-1</option>
+        </select>
+      </label>
+    </div>
+    <div class="table-wrap">
+      <table class="booktabs results" id="closed-table">
+        <caption><span class="fig-n">Table 3.</span> Dataset-macro closed-set retrieval over four external datasets and five split seeds, in percent. ID-balanced metrics average queries within each identity before averaging identities. Bold marks the best value within each backbone family. Pretrained rows use the original animal Re-ID checkpoints.</caption>
+        <thead><tr>
+          <th scope="col">Loss</th>
+          <th scope="col" class="num" data-col="r1">R-1</th>
+          <th scope="col" class="num" data-col="map">mAP</th>
+          <th scope="col" class="num" data-col="minp">mINP</th>
+          <th scope="col" class="num" data-col="idmap">ID-bal. mAP</th>
+          <th scope="col" class="num" data-col="idr1">ID-bal. R-1</th>
+          <th scope="col" class="barcol"><span class="vh">Bar for selected metric</span></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </figure>
+
+  <figure class="wide">
+    <img src="assets/figures/closed_set_cmc.webp" width="2000" height="1352" loading="lazy" decoding="async" alt="Grid of cumulative match characteristic curves, ranks 1 to 50, for three backbones in rows and four datasets in columns: Bristol gorillas, elephants, GCN-ID and private jaguar data. The ApexID Hierarchical Loss curve is at or near the top in most panels, most clearly on elephants and GCN-ID.">
+    <figcaption><span class="fig-n">Figure 3.</span> Closed-set CMC curves for all three backbone families, averaged over five split seeds.</figcaption>
+  </figure>
+
+  <h3 id="ablation"><span class="sec-n">3.1.</span> How much category supervision?</h3>
+  <p>We vary the category weight λ<sub>SP</sub> on ConvNeXt-Small and hold everything else fixed. SphereFace2 without the category term is the reference. Every weight we tried beats it, and the main results use λ<sub>SP</sub>&nbsp;=&nbsp;0.50.</p>
+  <figure class="ablation" aria-labelledby="abl-cap">
+    <div class="abl-controls">
+      <label for="lambda" class="abl-label">λ<sub>SP</sub> = <output id="lambda-out" for="lambda">0.50</output></label>
+      <input type="range" id="lambda" min="0" max="6" step="1" value="6" aria-valuetext="0.50">
+      <div class="ticks" aria-hidden="true"><span>0.025</span><span>0.05</span><span>0.075</span><span>0.10</span><span>0.15</span><span>0.25</span><span>0.50</span></div>
+    </div>
+    <div class="abl-metrics" id="abl-metrics" role="radiogroup" aria-label="Metric to plot"></div>
+    <svg class="abl-plot" id="abl-plot" viewBox="0 0 640 220" role="img" aria-labelledby="abl-cap"></svg>
+    <figcaption id="abl-cap"><span class="fig-n">Figure 4.</span> Effect of the category weight λ<sub>SP</sub> on dataset-macro closed-set retrieval with ConvNeXt-Small. Differences are relative to SphereFace2 with no category term, shown as the dashed line. Select a metric to plot it.</figcaption>
+  </figure>
+</section>
+
+<section id="transfer" aria-labelledby="transfer-h">
+  <h2 id="transfer-h"><span class="sec-n">4.</span> Transfer to an unseen species</h2>
+  <p>Elephants appear in neither ApexID training nor the training of MIEW-ID v3 or MegaDescriptor-L. On ELPephants, ConvNeXt-Small with the ApexID Hierarchical Loss reaches 17.69% Rank-1 and 6.63% mAP, the highest of all fourteen configurations. The low absolute scores show that unseen-category transfer remains hard.</p>
+  <figure class="wide transfer" aria-labelledby="transfer-cap">
+    <div class="controls">
+      <div class="seg" role="radiogroup" aria-label="Metric" id="transfer-metric">
+        <button type="button" role="radio" aria-checked="true" data-m="r1">Rank-1</button>
+        <button type="button" role="radio" aria-checked="false" data-m="map">mAP</button>
+      </div>
+      <ul class="legend" aria-label="Legend">
+        <li><i class="sw sw-apex"></i>ApexID Hierarchical</li>
+        <li><i class="sw sw-af"></i>ArcFace</li>
+        <li><i class="sw sw-daf"></i>Dynamic ArcFace</li>
+        <li><i class="sw sw-sf2"></i>SphereFace2</li>
+        <li><i class="sw sw-orig"></i>Original checkpoint</li>
+      </ul>
+    </div>
+    <svg id="transfer-chart" class="transfer-chart" role="img" aria-labelledby="transfer-cap"></svg>
+    <figcaption id="transfer-cap"><span class="fig-n">Figure 5.</span> Closed-set transfer to ELPephants, averaged over five split seeds. The dashed line marks the best configuration.</figcaption>
+  </figure>
+</section>
+
+<section id="open-set" aria-labelledby="open-h">
+  <h2 id="open-h"><span class="sec-n">5.</span> Open-set association and discovery</h2>
+  <p>We also run the AnimalCLEF&nbsp;2026 calibrated-similarity and graph-clustering pipeline on every embedding. <strong>A high closed-set score does not imply a high open-set score.</strong> Macro ARI spans only 0.411 to 0.451. With ConvNeXt-S, ApexID gives the best known-individual recognition (BAKS), while SphereFace2 leads on ARI and pairwise F1.</p>
+  <div class="table-wrap wide">
+    <table class="booktabs results" id="open-table">
+      <caption><span class="fig-n">Table 4.</span> Dataset-macro open-set association and discovery, split seed 42. ARI, B³&nbsp;F1 and pairwise F1 average four datasets. Novel-only ARI, BAKS and NormAcc average the three gallery datasets. Bold marks the best value within each backbone family.</caption>
+      <thead><tr>
+        <th scope="col">Loss</th>
+        <th scope="col" class="num">ARI</th>
+        <th scope="col" class="num">B³ F1</th>
+        <th scope="col" class="num">Pair F1</th>
+        <th scope="col" class="num">Nov. ARI</th>
+        <th scope="col" class="num">BAKS</th>
+        <th scope="col" class="num">NormAcc</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="scorecam" aria-labelledby="cam-h">
+  <h2 id="cam-h"><span class="sec-n">6.</span> Where the models look</h2>
+  <p>ScoreCAM maps for every backbone and objective on the same query image. Switch the dataset or the panel to compare attention across objectives.</p>
+  <figure class="wide cam" aria-labelledby="cam-cap">
+    <div class="controls">
+      <div class="seg" role="radiogroup" aria-label="Dataset" id="cam-ds">
+        <button type="button" role="radio" aria-checked="true" data-ds="elephant">ELPephants</button>
+        <button type="button" role="radio" aria-checked="false" data-ds="bristol">Bristol Gorillas</button>
+        <button type="button" role="radio" aria-checked="false" data-ds="gcn">GCN-ID</button>
+      </div>
+      <div class="seg" role="radiogroup" aria-label="Panel" id="cam-panel">
+        <button type="button" role="radio" aria-checked="true" data-p="0">Overlay</button>
+        <button type="button" role="radio" aria-checked="false" data-p="1">Heatmap</button>
+        <button type="button" role="radio" aria-checked="false" data-p="2">Image</button>
+      </div>
+    </div>
+    <div class="cam-grid" id="cam-grid"></div>
+    <figcaption id="cam-cap"><span class="fig-n">Figure 6.</span> ScoreCAM examples arranged by objective (rows) and backbone (columns). Private jaguar examples are omitted here.</figcaption>
+  </figure>
+</section>
+
+<section id="resources" aria-labelledby="res-h">
+  <h2 id="res-h"><span class="sec-n">7.</span> Code, weights and data</h2>
+  <div class="table-wrap wide">
+    <table class="booktabs">
+      <caption><span class="fig-n">Table 5.</span> Released ApexID encoders, all trained with the ApexID Hierarchical Loss. Embeddings are L2-normalized.</caption>
+      <thead><tr><th scope="col">Encoder</th><th scope="col">Initialization</th><th scope="col" class="num">Params</th><th scope="col" class="num">Dim.</th><th scope="col" class="num">Input</th><th scope="col">Weights</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">ConvNeXt-Small</th><td>ImageNet-1k (TorchVision)</td><td class="num">49.45M</td><td class="num">2048</td><td class="num">440²</td><td><a href="https://huggingface.co/Made-In-Alexandria-AI/ApexID_ConvNext_Backbone">ApexID_ConvNext_Backbone</a></td></tr>
+        <tr><th scope="row">MIEW-ID v3</th><td><a href="https://huggingface.co/conservationxlabs/miewid-msv3">conservationxlabs/miewid-msv3</a></td><td class="num">51.08M</td><td class="num">2152</td><td class="num" data-input="miew">440²</td><td><a href="https://huggingface.co/Made-In-Alexandria-AI/ApexID_MiewID_Backbone">ApexID_MiewID_Backbone</a></td></tr>
+        <tr><th scope="row">MegaDescriptor-L</th><td><a href="https://huggingface.co/BVRA/MegaDescriptor-L-384">BVRA/MegaDescriptor-L-384</a></td><td class="num">195.20M</td><td class="num">1536</td><td class="num" data-input="mega">384²</td><td><a href="https://huggingface.co/Made-In-Alexandria-AI/ApexID_MegaDescriptor_Backbone">ApexID_MegaDescriptor_Backbone</a></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3><span class="sec-n">7.1.</span> Quick start</h3>
+  <p>Clone the <a href="https://github.com/MIA-AI-Team/ApexID-Hierarchical-Learning-for-Multi-Species-Animal-Re-Identification-Official-Repo">repository</a> and install it. Then load any released encoder with its matching config:</p>
+  <div class="code">
+    <button type="button" class="copy" data-copy="quickstart" aria-label="Copy quick-start code"><svg aria-hidden="true"><use href="#i-copy"/></svg><span>Copy</span></button>
+<pre id="quickstart"><code><span class="k">import</span> torch
+<span class="k">from</span> huggingface_hub <span class="k">import</span> hf_hub_download
+<span class="k">from</span> apexid.data <span class="k">import</span> build_eval_transforms
+<span class="k">from</span> apexid.evaluation.embeddings <span class="k">import</span> ApexIDModelAdapter
+<span class="k">from</span> apexid.utils.config <span class="k">import</span> load_config
+
+<span class="c"># ConvNeXt-Small: configs/default.yaml</span>
+<span class="c"># MIEW-ID v3: configs/miewid_v3/apexid_hierarchical.yaml</span>
+<span class="c"># MegaDescriptor-L: configs/megadescriptor_l/apexid_hierarchical.yaml</span>
+config = load_config(config_path=<span class="s">"configs/default.yaml"</span>)
+weights = hf_hub_download(
+    <span class="s">"Made-In-Alexandria-AI/ApexID_ConvNext_Backbone"</span>, <span class="s">"best_backbone.pt"</span>
+)
+
+device = torch.device(<span class="s">"cuda"</span> <span class="k">if</span> torch.cuda.is_available() <span class="k">else</span> <span class="s">"cpu"</span>)
+model = ApexIDModelAdapter.from_checkpoint(config, weights, device).model
+transform = build_eval_transforms(config=config)  <span class="c"># resize + normalize</span>
+
+<span class="c"># rgb_array: H x W x 3 uint8 image of a segmented animal</span>
+<span class="k">with</span> torch.inference_mode():
+    x = transform(image=rgb_array)[<span class="s">"image"</span>][<span class="k">None</span>].to(device)
+    embedding = model(x)  <span class="c"># L2-normalized vector</span></code></pre>
+  </div>
+
+  <ul class="links-list">
+    <li><svg aria-hidden="true"><use href="#i-github"/></svg><span><a href="https://github.com/MIA-AI-Team/ApexID-Hierarchical-Learning-for-Multi-Species-Animal-Re-Identification-Official-Repo">GitHub</a>: training, evaluation, observation-aware split builder, frozen splits</span></li>
+    <li><svg aria-hidden="true"><use href="#i-hf"/></svg><span><a href="https://huggingface.co/Made-In-Alexandria-AI">Hugging Face</a>: the three encoders above</span></li>
+    <li><svg aria-hidden="true"><use href="#i-data"/></svg><span><a href="https://huggingface.co/datasets/Made-In-Alexandria-AI/ApexID-Dataset">ApexID Dataset</a>: split manifests, per-source licenses, and segmented images where the source license allows redistribution</span></li>
+    <li><svg aria-hidden="true"><use href="#i-github"/></svg><span><a href="https://github.com/MIA-AI-Team/AnimalCLEF26">AnimalCLEF26</a>: the open-set pipeline used in Section&nbsp;5 (<a href="https://arxiv.org/abs/2608.02469">arXiv:2608.02469</a>)</span></li>
+  </ul>
+</section>
+
+<section id="limitations" aria-labelledby="lim-h">
+  <h2 id="lim-h"><span class="sec-n">8.</span> Limitations</h2>
+  <p>ApexID assumes a two-level category–identity hierarchy, so its effect depends on how granular and reliable the category labels are. The categories are broad animal types, not a consistent taxonomic rank. For example, every whale shares one <i>whale</i> category regardless of species, because the source annotations do not reliably identify species. Open-set gains vary by backbone and dataset.</p>
+</section>
+
+<section id="citation" aria-labelledby="cite-h">
+  <h2 id="cite-h">Citation</h2>
+  <div class="code">
+    <button type="button" class="copy" data-copy="bibtex" aria-label="Copy BibTeX"><svg aria-hidden="true"><use href="#i-copy"/></svg><span>Copy</span></button>
+<pre id="bibtex"><code>@article{elkerdany2026apexid,
+  title   = {ApexID: Hierarchical Learning for Multi-Species Animal Re-Identification},
+  author  = {Elkerdany, Seifeldin and ElBassat, Mohamed and Abouelhamd, Gamal and
+             Elkady, Assem and Ghoneim, Jana and Mahmood, Matin and
+             Martin, Abigail Allen and de Melo, Gerard and Rueda-Toicen, Antonio},
+  journal = {arXiv preprint},
+  year    = {2026}
+}</code></pre>
+  </div>
+</section>
+
+</main>
+
+<footer class="colophon">
+  <p>Code released under the <a href="https://github.com/MIA-AI-Team/ApexID-Hierarchical-Learning-for-Multi-Species-Animal-Re-Identification-Official-Repo/blob/main/LICENSE">MIT License</a>. Fine-tuned weights and source images keep their upstream licenses.</p>
+  <p>Made In Alexandria AI Team · <a href="https://huggingface.co/Made-In-Alexandria-AI">Hugging Face</a> · <a href="https://github.com/MIA-AI-Team">GitHub</a></p>
+</footer>
+</body>
+</html>

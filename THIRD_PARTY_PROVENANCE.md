@@ -1,6 +1,6 @@
 # Third-party provenance
 
-The [Apache-2.0 license](LICENSE) covers the ApexID source code. External datasets, pretrained weights, and their provider code are subject to their respective terms.
+The [MIT License](LICENSE) covers the ApexID source code and the ConvNeXt-Small ApexID weights. External datasets, upstream pretrained weights, and their provider code are subject to their respective terms. The fine-tuned MegaDescriptor-L weights keep the upstream CC BY-NC 4.0 license. The upstream MIEW-ID v3 checkpoint declares no license, so its fine-tuned weights carry whatever terms Conservation X Labs and Wild Me set.
 
 ## Pretrained encoders
 
@@ -14,6 +14,8 @@ The MIEW-ID v3 loader checks the SHA-256 of `model.safetensors` against `adff92b
 
 ## Data preparation
 
-The observation-aware splitter uses frozen DINOv2 embeddings for its similarity fallback. The [data guide](data/README.md) and frozen split metadata document the model, thresholds, and source catalogues. Some thresholds were taken from WildlifeDatasets v1.0.9, commit `67380d7951b89f02e48c84a7d3546188b9dbec8a`. The splitter implements the grouping locally.
+The observation-aware splitter uses frozen DINOv2 embeddings for its similarity fallback. The [data guide](data/README.md) and frozen split metadata document the model, thresholds, and source catalogues. Some thresholds were taken from WildlifeDatasets v1.0.9 (AGPL-3.0-or-later), commit `67380d7951b89f02e48c84a7d3546188b9dbec8a`. Only the threshold values are reused; the splitter implements the grouping locally and contains no WildlifeDatasets code. The DINOv2 model card and pretrained configuration declare different licenses (Apache-2.0 and CC-BY-NC-4.0); the splitter only runs the model and does not redistribute it.
 
-The paper's prepared training and evaluation images and private jaguar labels are obtained separately under their sources' terms.
+## Datasets
+
+The [ApexID Dataset card](https://huggingface.co/datasets/Made-In-Alexandria-AI/ApexID-Dataset) lists every training source with its license and original location. Segmented images are redistributed only where the source license allows it; the rest must be obtained from the original authors. The private jaguar evaluation images and labels are not distributed.
