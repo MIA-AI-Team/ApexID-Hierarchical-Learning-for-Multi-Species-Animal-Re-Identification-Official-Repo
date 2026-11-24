@@ -1,4 +1,4 @@
-const ARXIV_ID = "";
+const ARXIV_ID = "2611.29723";
 
 const LOSS_COLOR = {
   "ApexID Hierarchical": "var(--apex)",

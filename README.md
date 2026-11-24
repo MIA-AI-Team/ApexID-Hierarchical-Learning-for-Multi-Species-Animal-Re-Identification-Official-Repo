@@ -15,7 +15,8 @@ Matin Mahmood<sup>4</sup>, Abigail Allen Martin<sup>5</sup>, Gerard de Melo<sup>
 <sup>*</sup>Equal contribution &nbsp; <sup>†</sup>Corresponding authors: seifeldean.hosny.2024@aiu.edu.eg, cds.MohamedMohamed24510@alexu.edu.eg
 
 [![Project page](https://img.shields.io/badge/Project-page-367DBD)](https://mia-ai-team.github.io/ApexID-Hierarchical-Learning-for-Multi-Species-Animal-Re-Identification-Official-Repo/)
-[![arXiv](https://img.shields.io/badge/arXiv-coming%20soon-b31b1b)](#citation)
+[![arXiv](https://img.shields.io/badge/arXiv-2611.29723-b31b1b)](https://arxiv.org/abs/2611.29723)
+[![HF Papers](https://img.shields.io/badge/HF-Papers-ff9d00)](https://huggingface.co/papers/2611.29723)
 [![Models](https://img.shields.io/badge/%F0%9F%A4%97%20Models-Made--In--Alexandria--AI-FFD21E)](https://huggingface.co/Made-In-Alexandria-AI)
 [![Dataset](https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-ApexID--Dataset-FFD21E)](https://huggingface.co/datasets/Made-In-Alexandria-AI/ApexID-Dataset)
 [![License: MIT](https://img.shields.io/badge/License-MIT-127C7A)](LICENSE)
@@ -141,12 +142,15 @@ python -m pytest -q
 
 ```bibtex
 @article{elkerdany2026apexid,
-  title   = {ApexID: Hierarchical Learning for Multi-Species Animal Re-Identification},
-  author  = {Elkerdany, Seifeldin and ElBassat, Mohamed and Abouelhamd, Gamal and
-             Elkady, Assem and Ghoneim, Jana and Mahmood, Matin and
-             Martin, Abigail Allen and de Melo, Gerard and Rueda-Toicen, Antonio},
-  journal = {arXiv preprint},
-  year    = {2026}
+  title         = {ApexID: Hierarchical Learning for Multi-Species Animal Re-Identification},
+  author        = {Elkerdany, Seifeldin and ElBassat, Mohamed and Abouelhamd, Gamal and
+                   Elkady, Assem and Ghoneim, Jana and Mahmood, Matin and
+                   Martin, Abigail Allen and de Melo, Gerard and Rueda-Toicen, Antonio},
+  journal       = {arXiv preprint arXiv:2611.29723},
+  year          = {2026},
+  eprint        = {2611.29723},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CV}
 }
 ```
 
